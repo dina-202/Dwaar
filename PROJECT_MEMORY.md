@@ -3,28 +3,38 @@
 
 **Last Updated :** 2026-08-27
 **By            :** Claude Code
-**Prompt Count  :** 20
+**Prompt Count  :** 21
 
 ---
 
 ## CURRENT STATE
 ```
-Phase       : ARCHITECTURE AUDIT COMPLETE — read-only, no code/prompt changes
-Working     : docs/architecture/CURRENT_ARCHITECTURE_AUDIT.md created (sections A–L):
-              12-area inspection of current system, gap analysis vs
-              ARCHITECTURE_SPEC_V1 (Layers A–K), domain-concept equivalence,
-              reusable components, extraction targets, risks R1–R9, migration order
-              (Steps 0–10), file-by-file plan, must-not-do-yet list, fixture
-              break-point analysis (NOTICE_1–4). Key facts: no git repo, no tests,
-              no persistence/models, NOTICE_4 never run, runtime LLM is Gemini
-              (DeepSeek V4 Pro powers only the build loop), mega-prompt v3.3 works.
-              Recommended first step: ADDITIVE ONLY — new modules/domain_models.py
-              (typed dataclasses per spec §3) + stdlib-only tests/run_regression.py;
-              no existing file touched; rollback = delete the two new files.
+Phase       : ARCHITECTURE PHASE 1 COMPLETE — additive only, app behaviour unchanged
+Git         : repo initialized by Dina; baseline commit 4f09e38 "baseline: working
+              CA notice explainer before architecture migration". HEAD = 4f09e38.
+              Working tree clean for all tracked files; untracked new files only:
+              modules/domain_models.py, tests/.
+Working     : (1) NOTICE_4 runtime baseline captured — tests/baselines/
+              NOTICE_4_RCM_Sec73_DRC01.baseline.md (19,159-char Gemini output,
+              2,665 raw chars, gemini-3.6-flash, prompt v3.3) + .metadata.json.
+              (2) modules/domain_models.py — typed dataclasses/enums for Case,
+              Proceeding, Document, Fact, Evidence, Issue, Deadline, Workflow,
+              LegalReference, Draft, ValidationResult; FactStatus enum exactly
+              CONFIRMED/ALLEGED_BY_DEPARTMENT/NOT_AVAILABLE/REQUIRES_VERIFICATION/
+              INFERRED; stdlib only; NOT wired into the app; independently
+              importable. (3) tests/run_regression.py — stdlib-only runner over
+              the four NOTICE_*.pdf fixtures; saves runs to tests/outputs/;
+              compares vs tests/baselines/; statuses PASS/FAIL/BASELINE_MISSING/
+              EXECUTION_ERROR. First run: NOTICE_4 PASS (baseline compared),
+              NOTICE_1–3 BASELINE_MISSING (expected), 0 FAIL/EXECUTION_ERROR.
+              Streamlit verified to start (my instance came up on 8502 — port
+              8501 is held by an older server; old server should be stopped
+              eventually).
 Broken      : Nothing
-Next Task   : (Dina) approve/dispute audit; decide (1) git init before migration,
-              (2) storage approval for Phase 2+, (3) Gemini-vs-DeepSeek runtime
-              intent; then baseline NOTICE_4 run before any code change.
+Next Task   : (Dina) review Phase 1; nothing further without instruction. Phase 2
+              per plan: Deadline Engine + Fact/Evidence store + draft consumes
+              structured facts. NOTICE_1–3 baselines still missing — capture them
+              (promote tests/outputs/ runs to baselines) when instructed.
 ```
 
 ---
@@ -41,6 +51,11 @@ Next Task   : (Dina) approve/dispute audit; decide (1) git init before migration
 | .env | ✅ created — real key + GEMINI_MODEL=gemini-3.6-flash (key value never logged) |
 | .gitignore | ✅ created — .env is ignored |
 | modules/__init__.py | ✅ created — empty |
+| modules/domain_models.py | ✅ created (Phase 1) — typed dataclasses/enums, stdlib only, NOT wired to app |
+| tests/run_regression.py | ✅ created (Phase 1) — stdlib-only runner, runs existing pipeline on 4 fixtures |
+| tests/baselines/NOTICE_4_RCM_Sec73_DRC01.baseline.md | ✅ created (Phase 1) — runtime baseline, 19,159 chars |
+| tests/baselines/NOTICE_4_RCM_Sec73_DRC01.metadata.json | ✅ created (Phase 1) — baseline metadata |
+| tests/outputs/*.analysis.md | ✅ generated (Phase 1) — regression runs for NOTICE_1–4, regenerated each run |
 | docs/architecture/CURRENT_ARCHITECTURE_AUDIT.md | ✅ created — read-only audit, sections A–L, no code changed |
 
 **Folders:** modules/ ✅ · prompts/ ✅ · data/sample_notices/ ✅
@@ -53,13 +68,65 @@ Next Task   : (Dina) approve/dispute audit; decide (1) git init before migration
 
 > NOTE: Four real GST notices are now present in data/sample_notices/:
 > NOTICE_1 (S.73 ITC/GSTR-2B mismatch), NOTICE_2 (S.74 fraud/suppression),
-> NOTICE_3 (S.129 e-way bill), NOTICE_4 (S.73 RCM). Verified end-to-end on 1, 2 & 3.
-> NOTICE_4 has NEVER been run — baseline missing (flagged in the architecture audit).
+> NOTICE_3 (S.129 e-way bill), NOTICE_4 (S.73 RCM). Verified end-to-end on all four.
+> NOTICE_4 runtime baseline captured in tests/baselines/ (Phase 1, 2026-08-27);
+> NOTICE_1–3 still have no baselines (runner reports BASELINE_MISSING).
 
 ---
 
 ## SESSION LOG
 > Most recent prompt at the TOP
+
+[PROMPT #13 — ARCHITECTURE PHASE 1 — 19:05]
+Task     : Architecture Phase 1 — controlled migration. Verify git baseline 4f09e38;
+           capture NOTICE_4 runtime baseline; create typed domain models
+           (modules/domain_models.py) and a stdlib-only regression runner
+           (tests/run_regression.py); validate; update memory. NO changes to
+           app.py, modules/*.py (existing), prompts, PDFs, .env; no new deps;
+           no Gemini→DeepSeek switch.
+Did      : Architecture Phase 1 — Git baseline already established as 4f09e38;
+           NOTICE_4 runtime baseline captured; typed domain models and initial
+           standard-library regression runner introduced without changing
+           existing application behavior.
+           (1) Confirmed HEAD = 4f09e38 "baseline: working CA notice explainer
+           before architecture migration", working tree clean before work.
+           (2) Ran NOTICE_4_RCM_Sec73_DRC01.pdf through the EXISTING pipeline
+           (Gemini gemini-3.6-flash, prompt v3.3): SUCCESS, 2,665 raw chars,
+           19,159-char analysis, all 8 sections, status labels verified.
+           Saved verbatim to tests/baselines/NOTICE_4_RCM_Sec73_DRC01.baseline.md
+           + .metadata.json (source filename, extraction/output char counts,
+           provider, model, prompt version, timestamp). Not edited.
+           (3) Created modules/domain_models.py — dataclasses/enums only, stdlib
+           only, independently importable, no business logic/LLM/Streamlit, NOT
+           wired into the app. 11 concepts (Case, Proceeding, Document, Fact,
+           Evidence, Issue, Deadline, Workflow, LegalReference, Draft,
+           ValidationResult) + FactStatus enum (exactly the five spec statuses)
+           + EvidenceStatus enum. Import + construction test passed.
+           (4) Created tests/run_regression.py — stdlib only; discovers the four
+           NOTICE_*.pdf fixtures, runs the existing explain_notice pipeline,
+           saves outputs to tests/outputs/, compares vs tests/baselines/ via
+           structural checks (8 section titles, ≥5000 chars, baseline status-label
+           coverage — never raw text equality). First run: NOTICE_4 PASS,
+           NOTICE_1–3 BASELINE_MISSING, 0 FAIL/EXECUTION_ERROR, exit 0.
+           (5) Streamlit verified: my instance started on port 8502 (health ok;
+           port 8501 is held by an older server from a previous session — old
+           server should be stopped eventually). Instance stopped after check.
+           (6) git status: only untracked new files = modules/domain_models.py
+           and tests/; git diff on all tracked files EMPTY (app.py, existing
+           modules, prompt, PDFs all byte-identical to baseline). .env NOT
+           tracked and correctly gitignored; secret scan of tracked text files
+           found no key-like strings. docs/architecture/CURRENT_ARCHITECTURE_AUDIT.md
+           is already inside the baseline commit.
+Files    : NEW modules/domain_models.py, tests/run_regression.py,
+           tests/baselines/NOTICE_4_RCM_Sec73_DRC01.baseline.md,
+           tests/baselines/NOTICE_4_RCM_Sec73_DRC01.metadata.json,
+           tests/outputs/NOTICE_1–4 *.analysis.md (generated). PROJECT_MEMORY.md
+           (this update). NO existing file modified, nothing committed.
+Errors   : none. (Known harmless NOTE-003 SDK advisory re: automatic function
+           calling printed during Gemini calls — ignore.)
+Attempts : 1
+Fix      : n/a
+Status   : DONE
 
 [PROMPT #12 — ARCHITECTURE AUDIT (READ-ONLY) — 18:20]
 Task     : Read ARCHITECTURE_SPEC_V1.md, IMPLEMENTATION_PLAN, AGENTS.md, PROJECT_MEMORY;
@@ -560,6 +627,7 @@ Fix     : Use https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dumm
 | Prompt v3.1 — derived-figure labelling and verified-legal-citation discipline added; unverified circulars, notifications, CBIC instructions, GST Council decisions and case citations prohibited | Stops the model presenting arithmetic-derived figures as department-stated, and invented/unverified circulars, notifications, and case law as authority |
 | Prompt v3.2 — draft reply legal conclusions must be framed as submissions/conditional positions; unsupported factual premises must be conditional or marked [CA TO CONFIRM] | Stops the draft reply asserting "Section 74 is inapplicable" / "there is no underlying tax evasion" as established facts instead of as submissions or conditional/[CA TO CONFIRM] positions |
 | Prompt v3.3 — strict source discipline inside draft replies; invoice references cannot be upgraded to valid/genuine facts; advocacy cannot create factual premises; unsupported taxpayer facts must remain [CA TO CONFIRM] or conditional | Stops the draft reply auto-upgrading "Tax Invoice No. X" to "valid/genuine tax invoice", inventing a reason for a missing E-Way Bill, or asserting "bona fide sale / no intent to evade / tax fully recorded" without a source |
+| Architecture decision — current application continues using Gemini as runtime baseline. DeepSeek remains a future provider option and will not be introduced during Phase 1. | Freezes the runtime provider during the migration so any output change is attributable to architecture steps, not a provider switch; DeepSeek stays a Phase 2+ option |
 
 ---
 
