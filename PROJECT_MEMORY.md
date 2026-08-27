@@ -1,42 +1,32 @@
 # PROJECT MEMORY — CA Notice Explainer Tool
 > Auto-updated by the agent after every prompt. Do not edit manually.
 
-**Last Updated :** 2026-08-27
+**Last Updated :** 2026-08-28
 **By            :** Claude Code
-**Prompt Count  :** 22
+**Prompt Count  :** 24
 
 ---
 
 ## CURRENT STATE
 ```
-Phase       : ARCHITECTURE PHASE 1.5 COMPLETE — regression foundation frozen
-Git         : HEAD = 19f8d12 "architecture phase 1: domain models and regression
-              scaffold" (Phase 1 committed). Phase 1.5 artifacts are NOT yet
-              committed (no commit was requested for this phase): NOTICE_1–3
-              baselines, tests/expectations/, docs/testing/REGRESSION_STRATEGY.md,
-              this PROJECT_MEMORY update.
-Working     : (1) All four fixture baselines now exist in tests/baselines/
-              (NOTICE_1: 18,002-char output, NOTICE_2: 18,582, NOTICE_3: 17,494,
-              NOTICE_4: 19,159 — all gemini-3.6-flash, prompt v3.3) each with
-              .metadata.json. (2) tests/expectations/NOTICE_*.expectations.json —
-              notice-grounded golden structural expectations (verified against
-              extracted notice text: N1 S.73 ITC 21 days DRC-06 hearing; N2 S.74
-              fraud 30 days DRC-06 hearing 29-09-2026; N3 S.129 MOV-09 7 days
-              S.130 risk stated; N4 S.73 RCM 30 days DRC-06 hearing 22-09-2026).
-              (3) docs/testing/REGRESSION_STRATEGY.md — current structural
-              comparison behavior, why exact LLM text matching is insufficient,
-              future invariant/structured approach, baseline-text vs structured
-              testing split, port-8501 housekeeping note. (4) tests/.gitignore —
-              outputs/ never committed. Runner re-run: NOTICE_1 PASS live, then
-              Gemini free-tier 429 quota exhausted → NOTICE_2–4 EXECUTION_ERROR
-              (environmental, see NOTE-005). Offline structural comparison of all
-              four outputs vs baselines using the runner's own checks: 4/4 PASS.
-Broken      : Gemini free-tier daily quota exhausted (429 RESOURCE_EXHAUSTED)
-              from ~19:15 IST on 2026-08-27 — live runner verification of
-              NOTICE_2–4 pending quota reset. Application itself unaffected.
-Next Task   : (Dina) review Phase 1.5; commit Phase 1.5 artifacts when desired;
-              re-run tests/run_regression.py after Gemini quota resets to confirm
-              4/4 live PASS. STOP — no Phase 2 implementation without instruction.
+Phase       : COMMITTED THROUGH 1.6 — LLM provider/key routing layer in place
+Git         : HEAD = 7784bb4 "Phase 1.6: provider-agnostic LLM router,
+              numbered Gemini key pool, quota/transient/auth failover,
+              15 unit tests pass" (committed 2026-08-28). Phase 1.5 committed
+              as d71bcea. This PROJECT_MEMORY update is committed in the
+              follow-up commit immediately after 7784bb4.
+Working     : Phases 1.5 and 1.6 both committed, working tree clean.
+              1.5 (d71bcea): all four notice baselines + metadata, golden
+              structural expectations, docs/testing/REGRESSION_STRATEGY.md.
+              1.6 (7784bb4): modules/llm_router.py, reworked
+              modules/llm_client.py (public API unchanged), 15 passing
+              stdlib unit tests, docs/architecture/LLM_ROUTING.md. Live
+              verification on NOTICE_4 succeeded 2026-08-27 (8/8 sections,
+              key_slot=gemini_01, provider=google, no secret leaks).
+Broken      : none.
+Next Task   : (Dina) review Phases 1.5 + 1.6; optionally add GEMINI_API_KEY_2..N
+              to .env for extra failover slots. STOP — no Phase 2 (classifier/
+              workflow/database/legal/prompt split/DeepSeek) without instruction.
 ```
 
 ---
@@ -46,7 +36,7 @@ Next Task   : (Dina) review Phase 1.5; commit Phase 1.5 artifacts when desired;
 |---|---|
 | app.py | ✅ created — Streamlit UI, zero logic |
 | modules/pdf_reader.py | ✅ created + TESTED on 2 real PDFs |
-| modules/llm_client.py | ✅ created + TESTED — model fallback now gemini-3.6-flash |
+| modules/llm_client.py | ✅ created + TESTED — gemini-3.6-flash; MODIFIED (Phase 1.6, committed 7784bb4) — routes through llm_router, public API unchanged |
 | modules/notice_explainer.py | ✅ created — explain_notice(pdf_bytes) -> dict |
 | prompts/notice_prompt.txt | ✅ rewritten — 6-section GST template + {today} + {notice_text} |
 | requirements.txt | ✅ created — 4 libs; google-generativeai → google-genai (migrated) |
@@ -59,10 +49,13 @@ Next Task   : (Dina) review Phase 1.5; commit Phase 1.5 artifacts when desired;
 | tests/baselines/NOTICE_4_RCM_Sec73_DRC01.metadata.json | ✅ created (Phase 1) — baseline metadata |
 | tests/outputs/*.analysis.md | ✅ generated (Phase 1) — regression runs for NOTICE_1–4, regenerated each run, gitignored |
 | tests/.gitignore | ✅ created (Phase 1, committed 19f8d12) — keeps outputs/ out of git |
-| tests/baselines/NOTICE_{1,2,3}_*.baseline.md + .metadata.json | ✅ created (Phase 1.5, uncommitted) — all four fixtures now have baselines |
-| tests/expectations/NOTICE_{1,2,3,4}_*.expectations.json | ✅ created (Phase 1.5, uncommitted) — golden structural expectations, notice-grounded only |
-| docs/testing/REGRESSION_STRATEGY.md | ✅ created (Phase 1.5, uncommitted) — regression strategy + port-8501 housekeeping note |
+| tests/baselines/NOTICE_{1,2,3}_*.baseline.md + .metadata.json | ✅ created (Phase 1.5, committed d71bcea) — all four fixtures now have baselines |
+| tests/expectations/NOTICE_{1,2,3,4}_*.expectations.json | ✅ created (Phase 1.5, committed d71bcea) — golden structural expectations, notice-grounded only |
+| docs/testing/REGRESSION_STRATEGY.md | ✅ created (Phase 1.5, committed d71bcea) — regression strategy + port-8501 housekeeping note |
 | docs/architecture/CURRENT_ARCHITECTURE_AUDIT.md | ✅ created — read-only audit, sections A–L, no code changed |
+| modules/llm_router.py | ✅ created (Phase 1.6, committed 7784bb4) — provider-agnostic key router; stdlib only, no secrets in logs/repr |
+| tests/test_llm_router.py | ✅ created (Phase 1.6, committed 7784bb4) — 15 stdlib unittest tests, all PASS, simulated providers only |
+| docs/architecture/LLM_ROUTING.md | ✅ created (Phase 1.6, committed 7784bb4) — routing design, sections A–I |
 
 **Folders:** modules/ ✅ · prompts/ ✅ · data/sample_notices/ ✅
 
@@ -81,6 +74,89 @@ Next Task   : (Dina) review Phase 1.5; commit Phase 1.5 artifacts when desired;
 
 ## SESSION LOG
 > Most recent prompt at the TOP
+
+[PROMPT #24 — COMMIT PHASES 1.5 + 1.6 — 01:13]
+Task     : Commit all uncommitted work. Phase 1.5 commit (skip files already
+           committed); Phase 1.6 commit with the given message; git log; update
+           PROJECT_MEMORY (Git section = new HEAD, mark 1.5/1.6 committed,
+           CURRENT STATE Phase = COMMITTED THROUGH 1.6). Nothing else — no
+           source changes, no app/tests run.
+Did      : (1) git status: only PROJECT_MEMORY.md + modules/llm_client.py
+           modified and the three Phase 1.6 files untracked. (2) Phase 1.5
+           commit SKIPPED — verified d71bcea already contains every listed
+           Phase 1.5 file (NOTICE_1–3 baselines + metadata, all 4
+           expectations, REGRESSION_STRATEGY.md) and none are dirty; no empty
+           commit created. (3) Phase 1.6 committed as 7784bb4 with the
+           requested message, one wording fix: "9-slot" → "numbered" — the
+           implementation scans GEMINI_API_KEY_1..99 plus the legacy key and
+           has nothing 9-related (flagged to Dina in the response).
+           (4) PROJECT_MEMORY.md updated (this entry; Git section = 7784bb4;
+           phases marked committed) and committed in the follow-up commit so
+           the tree ends fully clean.
+Files    : COMMITTED 7784bb4: modules/llm_router.py, modules/llm_client.py,
+           tests/test_llm_router.py, docs/architecture/LLM_ROUTING.md.
+           PROJECT_MEMORY.md (this update, committed right after 7784bb4).
+           No prompt, PDF, .env, requirements.txt, or other source file
+           touched. App and tests NOT run (per instruction).
+Errors   : none. (git CRLF warnings are Windows line-ending notices only.)
+Attempts : 1
+Fix      : n/a
+Status   : DONE
+
+[PROMPT #23 — ARCHITECTURE PHASE 1.6 — 23:43]
+Task     : Phase 1.6 — LLM provider/API key resilience. Add a provider/key
+           routing layer to the existing Gemini client: numbered key pool via
+           env (GEMINI_API_KEY_1..N, no hardcoded max), failover on
+           quota/rate-limit (429), bounded retry+failover on transient 5xx,
+           disable on invalid credentials (401/403), NO rotation on invalid
+           request / safety rejection / application errors, in-memory
+           cooldowns only, secret-free observability, stdlib-only tests,
+           backward compatibility with the single GEMINI_API_KEY, one real
+           verification call, docs, memory. No analysis/prompt/model/output
+           behavior changes. STOP after Phase 1.6.
+Did      : Architecture Phase 1.6 — router layer delivered without changing
+           application behavior. (1) Inspected all mandated files; recorded
+           clean git state (HEAD d71bcea). (2) Created modules/llm_router.py:
+           ErrorCategory enum (quota_rate_limit/transient_service/invalid_auth/
+           invalid_request/safety_blocked/empty_response/unknown), KeySlot
+           dataclass (api_key repr=False), LLMRouter.call() loop with 30s
+           quota cooldown, 10s transient cooldown, 2 bounded transient retries
+           per key, INVALID_AUTH disables slot for process, non-rotating
+           categories surface as-is, PoolExhaustedError with secret-free
+           message, discover_slots() reading GEMINI_API_KEY +
+           GEMINI_API_KEY_1..99 with value-dedup and empty-skip. Stdlib only,
+           INFO logging of safe metadata (request_id/provider/model/key_slot/
+           attempt/result). (3) Modified modules/llm_client.py: same public
+           API (build_notice_prompt, call_gemini unchanged in signature and
+           "Error: ..." contract); Gemini executor maps SDK APIError.code →
+           categories (429→quota, 401/403→invalid_auth, 408/5xx→transient,
+           other 4xx→invalid_request), per-slot lazy genai.Client, keeps the
+           pre-existing one empty-response retry, surfaces prompt_feedback
+           block_reason as safety_blocked. notice_explainer.py did NOT need
+           changes. (4) tests/test_llm_router.py: 15 unittest tests (12
+           required scenarios + empty-response + dedup + expiry) — ALL PASS in
+           0.001s, no real API calls, fake keys only, dedicated test asserts
+           key values never appear in error text/repr. (5) Live verification:
+           ONE real Gemini call through explain_notice on NOTICE_4 →
+           SUCCESS, 2,665 raw chars, 18,875-char explanation, 8/8 sections,
+           router log line "llm_request request_id=req_00001 provider=google
+           model=gemini-3.6-flash key_slot=gemini_01 attempt=1 result=success",
+           secret-leak check False. Quota available again (NOTE-005
+           exhaustion not reproduced at 23:40). (6) Created
+           docs/architecture/LLM_ROUTING.md (sections A–I). (7) Memory
+           updated (this entry).
+Files    : NEW modules/llm_router.py, tests/test_llm_router.py,
+           docs/architecture/LLM_ROUTING.md. MODIFIED modules/llm_client.py
+           (router wiring only — build_notice_prompt untouched, call_gemini
+           contract identical), PROJECT_MEMORY.md (this update). VERIFIED
+           UNCHANGED: prompts/notice_prompt.txt, modules/notice_explainer.py,
+           app.py, modules/pdf_reader.py, modules/domain_models.py, all
+           sample PDFs, requirements.txt, tests/run_regression.py, .env.
+Errors   : none. (Known harmless NOTE-003 SDK AFC advisory lines printed
+           during the live call — pre-existing, ignored.)
+Attempts : 1
+Fix      : n/a
+Status   : DONE
 
 [PROMPT #14 — ARCHITECTURE PHASE 1.5 — 19:45]
 Task     : Phase 1.5 — freeze and strengthen regression foundation. Commit Phase 1;
@@ -701,6 +777,7 @@ Fix     : Use https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dumm
 | Prompt v3.3 — strict source discipline inside draft replies; invoice references cannot be upgraded to valid/genuine facts; advocacy cannot create factual premises; unsupported taxpayer facts must remain [CA TO CONFIRM] or conditional | Stops the draft reply auto-upgrading "Tax Invoice No. X" to "valid/genuine tax invoice", inventing a reason for a missing E-Way Bill, or asserting "bona fide sale / no intent to evade / tax fully recorded" without a source |
 | Architecture decision — current application continues using Gemini as runtime baseline. DeepSeek remains a future provider option and will not be introduced during Phase 1. | Freezes the runtime provider during the migration so any output change is attributable to architecture steps, not a provider switch; DeepSeek stays a Phase 2+ option |
 | Regression architecture decision — preserve baseline outputs for human review, but move future regression testing toward structured invariants rather than exact LLM text matching. | LLM output is non-deterministic, so text equality always false-fails; baselines stay as human-review goldens while automated gates assert on structure, status labels, and notice-grounded expectations |
+| Routing architecture decision (Phase 1.6) — provider-agnostic LLMRouter consumes error categories only; the Gemini adapter in llm_client.py owns all SDK knowledge. Rotation only for key/provider failures (429, 5xx, 401/403); never for invalid request, safety blocks, empty responses, or unknown errors. In-memory cooldowns (30s quota, 10s transient), no persistence, no scheduler. | Fails over across authorized keys on real provider-side failures without circumventing quotas or cycling keys for application errors; keeps the single-key setup working unchanged and leaves a clean seam for a future provider (e.g. DeepSeek) with zero router changes |
 
 ---
 
