@@ -3,38 +3,40 @@
 
 **Last Updated :** 2026-08-27
 **By            :** Claude Code
-**Prompt Count  :** 21
+**Prompt Count  :** 22
 
 ---
 
 ## CURRENT STATE
 ```
-Phase       : ARCHITECTURE PHASE 1 COMPLETE — additive only, app behaviour unchanged
-Git         : repo initialized by Dina; baseline commit 4f09e38 "baseline: working
-              CA notice explainer before architecture migration". HEAD = 4f09e38.
-              Working tree clean for all tracked files; untracked new files only:
-              modules/domain_models.py, tests/.
-Working     : (1) NOTICE_4 runtime baseline captured — tests/baselines/
-              NOTICE_4_RCM_Sec73_DRC01.baseline.md (19,159-char Gemini output,
-              2,665 raw chars, gemini-3.6-flash, prompt v3.3) + .metadata.json.
-              (2) modules/domain_models.py — typed dataclasses/enums for Case,
-              Proceeding, Document, Fact, Evidence, Issue, Deadline, Workflow,
-              LegalReference, Draft, ValidationResult; FactStatus enum exactly
-              CONFIRMED/ALLEGED_BY_DEPARTMENT/NOT_AVAILABLE/REQUIRES_VERIFICATION/
-              INFERRED; stdlib only; NOT wired into the app; independently
-              importable. (3) tests/run_regression.py — stdlib-only runner over
-              the four NOTICE_*.pdf fixtures; saves runs to tests/outputs/;
-              compares vs tests/baselines/; statuses PASS/FAIL/BASELINE_MISSING/
-              EXECUTION_ERROR. First run: NOTICE_4 PASS (baseline compared),
-              NOTICE_1–3 BASELINE_MISSING (expected), 0 FAIL/EXECUTION_ERROR.
-              Streamlit verified to start (my instance came up on 8502 — port
-              8501 is held by an older server; old server should be stopped
-              eventually).
-Broken      : Nothing
-Next Task   : (Dina) review Phase 1; nothing further without instruction. Phase 2
-              per plan: Deadline Engine + Fact/Evidence store + draft consumes
-              structured facts. NOTICE_1–3 baselines still missing — capture them
-              (promote tests/outputs/ runs to baselines) when instructed.
+Phase       : ARCHITECTURE PHASE 1.5 COMPLETE — regression foundation frozen
+Git         : HEAD = 19f8d12 "architecture phase 1: domain models and regression
+              scaffold" (Phase 1 committed). Phase 1.5 artifacts are NOT yet
+              committed (no commit was requested for this phase): NOTICE_1–3
+              baselines, tests/expectations/, docs/testing/REGRESSION_STRATEGY.md,
+              this PROJECT_MEMORY update.
+Working     : (1) All four fixture baselines now exist in tests/baselines/
+              (NOTICE_1: 18,002-char output, NOTICE_2: 18,582, NOTICE_3: 17,494,
+              NOTICE_4: 19,159 — all gemini-3.6-flash, prompt v3.3) each with
+              .metadata.json. (2) tests/expectations/NOTICE_*.expectations.json —
+              notice-grounded golden structural expectations (verified against
+              extracted notice text: N1 S.73 ITC 21 days DRC-06 hearing; N2 S.74
+              fraud 30 days DRC-06 hearing 29-09-2026; N3 S.129 MOV-09 7 days
+              S.130 risk stated; N4 S.73 RCM 30 days DRC-06 hearing 22-09-2026).
+              (3) docs/testing/REGRESSION_STRATEGY.md — current structural
+              comparison behavior, why exact LLM text matching is insufficient,
+              future invariant/structured approach, baseline-text vs structured
+              testing split, port-8501 housekeeping note. (4) tests/.gitignore —
+              outputs/ never committed. Runner re-run: NOTICE_1 PASS live, then
+              Gemini free-tier 429 quota exhausted → NOTICE_2–4 EXECUTION_ERROR
+              (environmental, see NOTE-005). Offline structural comparison of all
+              four outputs vs baselines using the runner's own checks: 4/4 PASS.
+Broken      : Gemini free-tier daily quota exhausted (429 RESOURCE_EXHAUSTED)
+              from ~19:15 IST on 2026-08-27 — live runner verification of
+              NOTICE_2–4 pending quota reset. Application itself unaffected.
+Next Task   : (Dina) review Phase 1.5; commit Phase 1.5 artifacts when desired;
+              re-run tests/run_regression.py after Gemini quota resets to confirm
+              4/4 live PASS. STOP — no Phase 2 implementation without instruction.
 ```
 
 ---
@@ -55,7 +57,11 @@ Next Task   : (Dina) review Phase 1; nothing further without instruction. Phase 
 | tests/run_regression.py | ✅ created (Phase 1) — stdlib-only runner, runs existing pipeline on 4 fixtures |
 | tests/baselines/NOTICE_4_RCM_Sec73_DRC01.baseline.md | ✅ created (Phase 1) — runtime baseline, 19,159 chars |
 | tests/baselines/NOTICE_4_RCM_Sec73_DRC01.metadata.json | ✅ created (Phase 1) — baseline metadata |
-| tests/outputs/*.analysis.md | ✅ generated (Phase 1) — regression runs for NOTICE_1–4, regenerated each run |
+| tests/outputs/*.analysis.md | ✅ generated (Phase 1) — regression runs for NOTICE_1–4, regenerated each run, gitignored |
+| tests/.gitignore | ✅ created (Phase 1, committed 19f8d12) — keeps outputs/ out of git |
+| tests/baselines/NOTICE_{1,2,3}_*.baseline.md + .metadata.json | ✅ created (Phase 1.5, uncommitted) — all four fixtures now have baselines |
+| tests/expectations/NOTICE_{1,2,3,4}_*.expectations.json | ✅ created (Phase 1.5, uncommitted) — golden structural expectations, notice-grounded only |
+| docs/testing/REGRESSION_STRATEGY.md | ✅ created (Phase 1.5, uncommitted) — regression strategy + port-8501 housekeeping note |
 | docs/architecture/CURRENT_ARCHITECTURE_AUDIT.md | ✅ created — read-only audit, sections A–L, no code changed |
 
 **Folders:** modules/ ✅ · prompts/ ✅ · data/sample_notices/ ✅
@@ -69,13 +75,63 @@ Next Task   : (Dina) review Phase 1; nothing further without instruction. Phase 
 > NOTE: Four real GST notices are now present in data/sample_notices/:
 > NOTICE_1 (S.73 ITC/GSTR-2B mismatch), NOTICE_2 (S.74 fraud/suppression),
 > NOTICE_3 (S.129 e-way bill), NOTICE_4 (S.73 RCM). Verified end-to-end on all four.
-> NOTICE_4 runtime baseline captured in tests/baselines/ (Phase 1, 2026-08-27);
-> NOTICE_1–3 still have no baselines (runner reports BASELINE_MISSING).
+> Baselines for ALL FOUR now exist in tests/baselines/ (Phase 1.5, 2026-08-27).
 
 ---
 
 ## SESSION LOG
 > Most recent prompt at the TOP
+
+[PROMPT #14 — ARCHITECTURE PHASE 1.5 — 19:45]
+Task     : Phase 1.5 — freeze and strengthen regression foundation. Commit Phase 1;
+           establish baselines for NOTICE_1–3; inspect runner comparison behavior and
+           document it (no rewrite); create golden structural expectations for all
+           four fixtures; document the port-8501 housekeeping issue; update memory.
+           Do NOT modify app code/prompts/PDFs/requirements, do NOT switch providers.
+Did      : Architecture Phase 1.5 — froze Phase 1 in Git, established all four
+           notice baselines, documented regression strategy, and created golden
+           structural expectations without changing application behavior.
+           (1) Committed Phase 1: 6 files staged explicitly (modules/domain_models.py,
+           tests/run_regression.py, tests/.gitignore, NOTICE_4 baseline+metadata,
+           PROJECT_MEMORY.md) → commit 19f8d12 "architecture phase 1: domain models
+           and regression scaffold". tests/outputs/ excluded via new tests/.gitignore.
+           No .env/secrets/logs committed. (2) Ran the UNCHANGED pipeline on
+           NOTICE_1–3 (Gemini gemini-3.6-flash, prompt v3.3): baselines written —
+           N1 18,002 chars, N2 18,582, N3 17,494 — each with .metadata.json
+           (source filename, extraction/output chars, provider, model, prompt
+           version, timestamp). All 8 sections + status labels verified in each.
+           NOTICE_4 baseline already existed. (3) Reviewed tests/run_regression.py:
+           comparison is STRUCTURAL ONLY (8 section-title fragments, ≥5000 chars,
+           baseline label-coverage baseline→fresh; no exact/normalized text
+           comparison anywhere). Documented in docs/testing/REGRESSION_STRATEGY.md
+           sections A–E + port-8501 housekeeping note (old server still on 8501,
+           confirmed 2026-08-27; do NOT kill unrelated user processes; use
+           --server.port 8502). (4) Created tests/expectations/ for NOTICE_1–4 —
+           every value verified against the extracted notice text (e.g. N1:
+           S.73 ITC 21 days "from the date of service" DRC-06 hearing 04-08-2026;
+           N2: S.74 fraud THIRTY (30) DAYS DRC-06 hearing 29-09-2026; N3: S.129
+           MOV-09 SEVEN (7) DAYS S.130 risk stated; N4: S.73 RCM THIRTY (30) DAYS
+           DRC-06 hearing 22-09-2026, Notification 13/2017-CT (Rate), S.9(3),
+           26AS/194J). No legal conclusions added. (5) Step 5 honored: no
+           classifier, no wiring of domain_models, no DB, no workflows, no prompt
+           changes. (6) Runner re-run: NOTICE_1 PASS live; NOTICE_2–4
+           EXECUTION_ERROR because Gemini free-tier daily quota exhausted (HTTP
+           429 RESOURCE_EXHAUSTED, ~19:30) — environmental, app unaffected,
+           recorded as NOTE-005. Offline structural comparison (runner's own
+           checks, no LLM) of all four outputs vs baselines: 4/4 PASS, including
+           NOTICE_2's [INFERRED] label coverage.
+Files    : NEW tests/baselines/NOTICE_{1,2,3}_*.baseline.md + .metadata.json,
+           tests/expectations/NOTICE_{1,2,3,4}_*.expectations.json,
+           docs/testing/REGRESSION_STRATEGY.md, tests/.gitignore. COMMITTED
+           (19f8d12): modules/domain_models.py, tests/run_regression.py,
+           tests/.gitignore, NOTICE_4 baseline+metadata, PROJECT_MEMORY.md.
+           MODIFIED (uncommitted): PROJECT_MEMORY.md (this update). NO application
+           file, prompt, PDF, or requirements.txt touched.
+Errors   : Gemini free-tier 429 RESOURCE_EXHAUSTED during runner verification
+           (NOTICE_2–4) — quota, not code; see NOTE-005. No other errors.
+Attempts : 1 (quota not retried — waiting for daily reset is the correct fix)
+Fix      : n/a (re-run runner after quota reset)
+Status   : DONE
 
 [PROMPT #13 — ARCHITECTURE PHASE 1 — 19:05]
 Task     : Architecture Phase 1 — controlled migration. Verify git baseline 4f09e38;
@@ -543,6 +599,22 @@ Status   : DONE
 ## ERROR REGISTRY
 > Errors that were hit and solved — so no agent repeats them
 
+**NOTE-005 — Gemini free-tier daily quota exhausted (429 RESOURCE_EXHAUSTED) on 2026-08-27**
+Symptom : During Phase 1.5 runner verification (~19:30 IST), NOTICE_2/3/4 calls
+          returned HTTP 429 "You exceeded your current quota" via call_gemini's
+          "Error: ..." path → runner correctly reported EXECUTION_ERROR.
+Cause   : Many live Gemini calls were made today (prompt verification runs +
+          Phase 1 + 3 new baselines + runner). Free-tier daily quota is
+          limited; once exhausted the API 429s until reset.
+Fix     : Environmental, NOT a code issue — nothing to fix in the app. Wait for
+          the daily quota reset, then re-run `python tests/run_regression.py`.
+          Offline structural comparison (runner's checks, no LLM) confirmed 4/4
+          PASS, so the comparison logic itself is sound. Do NOT add retry loops
+          to llm_client.py to work around 429s without asking Dina.
+Note    : AGENTS.md gotcha #4 (1,500 req/day, 10 RPM) refers to request counts;
+          the daily *token/content* quota can exhaust sooner. Space out large
+          verification runs; prefer offline checks where possible.
+
 **ERR-003 — RESOLVED 2026-08-25 — DeepSeek API balance depleted (not a Gemini or code issue)**
 Symptom : The earlier run surfaced a HTTP 402 payment-required error. Per Dina this
           was the DeepSeek API balance being depleted, not a Gemini or code problem.
@@ -628,6 +700,7 @@ Fix     : Use https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dumm
 | Prompt v3.2 — draft reply legal conclusions must be framed as submissions/conditional positions; unsupported factual premises must be conditional or marked [CA TO CONFIRM] | Stops the draft reply asserting "Section 74 is inapplicable" / "there is no underlying tax evasion" as established facts instead of as submissions or conditional/[CA TO CONFIRM] positions |
 | Prompt v3.3 — strict source discipline inside draft replies; invoice references cannot be upgraded to valid/genuine facts; advocacy cannot create factual premises; unsupported taxpayer facts must remain [CA TO CONFIRM] or conditional | Stops the draft reply auto-upgrading "Tax Invoice No. X" to "valid/genuine tax invoice", inventing a reason for a missing E-Way Bill, or asserting "bona fide sale / no intent to evade / tax fully recorded" without a source |
 | Architecture decision — current application continues using Gemini as runtime baseline. DeepSeek remains a future provider option and will not be introduced during Phase 1. | Freezes the runtime provider during the migration so any output change is attributable to architecture steps, not a provider switch; DeepSeek stays a Phase 2+ option |
+| Regression architecture decision — preserve baseline outputs for human review, but move future regression testing toward structured invariants rather than exact LLM text matching. | LLM output is non-deterministic, so text equality always false-fails; baselines stay as human-review goldens while automated gates assert on structure, status labels, and notice-grounded expectations |
 
 ---
 

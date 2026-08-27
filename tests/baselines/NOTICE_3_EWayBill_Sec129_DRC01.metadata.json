@@ -1,0 +1,9 @@
+{
+  "source_filename": "NOTICE_3_EWayBill_Sec129_DRC01.pdf",
+  "extraction_character_count": 2511,
+  "output_character_count": 17494,
+  "runtime_provider": "Google Gemini",
+  "model_name": "gemini-3.6-flash",
+  "prompt_version": "v3.3",
+  "timestamp": "2026-08-27T19:34:44+05:30"
+}

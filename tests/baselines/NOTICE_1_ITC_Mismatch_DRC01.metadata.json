@@ -1,0 +1,9 @@
+{
+  "source_filename": "NOTICE_1_ITC_Mismatch_DRC01.pdf",
+  "extraction_character_count": 2771,
+  "output_character_count": 18002,
+  "runtime_provider": "Google Gemini",
+  "model_name": "gemini-3.6-flash",
+  "prompt_version": "v3.3",
+  "timestamp": "2026-08-27T19:30:52+05:30"
+}
