@@ -1,5 +1,13 @@
 # CA Notice AI — Architecture Specification v1.0
 
+> **⚠️ SUPERSEDED — 2026-08-28 — HISTORICAL RECORD ONLY**
+> The authoritative specification is `docs/architecture/ARCHITECTURE_SPEC_v1_1.md`.
+> Completed Phase 2 Steps 1 and 2 under this document remain valid and are
+> carried forward unchanged by v1.1. No architectural decision may be reversed
+> without updating v1.1 first.
+>
+> *(Original v1.0 preamble follows, unchanged.)*
+
 > This document is the contract for all Phase 2+ development.
 > Claude Code reads this before writing any Phase 2 code.
 > No architectural decision may be reversed without updating this document first.
