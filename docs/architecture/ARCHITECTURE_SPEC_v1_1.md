@@ -928,6 +928,7 @@ No Section-74A deep type may be invented in Phase 2.
 
 - Structured fact extraction with provenance and draft permissions.
 - Preserve explicitly stated due dates, RFN/DIN, authority, sections/rules, amounts, hearing details and annexure references as facts.
+- The authoritative Fact Engine contract is defined in §17 (finalized by Phase 2 Step 6A).
 
 ### Step 7 — Preflight + Arithmetic Engine
 
@@ -1025,4 +1026,508 @@ These are architecture verification notes, NOT the future legal knowledge databa
 
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+## 17. Fact Engine Contract (Phase 2 Step 6A — authoritative)
+
+This section finalizes the deterministic Step 6 contract. It resolves the
+Step 6 pre-implementation review gaps: input/output shape, Python-owned
+status and draft permissions, provenance enforcement, malformed-output
+handling, deduplication, derived-fact scope, workflow-required-fact
+decoupling, and absence representation.
+
+The Fact Engine is a high-risk boundary: a focused LLM extraction of
+untrusted candidate facts, followed by deterministic Python normalization
+and safety enforcement. The LLM is advisory for extraction; Python is
+authoritative for structure, status, draft permission, provenance and IDs.
+
+### 17.1 `FactType` — machine-readable fact category
+
+New domain enum `FactType` (implemented additively in Step 6.1) with
+exactly these members, using the repository enum-value convention
+(lowercase member name):
+
+```text
+NOTICE_REFERENCE = "notice_reference"
+NOTICE_DATE = "notice_date"
+TAXPAYER_NAME = "taxpayer_name"
+GSTIN = "gstin"
+
+AUTHORITY_NAME = "authority_name"
+AUTHORITY_DESIGNATION = "authority_designation"
+AUTHORITY_OFFICE = "authority_office"
+JURISDICTION_TEXT = "jurisdiction_text"
+
+RFN = "rfn"
+DIN = "din"
+
+STATUTORY_SECTION = "statutory_section"
+STATUTORY_RULE = "statutory_rule"
+STATUTORY_NOTIFICATION = "statutory_notification"
+
+TAX_PERIOD = "tax_period"
+
+STATED_DUE_DATE = "stated_due_date"
+HEARING_DETAILS = "hearing_details"
+
+STATED_AMOUNT = "stated_amount"
+
+DEPARTMENT_ALLEGATION = "department_allegation"
+
+REQUESTED_DOCUMENT = "requested_document"
+REFERENCED_ANNEXURE = "referenced_annexure"
+
+OTHER_NOTICE_FACT = "other_notice_fact"
+```
+
+`FactType` identifies WHAT KIND of information was extracted. It does NOT
+decide whether the underlying legal proposition is true.
+
+### 17.2 `ExtractedFact` additive change
+
+Add one field, with a default, so existing Step-1 constructors remain
+backward compatible:
+
+```text
+fact_type: FactType = FactType.OTHER_NOTICE_FACT
+```
+
+Final conceptual contract:
+
+```text
+fact_id
+claim
+status
+source_text
+source_page
+allowed_in_draft
+fact_type
+```
+
+No existing `ExtractedFact` field is removed or renamed. The implementation
+places `fact_type` last so positional and keyword construction from Step 1
+continues to work unchanged.
+
+### 17.3 Fact Engine input contract
+
+```text
+extract_facts(
+    raw_text: str,
+    classification: NoticeClassification
+) -> List[ExtractedFact]
+```
+
+Step 6 receives the raw notice text plus the validated
+`NoticeClassification`. It does NOT receive `WorkflowDefinition`.
+
+Fact extraction is document-native and generic. Workflow requirements are
+evaluated later against extracted facts (§17.14).
+
+The same Fact Engine is used for `DEEP_WORKFLOW`, `TRIAGE_ONLY` and
+`UNKNOWN`. A `UNKNOWN` classification does NOT prevent safe factual
+extraction: the system may still preserve document-native facts from an
+unclassified notice.
+
+The Fact Engine must not promote support level and must not choose
+workflows.
+
+### 17.4 Fact Engine output contract
+
+Step 6 returns:
+
+```text
+List[ExtractedFact]
+```
+
+No result wrapper is introduced in Step 6. Do NOT create
+`FactEngineResult`, `PreflightResult` or `ArithmeticResult` in Step 6.
+
+### 17.5 LLM candidate contract
+
+The focused extraction LLM call returns STRICT JSON only:
+
+```json
+{
+  "facts": [
+    {
+      "fact_type": "NOTICE_REFERENCE",
+      "claim": "Notice reference is ...",
+      "source_text": "exact text copied from the notice",
+      "source_page": 1
+    }
+  ]
+}
+```
+
+Candidate fields are exactly:
+
+```text
+fact_type
+claim
+source_text
+source_page
+```
+
+The LLM must NOT output or control `fact_id`, `status` or
+`allowed_in_draft` — those are Python-owned.
+
+The LLM must NOT create:
+
+- `INFERRED` calculations;
+- `UNKNOWN` placeholder facts;
+- legal conclusions;
+- taxpayer-favourable assumptions.
+
+### 17.6 Python owns `FactStatus`
+
+The final `FactStatus` is assigned deterministically by Python from
+`FactType`. The LLM may not supply or override it.
+
+For these `FactType` members, final status is `FactStatus.CONFIRMED`
+(meaning: the notice explicitly contains/states that information —
+`CONFIRMED` does NOT mean the underlying legal allegation is correct):
+
+```text
+NOTICE_REFERENCE
+NOTICE_DATE
+TAXPAYER_NAME
+GSTIN
+AUTHORITY_NAME
+AUTHORITY_DESIGNATION
+AUTHORITY_OFFICE
+JURISDICTION_TEXT
+RFN
+DIN
+STATUTORY_SECTION
+STATUTORY_RULE
+STATUTORY_NOTIFICATION
+TAX_PERIOD
+STATED_DUE_DATE
+HEARING_DETAILS
+STATED_AMOUNT
+REQUESTED_DOCUMENT
+REFERENCED_ANNEXURE
+```
+
+Example: if a notice prints `"Penalty proposed: ₹5,00,000"`, the
+document-native fact `"Notice proposes penalty of ₹5,00,000"` may be
+`CONFIRMED`. It does NOT mean `"Taxpayer legally owes ₹5,00,000."`
+
+For `DEPARTMENT_ALLEGATION`, final status is `FactStatus.ALLEGED`.
+Examples: alleged ineligible ITC, fraud allegation, suppression allegation,
+alleged unpaid tax, alleged short payment, alleged wrongful refund.
+Departmental allegations must never become `CONFIRMED` taxpayer facts
+merely because they appear in an official notice.
+
+For `OTHER_NOTICE_FACT`, final status is
+`FactStatus.REQUIRES_VERIFICATION` — a conservative fallback. Python must
+never convert `OTHER_NOTICE_FACT` directly into `CONFIRMED`.
+
+### 17.7 Status values NOT created by Step 6
+
+Step 6 does NOT generate `FactStatus.UNKNOWN` or `FactStatus.INFERRED`.
+
+- `UNKNOWN` represents facts not available / not established and is
+  handled later when workflow completeness is evaluated (§17.14).
+- `INFERRED` is reserved for deterministic downstream derivation,
+  especially the Arithmetic Engine (§17.13).
+
+Step 6 performs no arithmetic.
+
+### 17.8 DraftPermission mapping
+
+Approve the deterministic Python mapping:
+
+```text
+CONFIRMED              → DraftPermission.YES
+ALLEGED                → DraftPermission.CONDITIONAL
+REQUIRES_VERIFICATION  → DraftPermission.NO
+UNKNOWN                → DraftPermission.NO
+INFERRED               → DraftPermission.CONDITIONAL
+```
+
+Python owns this mapping. The LLM must never supply or override
+`allowed_in_draft`. The later Validation Engine tests this mapping again
+before drafting.
+
+`DraftPermission.YES` only means the fact may be used in a correctly framed
+draft. For example, the `CONFIRMED` fact `"The notice proposes ₹5,00,000"`
+may be used; it does NOT authorize transformation into `"The taxpayer owes
+₹5,00,000."`
+
+### 17.9 Provenance contract
+
+Every fact accepted by Step 6 MUST have non-empty `source_text`.
+
+`source_text` must correspond to text actually present in `raw_text`.
+Python must reject an extracted candidate whose `source_text` cannot be
+found in the supplied notice text.
+
+The initial Phase-2 implementation may use exact substring matching. Do not
+build fuzzy matching or NLP provenance recovery in Step 6.
+
+`source_page: Optional[int]`:
+
+- `None` is valid when page information is unavailable.
+- If supplied, it must be an integer >= 1.
+- Step 6 does not invent a page number.
+- Page numbering is document-page numbering beginning at 1 when the
+  extraction pipeline provides page context.
+
+Step 8 may perform additional provenance validation, but Step 6 must not
+accept source-less facts.
+
+### 17.10 Fact ID contract
+
+Python creates IDs; the LLM does not. Use deterministic sequential IDs:
+
+```text
+F-001
+F-002
+F-003
+...
+```
+
+IDs are assigned only to accepted facts, in accepted extraction order. Do
+not introduce UUIDs.
+
+### 17.11 Malformed output contract
+
+Fact extraction must fail safely.
+
+If the overall LLM response is malformed JSON, provider error text, missing
+the top-level facts list, or structurally unusable: return `[]`. Do not
+crash. Do not invent replacement facts.
+
+For an otherwise valid response containing some invalid fact items: reject
+only the invalid items; preserve valid items.
+
+Reject an individual item when:
+
+- `fact_type` is invalid;
+- `claim` is missing/empty/non-string;
+- `source_text` is missing/empty/non-string;
+- `source_text` is not found in `raw_text`;
+- `source_page` is neither `None` nor an integer >= 1.
+
+Do not expose API keys or provider internals.
+
+### 17.12 Duplicate facts
+
+Step 6 performs NO semantic deduplication. Preserve all individually valid
+extracted facts. Premature merging may destroy provenance. Deduplication /
+consolidation is deferred to the later validation/integration layer.
+
+### 17.13 Derived / INFERRED facts
+
+Step 6 performs ZERO arithmetic or deterministic derivation.
+
+Example: if the notice contains `GSTR-3B ITC = ₹10,00,000` and
+`GSTR-2B ITC = ₹8,50,000`, Step 6 extracts the two source amounts. It does
+NOT create `Difference = ₹1,50,000`. The future deterministic Arithmetic
+Engine creates the `INFERRED` result.
+
+### 17.14 Workflow `required_facts`
+
+Step 6 does NOT create `UNKNOWN` placeholder facts merely because a
+workflow requires a fact. Step 6 does NOT create `EvidenceGap` objects from
+workflow `required_facts`. Step 6 does NOT receive `WorkflowDefinition`.
+
+Later workflow completeness / validation compares
+`WorkflowDefinition.required_facts` against extracted + derived facts and
+creates missing-fact/evidence signals. This keeps document extraction
+separate from workflow completeness.
+
+### 17.15 Absence representation
+
+Step 6 is presence-oriented.
+
+- If RFN is present: extract `FactType.RFN`.
+- If DIN is present: extract `FactType.DIN`.
+- If neither is found: Step 6 does NOT fabricate `"DIN absent"` /
+  `"RFN absent"` facts. `CommunicationIdentifierStatus.NEITHER_FOUND` is
+  derived by Step 7 preflight from the absence of RFN/DIN facts.
+
+Similarly, if a notice references Annexure A, extract
+`REFERENCED_ANNEXURE`. Whether the annexure was actually supplied is
+determined later by comparing document references against available
+uploaded documents. Step 6 does not create an `EvidenceGap` solely from
+absence in raw notice text.
+
+### 17.16 Authority handling
+
+Step 6 may extract `AUTHORITY_NAME`, `AUTHORITY_DESIGNATION`,
+`AUTHORITY_OFFICE` and `JURISDICTION_TEXT` as document-native `CONFIRMED`
+facts when explicitly printed.
+
+It must NOT conclude:
+
+- officer is legally competent;
+- officer lacks jurisdiction;
+- notice is valid/invalid.
+
+Those belong to later verified legal/preflight checks.
+
+### 17.17 DIN / RFN handling
+
+DIN/RFN values explicitly printed are document-native facts; their presence
+may be `CONFIRMED`.
+
+Step 6 must NEVER conclude `missing DIN = invalid notice` or
+`presence of DIN/RFN = legally valid notice`. Authentication / portal
+verification is Step 7+ behavior.
+
+### 17.18 Notice-stated due date
+
+An explicitly printed due date is:
+
+```text
+FactType.STATED_DUE_DATE
+FactStatus.CONFIRMED
+DraftPermission.YES
+```
+
+with source provenance.
+
+It is document data only. It is NOT inserted into `DeadlineResult` as a
+calculated deadline and is NOT recalculated by Step 6. Future presentation
+may compare the notice-stated due date against the independently calculated
+deadline and warn when they conflict (§6.5).
+
+### 17.19 Sections / rules / notifications
+
+Use one `ExtractedFact` per explicit citation:
+
+```text
+FactType.STATUTORY_SECTION
+FactType.STATUTORY_RULE
+FactType.STATUTORY_NOTIFICATION
+```
+
+Only citations appearing in the notice are extracted. Step 6 does NOT add
+external legal authorities from model knowledge. It does NOT verify whether
+the cited provision is legally correct/current — that belongs to the future
+Legal Knowledge / Validation layers.
+
+### 17.20 Departmental allegation rule
+
+The extraction prompt must instruct the LLM to categorize departmental
+claims of wrongdoing/liability as `FactType.DEPARTMENT_ALLEGATION`. Python
+then forces `FactStatus.ALLEGED` and `DraftPermission.CONDITIONAL`. The LLM
+cannot upgrade it.
+
+Examples include: fraud, suppression, wilful misstatement, ineligible ITC,
+alleged unpaid tax, alleged short payment, wrongful refund, other asserted
+contraventions/liability.
+
+Do NOT build a large homemade allegation-NLP engine in Step 6. Safety is
+layered:
+
+1. focused extraction prompt;
+2. closed `FactType` contract;
+3. Python-owned status;
+4. provenance requirement;
+5. workflow special rules;
+6. later Validation Engine;
+7. CA review.
+
+### 17.21 Claim framing rule
+
+The extraction prompt must distinguish document-native facts
+(`"The notice states/proposes/shows X"`) from liability conclusions
+(`"The taxpayer owes X"`).
+
+For `DEPARTMENT_ALLEGATION` candidates, claims should preserve attribution,
+for example: `"Department alleges ineligible ITC of ₹5,00,000."` Do not
+rewrite an allegation into an established taxpayer fact.
+
+Python need not implement general natural-language rewriting in Step 6. The
+structured `FactStatus` remains authoritative.
+
+### 17.22 TRIAGE_ONLY / UNKNOWN
+
+Use the same Fact Engine for `DEEP_WORKFLOW`, `TRIAGE_ONLY` and `UNKNOWN`.
+There is no second fact-extraction LLM surface.
+
+For `TRIAGE_ONLY` and `UNKNOWN`, the Fact Engine may preserve
+document-native information such as: notice reference; form-related facts
+if present in text; authority; GSTIN / taxpayer; sections/rules/
+notifications; dates; stated due date; hearing details; amounts;
+departmental allegations; requested documents; referenced annexures;
+RFN/DIN.
+
+It does not create specialist legal defences or workflow requirements.
+
+### 17.23 LLM routing / prompt safety
+
+Exactly ONE focused fact-extraction LLM call per extraction request. All
+calls must go through `modules/llm_client.py` and the existing router — no
+direct Gemini SDK use.
+
+Raw notice text must be delimited as untrusted DATA. Instructions appearing
+inside notice text must be ignored as instructions.
+
+The LLM call performs extraction only. It must not:
+
+- calculate;
+- classify the proceeding again;
+- change `SupportLevel`;
+- perform legal research;
+- draft replies;
+- propose defences;
+- decide jurisdiction;
+- decide notice validity;
+- determine taxpayer liability.
+
+### 17.24 Step 6 file plan
+
+After this spec-only amendment, implementation is split into two controlled
+pieces:
+
+**Step 6.1 — additive `FactType` model contract**
+
+Modify:
+
+```text
+domain/models.py
+tests/test_taxonomy_models.py or a dedicated fact-model test file
+```
+
+Add:
+
+```text
+FactType enum
+ExtractedFact.fact_type with backward-compatible default
+```
+
+No fact engine yet.
+
+**Step 6.2 — Fact Engine**
+
+Create:
+
+```text
+domain/fact_engine.py
+tests/test_fact_engine.py
+```
+
+No other files.
+
+This split preserves one architectural unit per commit.
+
+### 17.25 Validation responsibility
+
+Step 6 performs basic structural and provenance validation described above
+(§17.9, §17.11).
+
+Step 8 remains responsible for deeper validation such as:
+
+- workflow completeness;
+- fact conflicts;
+- semantic duplication/consolidation;
+- ensuring `special_rules` are enforced;
+- checking final draft use;
+- evidence-gap generation;
+- cross-layer consistency.
+
+---
+
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
