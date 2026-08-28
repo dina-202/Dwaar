@@ -3,30 +3,31 @@
 
 **Last Updated :** 2026-08-28
 **By            :** Claude Code
-**Prompt Count  :** 24
+**Prompt Count  :** 26
 
 ---
 
 ## CURRENT STATE
 ```
-Phase       : COMMITTED THROUGH 1.6 — LLM provider/key routing layer in place
+Phase       : PHASE 2 STEP 1 DONE — domain/models.py created per spec
 Git         : HEAD = 7784bb4 "Phase 1.6: provider-agnostic LLM router,
               numbered Gemini key pool, quota/transient/auth failover,
               15 unit tests pass" (committed 2026-08-28). Phase 1.5 committed
-              as d71bcea. This PROJECT_MEMORY update is committed in the
-              follow-up commit immediately after 7784bb4.
-Working     : Phases 1.5 and 1.6 both committed, working tree clean.
-              1.5 (d71bcea): all four notice baselines + metadata, golden
-              structural expectations, docs/testing/REGRESSION_STRATEGY.md.
-              1.6 (7784bb4): modules/llm_router.py, reworked
-              modules/llm_client.py (public API unchanged), 15 passing
-              stdlib unit tests, docs/architecture/LLM_ROUTING.md. Live
-              verification on NOTICE_4 succeeded 2026-08-27 (8/8 sections,
-              key_slot=gemini_01, provider=google, no secret leaks).
+              as d71bcea. Phase 2 Step 1 is UNCOMMITTED: domain/__init__.py,
+              domain/models.py, plus Dina's new authoritative spec
+              docs/architecture/ARCHITECTURE_SPEC_v1.md (all untracked).
+Working     : Phases 1.5/1.6 committed. Phase 2 Step 1: Dina placed the
+              authoritative spec at docs/architecture/ARCHITECTURE_SPEC_v1.md
+              (supersedes the older root ARCHITECTURE_SPEC_V1.md for Phase 2,
+              left untouched); domain/ package created with models.py
+              implementing §3 exactly — 8 enums, 7 dataclasses, stdlib only,
+              no logic, not wired to app. CHECK 1 + CHECK 2 passed.
+              FactStatus terminology resolved (Dina 2026-08-28): ALLEGED is
+              canonical; spec §4.3 corrected to match.
 Broken      : none.
-Next Task   : (Dina) review Phases 1.5 + 1.6; optionally add GEMINI_API_KEY_2..N
-              to .env for extra failover slots. STOP — no Phase 2 (classifier/
-              workflow/database/legal/prompt split/DeepSeek) without instruction.
+Next Task   : Phase 2 Step 2 — domain/deadline_engine.py (pure Python, never
+              LLM) + tests/test_deadline_engine.py, 8 cases per spec §7. Do
+              not start without Dina's go.
 ```
 
 ---
@@ -44,6 +45,9 @@ Next Task   : (Dina) review Phases 1.5 + 1.6; optionally add GEMINI_API_KEY_2..N
 | .gitignore | ✅ created — .env is ignored |
 | modules/__init__.py | ✅ created — empty |
 | modules/domain_models.py | ✅ created (Phase 1) — typed dataclasses/enums, stdlib only, NOT wired to app |
+| domain/__init__.py | ✅ created (Phase 2 Step 1) — empty package marker |
+| domain/models.py | ✅ created (Phase 2 Step 1) — ARCHITECTURE_SPEC_v1.md §3 exactly: 8 enums + 7 dataclasses, stdlib only, NOT wired |
+| docs/architecture/ARCHITECTURE_SPEC_v1.md | ✅ placed by Dina (Phase 2 start) — authoritative Phase 2 contract, supersedes root ARCHITECTURE_SPEC_V1.md |
 | tests/run_regression.py | ✅ created (Phase 1) — stdlib-only runner, runs existing pipeline on 4 fixtures |
 | tests/baselines/NOTICE_4_RCM_Sec73_DRC01.baseline.md | ✅ created (Phase 1) — runtime baseline, 19,159 chars |
 | tests/baselines/NOTICE_4_RCM_Sec73_DRC01.metadata.json | ✅ created (Phase 1) — baseline metadata |
@@ -57,7 +61,7 @@ Next Task   : (Dina) review Phases 1.5 + 1.6; optionally add GEMINI_API_KEY_2..N
 | tests/test_llm_router.py | ✅ created (Phase 1.6, committed 7784bb4) — 15 stdlib unittest tests, all PASS, simulated providers only |
 | docs/architecture/LLM_ROUTING.md | ✅ created (Phase 1.6, committed 7784bb4) — routing design, sections A–I |
 
-**Folders:** modules/ ✅ · prompts/ ✅ · data/sample_notices/ ✅
+**Folders:** modules/ ✅ · prompts/ ✅ · data/sample_notices/ ✅ · domain/ ✅
 
 **Test PDFs in data/sample_notices/:**
 | File | Source | Pages | Chars extracted |
@@ -74,6 +78,72 @@ Next Task   : (Dina) review Phases 1.5 + 1.6; optionally add GEMINI_API_KEY_2..N
 
 ## SESSION LOG
 > Most recent prompt at the TOP
+
+[PROMPT #26 — FACTSTATUS RESOLUTION — 10:15]
+Task     : Read the three docs; apply Dina's decision (canonical
+           FactStatus.ALLEGED = "alleged"): edit spec §4.3's single
+           "ALLEGED_BY_DEPARTMENT" occurrence, repo-wide search for the old
+           name, re-run the Step 1 import check, update memory, STOP.
+Did      : (1) Edited docs/architecture/ARCHITECTURE_SPEC_v1.md §4.3:
+           "Every allegation → ALLEGED_BY_DEPARTMENT" → "Every allegation →
+           ALLEGED" — the only spec change. (2) domain/models.py NOT
+           modified (already implements the canonical §3.1 definition).
+           (3) Repo-wide grep after the edit: zero hits in the two Phase 2
+           contract files (docs spec + domain/models.py). Remaining hits are
+           all intentional legacy/historical artifacts: root
+           ARCHITECTURE_SPEC_V1.md §3.4 (superseded doc), IMPLEMENTATION_PLAN
+           (1).md Step 3 (pre-Phase-2 plan), modules/domain_models.py (Phase
+           1 enum, do-not-modify), CURRENT_ARCHITECTURE_AUDIT.md (read-only
+           snapshot), PROJECT_MEMORY.md history + this update. None
+           unintended; none touched (no authorization). (4) Step 1 import
+           check re-run: "All imports OK" — nothing broken. (5) Memory
+           updated (this entry; gotcha marked RESOLVED; prompt count 26).
+Files    : MODIFIED docs/architecture/ARCHITECTURE_SPEC_v1.md (§4.3 one
+           line), PROJECT_MEMORY.md (this update). VERIFIED UNCHANGED:
+           domain/models.py, domain/__init__.py, all other source, prompt,
+           test, baseline, expectation, PDF files.
+Errors   : none.
+Attempts : 1
+Fix      : n/a
+Status   : DONE
+
+[PROMPT #25 — PHASE 2 STEP 1 — 09:51]
+Task     : Phase 2 — Step 1 ONLY: re-read AGENTS.md, PROJECT_MEMORY.md and
+           the authoritative spec docs/architecture/ARCHITECTURE_SPEC_v1.md
+           (Dina placed it there after the first attempt was blocked — the
+           15 named types existed nowhere in the repo); create domain/
+           __init__.py + domain/models.py implementing spec §3 exactly;
+           stdlib only; run CHECK 1-4; STOP after Step 1.
+Did      : (1) First attempt blocked: task named types no file in the repo
+           defined; asked Dina — she placed the authoritative spec at
+           docs/architecture/ARCHITECTURE_SPEC_v1.md (new Phase 2 contract;
+           the older root ARCHITECTURE_SPEC_V1.md is superseded for Phase 2,
+           left in place untouched). (2) Re-read AGENTS.md +
+           PROJECT_MEMORY.md (unchanged) and the new spec in full.
+           (3) Created domain/ package: models.py implements §3 verbatim —
+           enums ProceedingType, FactStatus, DraftPermission,
+           DeadlineConfidence, DeadlineStatus, HearingStatus, IssueSeverity,
+           ValidationStatus and dataclasses ExtractedFact, DeadlineResult,
+           EvidenceGap, PotentialDefence, ValidationCheck, ValidationResult,
+           NoticeAnalysis. Only stdlib imports (enum, dataclasses, typing,
+           datetime). No logic, no LLM, no wiring. (4) CHECK 1 passed
+           ("All imports OK"); CHECK 2 passed ("ExtractedFact OK: F-001
+           confirmed yes" / "STEP 1 COMPLETE"); CHECK 3: import lines are
+           stdlib-only; CHECK 4: git status clean except new untracked
+           domain/ + the new spec doc. (5) Flagged to Dina: spec-internal
+           inconsistency — §3.1 defines FactStatus.ALLEGED ("alleged") but
+           §4.3 rule text says "ALLEGED_BY_DEPARTMENT"; implemented §3.1
+           exactly, needs reconciling before Step 5 (fact_engine).
+Files    : NEW domain/__init__.py, domain/models.py. MODIFIED
+           PROJECT_MEMORY.md (this update). VERIFIED UNCHANGED: app.py,
+           modules/* (incl. domain_models.py), prompts/notice_prompt.txt,
+           requirements.txt, all sample PDFs, tests/*, baselines,
+           expectations, .env.
+Errors   : none. (First-attempt blocker was a missing spec file, resolved by
+           Dina placing the document — not a code error.)
+Attempts : 1 (after the spec was provided)
+Fix      : n/a
+Status   : DONE
 
 [PROMPT #24 — COMMIT PHASES 1.5 + 1.6 — 01:13]
 Task     : Commit all uncommitted work. Phase 1.5 commit (skip files already
@@ -758,6 +828,17 @@ Fix     : Use https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dumm
 - `python` IS on PATH (C:\Users\dines\AppData\Local\Programs\Python\Python312\
   python.exe), so `python -m streamlit run app.py` is the reliable command.
 - Verified 2026-08-26: server up on localhost:8501, HTTP 200, /_stcore/health -> "ok".
+
+**Spec v1 terminology — RESOLVED 2026-08-28: FactStatus.ALLEGED is canonical**
+- Dina's decision: FactStatus.ALLEGED = "alleged" is the canonical term.
+  Spec §4.3's single "Every allegation → ALLEGED_BY_DEPARTMENT" was
+  corrected to "Every allegation → ALLEGED" in
+  docs/architecture/ARCHITECTURE_SPEC_v1.md.
+- domain/models.py already implements §3.1 exactly — unchanged.
+- Legacy files still contain the old name (root ARCHITECTURE_SPEC_V1.md
+  §3.4, IMPLEMENTATION_PLAN (1).md, modules/domain_models.py Phase 1 enum,
+  CURRENT_ARCHITECTURE_AUDIT.md, historical log entries) — intentional,
+  they are superseded/historical artifacts; do NOT "fix" them.
 
 ---
 
