@@ -298,6 +298,25 @@ def _safe_unknown_classification(reason: str) -> NoticeClassification:
     )
 
 
+# Section 74A hard blocker (§10.1, §15 guardrail 16, §13 Step 4 follow-up):
+# explicit presence of the statutory marker "section 74a" rejects deep
+# promotion into the current Section 73/74 demand workflows. Section 74A
+# has no Phase-2 deep workflow; the future legal/rule subsystem handles
+# temporal applicability. The Section-129 enforcement validator is NOT
+# affected.
+_SECTION_74A_BLOCKED_DEEP_TYPES = {
+    ProceedingType.GST_SEC73_ITC,
+    ProceedingType.GST_SEC73_GENERAL,
+    ProceedingType.GST_SEC73_RCM,
+    ProceedingType.GST_SEC74_FRAUD,
+}
+
+
+def _section_74a_present(raw_text: str) -> bool:
+    """Deterministic explicit Section-74A marker check (plain substring)."""
+    return _has_marker(raw_text, "section 74a")
+
+
 def classify_notice(raw_text: str) -> NoticeClassification:
     """Classify a notice: one LLM call, then deterministic Python validation.
 
@@ -365,14 +384,28 @@ def classify_notice(raw_text: str) -> NoticeClassification:
                 f"corrected to {registry_family.name}"
             )
         family = registry_family
-        if proceeding in _DEEP_PROCEEDING_TYPES and _deep_markers_satisfied(
-            proceeding, form, raw_text
+        # Explicit Section 74A presence is a hard deep-promotion blocker for
+        # the four DRC-01 demand workflows, checked before any marker set.
+        section_74a_blocked = (
+            proceeding in _SECTION_74A_BLOCKED_DEEP_TYPES
+            and _section_74a_present(raw_text)
+        )
+        if (
+            proceeding in _DEEP_PROCEEDING_TYPES
+            and not section_74a_blocked
+            and _deep_markers_satisfied(proceeding, form, raw_text)
         ):
             support_level = SupportLevel.DEEP_WORKFLOW
             reasons.append(f"deep workflow validated: {proceeding.name}")
         else:
             if proceeding in _DEEP_PROCEEDING_TYPES:
-                if proceeding == ProceedingType.GST_SEC73_GENERAL and (
+                if section_74a_blocked:
+                    reasons.append(
+                        f"deep proceeding {proceeding.name} rejected: "
+                        "Section 74A marker present (no Phase-2 "
+                        "Section-74A workflow)"
+                    )
+                elif proceeding == ProceedingType.GST_SEC73_GENERAL and (
                     _itc_marker_set_satisfied(raw_text)
                     or _rcm_marker_set_satisfied(raw_text)
                 ):

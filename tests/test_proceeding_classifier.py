@@ -15,6 +15,7 @@ Coverage:
   Group 6 — NOTICE_1..4 expectation contracts via synthetic marker strings
   Group 7 — Section-130-only safety
   Group 8 — completely unknown notices
+  Group 9 — Section-74A hard blocker for the four DRC-01 demand workflows
 
 Runnable with Python's standard library unittest only:
     python -m unittest tests/test_proceeding_classifier.py -v
@@ -742,6 +743,137 @@ class Section130Tests(unittest.TestCase):
     def test_no_fake_section_130_notice_form(self):
         self.assertFalse(hasattr(NoticeForm, "SECTION_130"))
         self.assertFalse(hasattr(NoticeForm, "SEC_130"))
+
+
+class Section74ABlockerTests(unittest.TestCase):
+    """Group 9 — explicit Section 74A is a hard deep-promotion blocker for the
+    four DRC-01 demand workflows (§10.1, §15 guardrail 16, §13 Step 4
+    follow-up).
+
+    Each case carries the markers that would otherwise promote the proposed
+    deep type, so these tests fail if the blocker is removed.
+    """
+
+    def test_sec74a_blocks_itc_candidate(self):
+        result, _ = run_classifier(
+            "GST DRC-01 demand notice under Section 73 of the CGST Act, "
+            "read with Section 74A. Input tax credit availed under "
+            "section 16(2)(aa).",
+            candidate_json(proceeding_type="GST_SEC73_ITC", confidence="HIGH"),
+        )
+        assert_classification(
+            self,
+            result,
+            NoticeForm.DRC_01,
+            NoticeFamily.DEMAND_ADJUDICATION,
+            ProceedingType.UNKNOWN,
+            SupportLevel.TRIAGE_ONLY,
+        )
+        self.assertIn("Section 74A", " ".join(result.classification_reasons))
+
+    def test_sec74a_blocks_general_candidate(self):
+        result, _ = run_classifier(
+            "GST DRC-01 demand notice under Section 73 of the CGST Act, "
+            "read with Section 74A. Tax not paid on outward supplies.",
+            candidate_json(
+                proceeding_type="GST_SEC73_GENERAL", confidence="HIGH"
+            ),
+        )
+        assert_classification(
+            self,
+            result,
+            NoticeForm.DRC_01,
+            NoticeFamily.DEMAND_ADJUDICATION,
+            ProceedingType.UNKNOWN,
+            SupportLevel.TRIAGE_ONLY,
+        )
+
+    def test_sec74a_blocks_rcm_candidate(self):
+        result, _ = run_classifier(
+            "GST DRC-01 notice under Section 73 of the CGST Act, "
+            "read with Section 74A. Liability on reverse charge basis.",
+            candidate_json(proceeding_type="GST_SEC73_RCM", confidence="HIGH"),
+        )
+        assert_classification(
+            self,
+            result,
+            NoticeForm.DRC_01,
+            NoticeFamily.DEMAND_ADJUDICATION,
+            ProceedingType.UNKNOWN,
+            SupportLevel.TRIAGE_ONLY,
+        )
+
+    def test_sec74a_blocks_fraud_candidate(self):
+        # Canonical silent-mapping danger: "Section 74A" contains the
+        # substring "Section 74", which alone would otherwise satisfy the
+        # fraud deep markers. The blocker must fire first.
+        result, _ = run_classifier(
+            "GST DRC-01 show-cause notice under Section 74A of the CGST Act. "
+            "Fraud and wilful suppression of facts alleged.",
+            candidate_json(
+                proceeding_type="GST_SEC74_FRAUD", confidence="HIGH"
+            ),
+        )
+        assert_classification(
+            self,
+            result,
+            NoticeForm.DRC_01,
+            NoticeFamily.DEMAND_ADJUDICATION,
+            ProceedingType.UNKNOWN,
+            SupportLevel.TRIAGE_ONLY,
+        )
+
+    def test_high_confidence_does_not_bypass_sec74a_blocker(self):
+        result, _ = run_classifier(
+            "GST DRC-01 demand notice under Section 74A of the CGST Act. "
+            "Short payment of output tax alleged.",
+            candidate_json(
+                proceeding_type="GST_SEC73_GENERAL", confidence="HIGH"
+            ),
+        )
+        self.assertIs(result.proceeding_type, ProceedingType.UNKNOWN)
+        self.assertIs(result.support_level, SupportLevel.TRIAGE_ONLY)
+
+    def test_sec74a_blocker_does_not_apply_to_sec129_validator(self):
+        # Scope boundary: the Section-74A blocker covers the four DRC-01
+        # demand workflows only; the separate Section-129 enforcement
+        # validator is unchanged.
+        result, _ = run_classifier(
+            "MOV-series communication. Goods detained under Section 129 "
+            "of the CGST Act. Section 74A is also mentioned in the order.",
+            candidate_json(
+                notice_form="MOV_SERIES",
+                notice_family="ENFORCEMENT",
+                proceeding_type="GST_SEC129_ENFORCE",
+                confidence="HIGH",
+            ),
+        )
+        assert_classification(
+            self,
+            result,
+            NoticeForm.MOV_SERIES,
+            NoticeFamily.ENFORCEMENT,
+            ProceedingType.GST_SEC129_ENFORCE,
+            SupportLevel.DEEP_WORKFLOW,
+        )
+
+    def test_no_section_74a_enum_or_form_was_invented(self):
+        # §13 Step 4 follow-up: no GST_SEC74A deep type or Section-74A
+        # NoticeForm may be invented in Phase 2.
+        self.assertFalse(hasattr(ProceedingType, "GST_SEC74A"))
+        self.assertFalse(hasattr(ProceedingType, "GST_SEC74A_GENERAL"))
+        self.assertFalse(hasattr(NoticeForm, "SECTION_74A"))
+        self.assertEqual(
+            {member.name for member in ProceedingType},
+            {
+                "GST_SEC73_GENERAL",
+                "GST_SEC73_ITC",
+                "GST_SEC73_RCM",
+                "GST_SEC74_FRAUD",
+                "GST_SEC129_ENFORCE",
+                "UNKNOWN",
+            },
+        )
 
 
 class UnknownNoticeTests(unittest.TestCase):
