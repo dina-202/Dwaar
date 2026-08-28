@@ -3,31 +3,53 @@
 
 **Last Updated :** 2026-08-28
 **By            :** Claude Code
-**Prompt Count  :** 27
+**Prompt Count  :** 29
 
 ---
 
 ## CURRENT STATE
 ```
-Phase       : PHASE 2 STEP 2 DONE — deadline engine + 8 spec tests, all PASS
-Git         : HEAD = 2b5d73b "Phase 2 Step 1: domain model contracts and
-              FactStatus resolution" (committed 2026-08-28). Phase 1.5/1.6
-              committed as d71bcea / 7784bb4. Phase 2 Step 2 is UNCOMMITTED:
-              domain/deadline_engine.py, tests/test_deadline_engine.py.
-              NOTE: "IMPLEMENTATION_PLAN (1).md" → IMPLEMENTATION_PLAN.md
-              rename is visible in git status — made outside this session,
-              not touched by the agent.
-Working     : Phase 2 Step 2: domain/deadline_engine.py implements spec §4.2
-              deterministically — stdlib + domain.models only, no LLM, no
-              network, never guesses (UNKNOWN on missing inputs);
-              tests/test_deadline_engine.py has exactly the 8 spec §7 cases,
-              all PASS via stdlib unittest (0.001s). Not wired to app.
-              Spec ambiguities flagged to Dina: stated-deadline input gap;
-              rule-1 ESTIMATED scope. No commit issued (Dina drives commits).
+Phase       : PHASE 2 STEPS 1 + 2 DONE AND COMMITTED (fd031f7).
+              ARCHITECTURE SPEC v1.1 FINALIZED (2026-08-28) — 16 approved
+              decisions applied. AUTHORITATIVE SPEC FOR ALL PHASE 2 WORK
+              FROM STEP 2.5 ONWARD:
+              docs/architecture/ARCHITECTURE_SPEC_v1_1.md
+              ARCHITECTURE_SPEC_v1.md is HISTORICAL (top-of-file superseded
+              notice added; substantive content untouched; Steps 1+2 built
+              under it remain valid).
+Git         : HEAD = fd031f7 "Phase 2 Step 2: deterministic deadline engine
+              and 8 spec tests" (committed 2026-08-28). Phase 1.5/1.6 and
+              Step 1 committed as d71bcea / 7784bb4 / 2b5d73b. Working tree:
+              v1.1 spec finalization UNCOMMITTED (PROJECT_MEMORY.md,
+              ARCHITECTURE_SPEC_v1.md superseded notice, new
+              ARCHITECTURE_SPEC_v1_1.md). NOTE: "IMPLEMENTATION_PLAN (1).md"
+              → IMPLEMENTATION_PLAN.md rename was visible in git status —
+              made outside this session, not touched by the agent.
+Working     : Spec finalization only (this prompt): v1.1 DRAFT finalized and
+              renamed to ARCHITECTURE_SPEC_v1_1.md. 16 decisions applied:
+              ClassificationConfidence (qualitative), LLM-classify + Python-
+              validate split (registry authoritative for SupportLevel),
+              final NoticeClassification contract (no sections_cited/
+              rules_cited), CommunicationIdentifierStatus + separate
+              portal_verification_required, AuthorityDetailsStatus +
+              authority_verification_required, stated due date =
+              ExtractedFact (engine untouched), S130 = UNKNOWN/ENFORCEMENT/
+              UNKNOWN/TRIAGE_ONLY, deterministic triage rendering (no LLM
+              drafting), severity escalation rule (workflow CRITICAL OR
+              deadline CRITICAL/PASSED → attention CRITICAL; NOTICE_3 =
+              HIGH+CRITICAL+CRITICAL valid), ArithmeticStatus only in 2.5,
+              NoticeAnalysis untouched in 2.5, special_rules guardrail,
+              legacy pipeline retirement after 4 fixtures, one-stage
+              diagram, LLM routing rule. No code/tests/prompts touched.
 Broken      : none.
-Next Task   : Phase 2 Step 3 — workflows/gst/ definitions per spec §7
-              (base WorkflowDefinition + 5 workflow files, Python objects,
-              no LLM, no wiring). Do not start without Dina's go.
+Next Task   : PHASE 2 STEP 2.5 (per v1.1 §13) — additive amendment of
+              domain/models.py: NoticeFamily, NoticeForm, SupportLevel,
+              ClassificationConfidence, CommunicationIdentifierStatus,
+              AuthorityDetailsStatus, ArithmeticStatus enums +
+              NoticeClassification dataclass (v1.1 §5.4) + unit tests.
+              Do NOT create ArithmeticResult, do NOT modify NoticeAnalysis,
+              do NOT touch domain/deadline_engine.py / DeadlineResult.
+              Await Dina's go before starting Step 2.5.
 ```
 
 ---
@@ -49,7 +71,8 @@ Next Task   : Phase 2 Step 3 — workflows/gst/ definitions per spec §7
 | domain/models.py | ✅ created (Phase 2 Step 1) — ARCHITECTURE_SPEC_v1.md §3 exactly: 8 enums + 7 dataclasses, stdlib only, NOT wired |
 | domain/deadline_engine.py | ✅ created (Phase 2 Step 2) — spec §4.2 deterministic engine, stdlib + domain.models only, never LLM, NOT wired |
 | tests/test_deadline_engine.py | ✅ created (Phase 2 Step 2) — exactly the 8 spec §7 cases, stdlib unittest, all PASS |
-| docs/architecture/ARCHITECTURE_SPEC_v1.md | ✅ placed by Dina (Phase 2 start) — authoritative Phase 2 contract, supersedes root ARCHITECTURE_SPEC_V1.md |
+| docs/architecture/ARCHITECTURE_SPEC_v1.md | 📜 HISTORICAL (superseded 2026-08-28) — Steps 1+2 built under it remain valid; top-of-file superseded notice added, substantive content untouched, never merge v1.1 content into it |
+| docs/architecture/ARCHITECTURE_SPEC_v1_1.md | ✅ FINALIZED (2026-08-28) — AUTHORITATIVE spec for all Phase 2 work from Step 2.5 onward; 16 approved decisions applied; v1.1 DRAFT renamed to this file |
 | tests/run_regression.py | ✅ created (Phase 1) — stdlib-only runner, runs existing pipeline on 4 fixtures |
 | tests/baselines/NOTICE_4_RCM_Sec73_DRC01.baseline.md | ✅ created (Phase 1) — runtime baseline, 19,159 chars |
 | tests/baselines/NOTICE_4_RCM_Sec73_DRC01.metadata.json | ✅ created (Phase 1) — baseline metadata |
@@ -80,6 +103,140 @@ Next Task   : Phase 2 Step 3 — workflows/gst/ definitions per spec §7
 
 ## SESSION LOG
 > Most recent prompt at the TOP
+
+[PROMPT #29 — V1.1 SPEC FINALIZATION — 21:20]
+Task     : Finalize ARCHITECTURE_SPEC_v1_1_DRAFT.md as
+           ARCHITECTURE_SPEC_v1_1.md applying 16 approved decisions exactly
+           (confidence enum, classifier-vs-registry split, final
+           NoticeClassification contract, identifier/authority signal-vs-
+           verification modeling, stated-due-date = ExtractedFact,
+           S130 modeling, deterministic triage rendering, severity
+           escalation, ArithmeticStatus only, NoticeAnalysis untouched in
+           2.5, special_rules guardrail, legacy retirement, authority/merge
+           mechanics, one-stage diagram, LLM routing rule). Rename draft →
+           final; v1 gets superseded notice only; update PROJECT_MEMORY;
+           consistency review; STOP. No commit, no Step 2.5, no Gemini, no
+           code/tests/prompts/modules touched.
+Did      : (1) Read AGENTS.md, PROJECT_MEMORY.md, ARCHITECTURE_SPEC_v1.md,
+           v1.1 DRAFT, domain/models.py, domain/deadline_engine.py.
+           (2) Wrote docs/architecture/ARCHITECTURE_SPEC_v1_1.md — the
+           finalized spec: header states FINAL + AUTHORITATIVE from
+           Step 2.5 onward; §2 diagram redrawn as ONE classification stage
+           (Document Extraction → Focused Notice Classification → Python
+           Taxonomy Validation → Practical Preflight → Support Gate;
+           DEEP: Workflow Registry → Fact Engine → Deadline/Arithmetic →
+           Reasoning/Draft → Validation; TRIAGE: Fact Extraction/Preflight →
+           Deterministic Triage Renderer → CA Review; no second proceeding
+           classifier; preflight/deadline present on BOTH paths) + complete
+           Phase-2 LLM surface list (classification / fact extraction /
+           deep drafting via modules/llm_client.py + router); §3.9 S130
+           modeling rule (UNKNOWN/ENFORCEMENT/UNKNOWN/TRIAGE_ONLY, not a
+           NoticeForm value); §5.4 final NoticeClassification contract
+           (family/form/proceeding/support/confidence/classification_
+           reasons — sections_cited & rules_cited REMOVED) + new §5.5
+           ClassificationConfidence (HIGH/MEDIUM/LOW/UNKNOWN, qualitative);
+           §6.2 CommunicationIdentifierStatus (RFN_PRESENT/DIN_PRESENT/
+           BOTH_PRESENT/NEITHER_FOUND/UNKNOWN) + separate
+           portal_verification_required bool, DIN-missing ≠ invalid;
+           §6.3 AuthorityDetailsStatus (PRESENT/PARTIAL/MISSING/UNKNOWN) +
+           separate authority_verification_required bool; §6.5 stated due
+           date = ExtractedFact/preflight datum, engine + DeadlineResult
+           untouched, 5-point presentation rule (stated/calculated/both/
+           conflict-warning/not-confirmable); §6.7 ArithmeticStatus
+           (PASS/MISMATCH/INSUFFICIENT_DATA), full ArithmeticResult deferred
+           to Step 7; §9 classifier rewritten as Part A LLM (apparent form/
+           family/candidate proceeding/reasons/confidence — never decides
+           SupportLevel) + Part B Python validation (authoritative
+           SupportLevel, final NoticeClassification) + S130 example;
+           §10 severity escalation rule (attention CRITICAL when workflow
+           default CRITICAL OR deadline CRITICAL OR deadline PASSED;
+           NOTICE_3 HIGH+CRITICAL+CRITICAL valid) + special_rules guardrail
+           (deterministic check or mandatory CA gate, never decorative);
+           §11 triage output contract = deterministic template rendering,
+           exact may-display list (incl. CA escalation message) and
+           must-not-invent list (no extra evidence requirements/defences/
+           reply forms/filing-ready replies/legal conclusions); §12 S130
+           row made explicit (UNKNOWN form, not a registry entry); §13
+           Step 2.5 lists the exact 7 enums + NoticeClassification, bans
+           ArithmeticResult/NoticeAnalysis/deadline-engine changes; Step 10
+           legacy = temporary fallback retired in dedicated cleanup after
+           all 4 fixtures pass the structured pipeline; §15 guardrails
+           extended 11-15 (one classification stage, LLM router rule,
+           special_rules, stated-date separation, signal-vs-verification).
+           (3) ARCHITECTURE_SPEC_v1.md: added ONLY the small top-of-file
+           superseded notice pointing to v1.1 — no substantive content
+           changed. (4) Deleted the DRAFT file (final doc replaces it).
+           (5) Consistency review: grep-verified final doc contains no
+           leftover DRAFT-isms (no "merged into ARCHITECTURE_SPEC_v1", no
+           "REQUIRES_PORTAL_VERIFICATION", no "REQUIRES_AUTHORITY_
+           VERIFICATION", no "Proceeding/Issue Classifier" second stage,
+           no sections_cited/rules_cited in §5.4); Steps 1+2 artifacts
+           (domain/models.py, domain/deadline_engine.py, 8 tests) verified
+           unchanged and compatible (v1.1 §6.5 explicitly keeps engine
+           signature). No BLOCKING contradiction remains.
+Files    : NEW docs/architecture/ARCHITECTURE_SPEC_v1_1.md (final spec).
+           DELETED docs/architecture/ARCHITECTURE_SPEC_v1_1_DRAFT.md
+           (renamed to final). MODIFIED
+           docs/architecture/ARCHITECTURE_SPEC_v1.md (superseded notice at
+           top only), PROJECT_MEMORY.md (this entry; CURRENT STATE; FILE
+           STATUS rows; gotcha; decisions row; prompt count 28→29).
+           VERIFIED UNCHANGED: domain/models.py, domain/deadline_engine.py,
+           tests/, modules/, prompts/, app.py, requirements.txt.
+Errors   : none.
+Attempts : 1
+Fix      : n/a
+Status   : DONE (STOPPED per instruction — no commit, no Step 2.5)
+
+[PROMPT #28 — V1.1 ARCHITECTURE REVIEW — 19:26]
+Task     : Review docs/architecture/ARCHITECTURE_SPEC_v1_1_DRAFT.md against
+           v1 Phase 2 architecture. Read-only. NO code implementation, no
+           taxonomy code, no Gemini, no prompt updates, no Step 3 start.
+           Report 10 items: new concepts, changed decisions, models.py
+           amendment need, deadline_engine compatibility, v1.1-internal
+           contradictions, v1.1-vs-committed contradictions, unclear fields,
+           Step 2.5 blockers, Step 2.5 files, migration risks.
+Did      : Read AGENTS.md, PROJECT_MEMORY.md, ARCHITECTURE_SPEC_v1.md,
+           ARCHITECTURE_SPEC_v1_1_DRAFT.md, domain/models.py,
+           domain/deadline_engine.py. Produced full 10-section review in
+           chat (no doc file created). Key findings: (1) v1.1 adds
+           NoticeFamily/NoticeForm/SupportLevel enums + NoticeClassification
+           dataclass + preflight/authenticity/authority/arithmetic status
+           vocabularies + taxonomy registry + preflight + support gate +
+           arithmetic engine; (2) changes: classifier returns
+           NoticeClassification not ProceedingType, WorkflowDefinition
+           fields (evidence_requirements, default_severity, special_rules),
+           severity defaults (129=HIGH + undefined escalation rule vs v1
+           Step 8 CRITICAL), new Steps 2.5-10 replacing old 3-10, triage
+           output contract; (3) models.py needs ADDITIVE amendment only
+           (existing 8 enums + 7 dataclasses reused unchanged);
+           (4) deadline_engine.py survives untouched — §6.5 explicitly keeps
+           it; stated-due-date + 3-state UI distinction cannot pass through
+           current signature (resolution TBD); (5) v1.1-internal
+           contradictions: diagram vs preflight scope, one classifier vs
+           two-stage diagram, support level assigned twice (registry +
+           classifier), S130 mapping row with no NoticeForm value, signal
+           vs verdict status mixing, circular "enums approved by the spec";
+           (6) conflicts with committed v1: 129-severity criterion, stale
+           Next Task in memory, legacy-path vs clean refactor, v1 §9 vs
+           triage evidence output, no folder structure for new components;
+           (7) unclear fields: NoticeClassification.confidence (no type),
+           classification_reasons, duplicated sections_cited/rules_cited,
+           special_rules enforcement path; (8) 12 Step 2.5 blockers listed
+           for Dina; (9) Step 2.5 files: MODIFY domain/models.py, CREATE
+           tests/test_models.py (name TBD), MODIFY PROJECT_MEMORY.md;
+           conditional deadline_engine touch; (10) migration risks: step
+           renumber confusion, triple-UNKNOWN handling, expectations/NOTICE_3
+           breakage, fact-engine scope explosion, triage prompt vacuum,
+           arithmetic noise. No decisions made by agent — all open items
+           go to Dina.
+Files    : MODIFIED PROJECT_MEMORY.md only (this entry; Prompt Count 27→28;
+           CURRENT STATE Next Task now reflects v1.1 review + hold).
+           VERIFIED READ ONLY: ARCHITECTURE_SPEC_v1.md, v1.1 DRAFT,
+           domain/models.py, domain/deadline_engine.py, AGENTS.md.
+Errors   : none.
+Attempts : 1
+Fix      : n/a
+Status   : DONE
 
 [PROMPT #27 — PHASE 2 STEP 2 — 10:40]
 Task     : Phase 2 — Step 2 ONLY: create domain/deadline_engine.py (pure
@@ -888,6 +1045,16 @@ Fix     : Use https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dumm
   CURRENT_ARCHITECTURE_AUDIT.md, historical log entries) — intentional,
   they are superseded/historical artifacts; do NOT "fix" them.
 
+**Architecture authority — v1.1 is the active spec (2026-08-28)**
+- docs/architecture/ARCHITECTURE_SPEC_v1_1.md is AUTHORITATIVE for all
+  Phase 2 work from Step 2.5 onward. ARCHITECTURE_SPEC_v1.md is HISTORICAL —
+  do not implement from it, and never merge v1.1 content into it.
+- Steps 1 and 2 (domain/models.py, domain/deadline_engine.py + 8 tests)
+  were built under v1 and remain valid; v1.1 carries them forward unchanged
+  (stated due dates are preflight facts, never engine inputs).
+- Next implementation task: Phase 2 Step 2.5 (per v1.1 §13). Await Dina's
+  go before starting it.
+
 **Spec §4.2 gap — "stated deadline" is not representable in the engine contract (flagged to Dina, no change made)**
 - The Step 2 task wording distinguishes a deadline explicitly stated in the
   notice from one calculated from a service date. But §4.2's input contract
@@ -923,6 +1090,7 @@ Fix     : Use https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dumm
 | Architecture decision — current application continues using Gemini as runtime baseline. DeepSeek remains a future provider option and will not be introduced during Phase 1. | Freezes the runtime provider during the migration so any output change is attributable to architecture steps, not a provider switch; DeepSeek stays a Phase 2+ option |
 | Regression architecture decision — preserve baseline outputs for human review, but move future regression testing toward structured invariants rather than exact LLM text matching. | LLM output is non-deterministic, so text equality always false-fails; baselines stay as human-review goldens while automated gates assert on structure, status labels, and notice-grounded expectations |
 | Routing architecture decision (Phase 1.6) — provider-agnostic LLMRouter consumes error categories only; the Gemini adapter in llm_client.py owns all SDK knowledge. Rotation only for key/provider failures (429, 5xx, 401/403); never for invalid request, safety blocks, empty responses, or unknown errors. In-memory cooldowns (30s quota, 10s transient), no persistence, no scheduler. | Fails over across authorized keys on real provider-side failures without circumventing quotas or cycling keys for application errors; keeps the single-key setup working unchanged and leaves a clean seam for a future provider (e.g. DeepSeek) with zero router changes |
+| Architecture v1.1 finalization (2026-08-28) — 16 decisions applied to the v1.1 DRAFT; doc finalized as docs/architecture/ARCHITECTURE_SPEC_v1_1.md and declared authoritative from Step 2.5 onward (v1 historical). One classification stage (LLM + Python validation), qualitative confidence, signal-vs-verification modeling, stated due date = ExtractedFact, S130 → TRIAGE_ONLY with UNKNOWN form, deterministic triage rendering, severity escalation, special_rules guardrail, legacy retirement after 4 fixtures, all LLM calls via llm_client.py + router | Resolves all v1.1 review ambiguities; Steps 1+2 remain valid; Phase 2 Step 2.5 is the next implementation task |
 
 ---
 

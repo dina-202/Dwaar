@@ -1,155 +1,216 @@
-# AGENTS.md — Rulebook for CA Notice Explainer Tool
-> Read this file completely before doing anything.
-> Then read PROJECT_MEMORY.md for current state.
-> These two files are your complete briefing every time.
+# AGENTS.md — CA Notice AI Agent Rules
 
----
+## 1. Purpose
 
-## ⚡ AUTO-MEMORY RULE — MOST IMPORTANT RULE
-After EVERY response you give — no matter how small — you must:
+This repository is developed through small, explicitly scoped tasks.
 
-1. Open PROJECT_MEMORY.md
-2. Find the CURRENT SESSION block at the top of the SESSION LOG
-3. Append what you just did as a new log entry in this exact format:
+The user controls the development sequence.
 
-```
-[PROMPT #X — HH:MM]
-Task     : what Dina asked
-Did      : what you actually did
-Files    : which files were touched and what changed
-Errors   : any errors hit (or "none")
-Attempts : how many tries if there was an error
-Fix      : what solved the error (or "n/a")
-Status   : DONE / PARTIAL / FAILED
-```
+Do not assume authority to continue to the next architecture step,
+refactor unrelated code, clean up the repository, or expand task scope.
 
-4. Update the CURRENT STATE section to reflect right now
-5. Save the file
+## 2. Context Loading — Token Efficiency
 
-Do this even if the prompt was just a question or explanation.
-This is non-negotiable. The file is the only memory across power cuts, crashes, and restarts.
+Do NOT automatically read historical project-memory files.
 
----
+In particular:
 
-## PROJECT OVERVIEW
-**Product:** CA Notice Explainer Tool
-**What it does:** CA uploads a GST or Income Tax notice PDF → get plain-language explanation + draft reply letter
-**Users:** Chartered Accountants and tax consultants in India
-**MVP Goal:** Working demo to show in 10 CA offices
+- Do NOT automatically read:
+  `docs/history/PROJECT_MEMORY_ARCHIVE.md`
 
----
+- Do NOT load old session logs, old prompts, baselines, large outputs,
+  audit documents, or unrelated architecture documents unless the current
+  task explicitly requires them.
 
-## TECH STACK — DO NOT CHANGE WITHOUT ASKING DINA
-```
-Language       : Python 3.11+
-UI             : Streamlit
-PDF Reading    : PyMuPDF  →  import as: import fitz
-LLM            : Google Gemini 2.5 Flash  →  SDK: google-generativeai
-API Key Mgmt   : python-dotenv  →  keys in .env only
-Hosting        : Streamlit Cloud (free)
-Dev OS         : Windows native (no WSL)
-```
+For every task, use the minimum necessary context.
 
----
+Normally read only:
 
-## FOLDER STRUCTURE
-```
-ca-ai-tool/
-├── AGENTS.md                  ← this file
-├── PROJECT_MEMORY.md          ← auto-updated after every prompt
-├── app.py                     ← Streamlit UI only, zero logic
-├── requirements.txt
-├── .env                       ← API keys, never commit
-├── .gitignore
-├── modules/
-│   ├── __init__.py
-│   ├── pdf_reader.py          ← only job: extract text from PDF
-│   ├── llm_client.py          ← only job: talk to Gemini
-│   └── notice_explainer.py   ← only job: combine pdf + prompt + llm
-└── prompts/
-    └── notice_prompt.txt      ← prompt text, editable without touching code
-```
+1. this AGENTS.md;
+2. the files explicitly named in the user's task;
+3. source files directly involved in the requested change;
+4. directly relevant tests;
+5. only the relevant section(s) of the architecture specification.
 
----
+If the task says "current Phase 2 architecture" without naming a file,
+the current authoritative architecture is:
 
-## CODING RULES
+    docs/architecture/ARCHITECTURE_SPEC_v1_1.md
 
-- `app.py` handles UI only. All logic lives in modules/
-- Each module does exactly one job. Never mix responsibilities.
-- All prompts in prompts/ folder as .txt files. Never hardcode in Python.
-- All API keys from .env via load_dotenv(). Never hardcode.
-- Every external API call must have try/except.
-- Use st.session_state for anything that must survive Streamlit reruns.
-- New library = ask Dina first. Then update requirements.txt immediately.
+until the user explicitly supersedes it.
 
----
+Historical architecture specifications are not implementation authority.
 
-## WHAT AGENTS MUST NEVER DO
-- ❌ Rewrite working code not related to current task
-- ❌ Skip updating PROJECT_MEMORY.md after a response
-- ❌ Hardcode API keys or model names
-- ❌ Add databases, auth, or user accounts (out of MVP scope)
-- ❌ Add libraries not in the approved stack without asking
+## 3. Source-of-Truth Order
 
----
+When information conflicts, use this priority:
 
-## QUICK REFERENCE — CORRECT CODE PATTERNS
+1. current code and executable tests;
+2. the architecture specification explicitly named by the user;
+3. the user's current task instructions;
+4. Git history/current diff when relevant;
+5. historical documentation or archived memory;
+6. agent assumptions.
 
-### Gemini
-```python
-import google.generativeai as genai
-from dotenv import load_dotenv
-import os
+Never override current code/specification with an old historical memory entry.
 
-load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
-response = model.generate_content(prompt)
-result = response.text
-```
+## 4. Before Editing
 
-### PyMuPDF
-```python
-import fitz  # pip package is "pymupdf", import name is "fitz"
+Before modifying files:
 
-def extract_text(pdf_bytes: bytes) -> str:
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    text = "".join(page.get_text() for page in doc)
-    doc.close()
-    return text
-```
+    git status
 
-### Streamlit file upload
-```python
-uploaded = st.file_uploader("Upload Notice PDF", type="pdf")
-if uploaded:
-    pdf_bytes = uploaded.read()  # returns bytes, not a file path
-```
+If the working tree is already dirty, preserve existing unrelated changes.
 
----
+Do not restore, overwrite, stage, or modify pre-existing unrelated changes.
 
-## GOTCHAS
-1. `import fitz` = PyMuPDF. pip install pymupdf. Not the same name.
-2. `load_dotenv()` must run BEFORE os.getenv() or you get None.
-3. Streamlit reruns the whole script on every click. Use st.session_state.
-4. Gemini free tier = 1,500 req/day, 10 RPM. Don't loop calls fast.
-5. st.rerun() not st.experimental_rerun()
+Read only the context necessary for the requested task.
 
----
+## 5. Scope Discipline
 
-## .env TEMPLATE
-```
-GEMINI_API_KEY=your_key_here
-GEMINI_MODEL=gemini-3.6-flash
-```
+Modify ONLY files explicitly allowed by the current task.
 
----
+Do NOT:
 
-## AGENT ROSTER
-| Agent | Where | Role |
-|---|---|---|
-| Claude Code | Antigravity / Claude.ai | Primary builder |
-| DeepSeek V4 | Antigravity | Second opinion, unsticking |
-| Codex | Codex tool | Isolated bug fixes |
+- perform unrelated cleanup;
+- refactor working code outside scope;
+- rename unrelated files;
+- rewrite prompts unless requested;
+- change providers/models unless requested;
+- change requirements/dependencies unless requested;
+- start the next phase or step automatically.
 
-All agents follow these same rules. All agents update PROJECT_MEMORY.md after every prompt.
+If completing the requested task genuinely requires modifying a file outside
+the permitted scope:
+
+STOP and report why.
+
+Do not silently expand scope.
+
+## 6. Architecture Rules
+
+Keep deterministic work outside the LLM whenever practical.
+
+Examples:
+
+- dates and deadline arithmetic → Python;
+- monetary arithmetic → Python;
+- workflow lookup → deterministic Python/configuration;
+- validation → Python;
+- structured state/status transitions → Python.
+
+Use LLMs for tasks such as:
+
+- focused notice classification;
+- structured fact extraction;
+- reasoning;
+- explanation;
+- drafting.
+
+All application LLM calls must go through the project's existing:
+
+    modules/llm_client.py
+
+and existing routing layer.
+
+Do not bypass the router with direct provider calls unless a task explicitly
+changes the LLM architecture.
+
+## 7. Safety / Tax Domain Discipline
+
+Never convert a departmental allegation into a confirmed taxpayer fact.
+
+Do not invent:
+
+- taxpayer facts;
+- legal citations;
+- case law;
+- statutory text;
+- notice dates;
+- service dates;
+- reply forms;
+- evidence;
+- legal conclusions.
+
+When the architecture requires verification, preserve that uncertainty.
+
+Unsupported notice types must not be forced into a specialist workflow.
+
+## 8. Secrets
+
+Never print, expose, copy into documentation, or commit:
+
+- API keys;
+- .env contents;
+- credentials;
+- tokens;
+- secrets.
+
+`.env` remains local and ignored by Git.
+
+## 9. Dependencies
+
+Do not add or remove libraries without explicit user authorization.
+
+Do not change:
+
+    requirements.txt
+
+unless the current task explicitly permits it.
+
+## 10. Git
+
+Do not commit unless the user explicitly requests a commit.
+
+Prefer one architectural unit per commit.
+
+Never stage unrelated changes together merely because they are present in
+the working tree.
+
+Do not use destructive Git commands unless explicitly instructed.
+
+## 11. Testing
+
+Run only the tests relevant to the requested task unless the user asks for
+a broader regression run.
+
+Do not make unnecessary live LLM/API calls when deterministic/offline tests
+are sufficient.
+
+Never change production behavior merely to make a test pass unless that
+behavior change is part of the approved task.
+
+## 12. End-of-Task Report
+
+Do NOT update any automatic memory/state/session file.
+
+At the end of project work, report concisely:
+
+- files created;
+- files modified;
+- files intentionally left untouched;
+- tests/verification commands run;
+- pass/fail counts;
+- errors encountered;
+- number of attempts when relevant;
+- what fixed each error;
+- remaining ambiguity/blocker;
+- `git status`;
+- `git diff --stat`.
+
+Do not dump large raw logs unless requested.
+
+## 13. Manual Handoff Model
+
+Project continuity is maintained through:
+
+- Git commits/history;
+- current source code;
+- tests;
+- authoritative architecture specifications;
+- task-specific prompts supplied by the user.
+
+Historical memory is optional reference material, not automatic boot context.
+
+A new coding agent should be able to work from a precise task prompt without
+reading the project's full historical diary.
