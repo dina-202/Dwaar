@@ -3,31 +3,31 @@
 
 **Last Updated :** 2026-08-28
 **By            :** Claude Code
-**Prompt Count  :** 26
+**Prompt Count  :** 27
 
 ---
 
 ## CURRENT STATE
 ```
-Phase       : PHASE 2 STEP 1 DONE — domain/models.py created per spec
-Git         : HEAD = 7784bb4 "Phase 1.6: provider-agnostic LLM router,
-              numbered Gemini key pool, quota/transient/auth failover,
-              15 unit tests pass" (committed 2026-08-28). Phase 1.5 committed
-              as d71bcea. Phase 2 Step 1 is UNCOMMITTED: domain/__init__.py,
-              domain/models.py, plus Dina's new authoritative spec
-              docs/architecture/ARCHITECTURE_SPEC_v1.md (all untracked).
-Working     : Phases 1.5/1.6 committed. Phase 2 Step 1: Dina placed the
-              authoritative spec at docs/architecture/ARCHITECTURE_SPEC_v1.md
-              (supersedes the older root ARCHITECTURE_SPEC_V1.md for Phase 2,
-              left untouched); domain/ package created with models.py
-              implementing §3 exactly — 8 enums, 7 dataclasses, stdlib only,
-              no logic, not wired to app. CHECK 1 + CHECK 2 passed.
-              FactStatus terminology resolved (Dina 2026-08-28): ALLEGED is
-              canonical; spec §4.3 corrected to match.
+Phase       : PHASE 2 STEP 2 DONE — deadline engine + 8 spec tests, all PASS
+Git         : HEAD = 2b5d73b "Phase 2 Step 1: domain model contracts and
+              FactStatus resolution" (committed 2026-08-28). Phase 1.5/1.6
+              committed as d71bcea / 7784bb4. Phase 2 Step 2 is UNCOMMITTED:
+              domain/deadline_engine.py, tests/test_deadline_engine.py.
+              NOTE: "IMPLEMENTATION_PLAN (1).md" → IMPLEMENTATION_PLAN.md
+              rename is visible in git status — made outside this session,
+              not touched by the agent.
+Working     : Phase 2 Step 2: domain/deadline_engine.py implements spec §4.2
+              deterministically — stdlib + domain.models only, no LLM, no
+              network, never guesses (UNKNOWN on missing inputs);
+              tests/test_deadline_engine.py has exactly the 8 spec §7 cases,
+              all PASS via stdlib unittest (0.001s). Not wired to app.
+              Spec ambiguities flagged to Dina: stated-deadline input gap;
+              rule-1 ESTIMATED scope. No commit issued (Dina drives commits).
 Broken      : none.
-Next Task   : Phase 2 Step 2 — domain/deadline_engine.py (pure Python, never
-              LLM) + tests/test_deadline_engine.py, 8 cases per spec §7. Do
-              not start without Dina's go.
+Next Task   : Phase 2 Step 3 — workflows/gst/ definitions per spec §7
+              (base WorkflowDefinition + 5 workflow files, Python objects,
+              no LLM, no wiring). Do not start without Dina's go.
 ```
 
 ---
@@ -47,6 +47,8 @@ Next Task   : Phase 2 Step 2 — domain/deadline_engine.py (pure Python, never
 | modules/domain_models.py | ✅ created (Phase 1) — typed dataclasses/enums, stdlib only, NOT wired to app |
 | domain/__init__.py | ✅ created (Phase 2 Step 1) — empty package marker |
 | domain/models.py | ✅ created (Phase 2 Step 1) — ARCHITECTURE_SPEC_v1.md §3 exactly: 8 enums + 7 dataclasses, stdlib only, NOT wired |
+| domain/deadline_engine.py | ✅ created (Phase 2 Step 2) — spec §4.2 deterministic engine, stdlib + domain.models only, never LLM, NOT wired |
+| tests/test_deadline_engine.py | ✅ created (Phase 2 Step 2) — exactly the 8 spec §7 cases, stdlib unittest, all PASS |
 | docs/architecture/ARCHITECTURE_SPEC_v1.md | ✅ placed by Dina (Phase 2 start) — authoritative Phase 2 contract, supersedes root ARCHITECTURE_SPEC_V1.md |
 | tests/run_regression.py | ✅ created (Phase 1) — stdlib-only runner, runs existing pipeline on 4 fixtures |
 | tests/baselines/NOTICE_4_RCM_Sec73_DRC01.baseline.md | ✅ created (Phase 1) — runtime baseline, 19,159 chars |
@@ -78,6 +80,52 @@ Next Task   : Phase 2 Step 2 — domain/deadline_engine.py (pure Python, never
 
 ## SESSION LOG
 > Most recent prompt at the TOP
+
+[PROMPT #27 — PHASE 2 STEP 2 — 10:40]
+Task     : Phase 2 — Step 2 ONLY: create domain/deadline_engine.py (pure
+           Python, deterministic, no LLM/Gemini/Streamlit/network, no
+           modules/ or pipeline imports, uses domain/models.py types) and
+           tests/test_deadline_engine.py with EXACTLY the 8 spec §7 cases;
+           run ONLY the unittest command + an import verification; update
+           memory; report files/test output/imports/git status/ambiguities;
+           STOP. No classifier, fact engine, workflows, DB, prompt split,
+           app wiring, cleanup, or refactoring.
+Did      : (1) Re-read AGENTS.md (unchanged), PROJECT_MEMORY.md,
+           ARCHITECTURE_SPEC_v1.md §4.2 + §7 STEP 2. (2) Created
+           domain/deadline_engine.py: calculate_deadline(notice_date,
+           service_date, response_period_text, hearing_date_text, today) →
+           DeadlineResult; deterministic helpers _parse_period_days (first
+           integer), _is_service_based ("service" in text),
+           _parse_date_text (dd-mm-yyyy numeric only — prose never
+           interpreted). Branch order: period undeterminable → UNKNOWN;
+           service date present → service_date + days, CONFIRMED; text says
+           "from date of service" without service date → deadline None,
+           UNKNOWN (rule 2); else notice_date + days, ESTIMATED + note
+           (rule 1); no anchor → UNKNOWN. Status: <0 days PASSED, ≤7
+           CRITICAL, else UPCOMING; days_remaining None when deadline
+           unknown (rule 3). Hearing: None → NOT_SCHEDULED, >/< /== today →
+           UPCOMING/PASSED/TODAY. Portal verification True iff deadline
+           PASSED or UNKNOWN (rule 4). Stdlib (re, datetime, typing) +
+           domain.models only. (3) Created tests/test_deadline_engine.py:
+           exactly the 8 spec cases (1 future / 2 passed / 3 service-basis
+           unknown / 4 issue-basis estimated / 5 hearing upcoming /
+           6 hearing passed / 7 within-7-days CRITICAL / 8 no info at all),
+           stdlib unittest, no pytest, requirements.txt untouched.
+           (4) Ran python -m unittest tests/test_deadline_engine.py -v:
+           Ran 8 tests in 0.001s — OK, all 8 PASS. Import check:
+           "deadline_engine imports OK". (5) Memory updated (this entry;
+           stale Git line corrected to HEAD = 2b5d73b; prompt count 27).
+Files    : NEW domain/deadline_engine.py, tests/test_deadline_engine.py.
+           MODIFIED PROJECT_MEMORY.md (this update). VERIFIED UNCHANGED:
+           app.py, modules/*, prompts/notice_prompt.txt, requirements.txt,
+           sample PDFs, baselines, expectations, domain/models.py,
+           docs/architecture/ARCHITECTURE_SPEC_v1.md. NOTE: git status also
+           shows "IMPLEMENTATION_PLAN (1).md" deleted + IMPLEMENTATION_PLAN.md
+           untracked — a rename made outside this session; NOT touched.
+Errors   : none.
+Attempts : 1
+Fix      : n/a
+Status   : DONE (STOPPED per instruction — nothing after Step 2)
 
 [PROMPT #26 — FACTSTATUS RESOLUTION — 10:15]
 Task     : Read the three docs; apply Dina's decision (canonical
@@ -839,6 +887,22 @@ Fix     : Use https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dumm
   §3.4, IMPLEMENTATION_PLAN (1).md, modules/domain_models.py Phase 1 enum,
   CURRENT_ARCHITECTURE_AUDIT.md, historical log entries) — intentional,
   they are superseded/historical artifacts; do NOT "fix" them.
+
+**Spec §4.2 gap — "stated deadline" is not representable in the engine contract (flagged to Dina, no change made)**
+- The Step 2 task wording distinguishes a deadline explicitly stated in the
+  notice from one calculated from a service date. But §4.2's input contract
+  is only notice_date, service_date, response_period_text,
+  hearing_date_text, today — there is no stated-deadline parameter, and
+  DeadlineResult has no stated-deadline field. The engine therefore handles
+  only calculated deadlines (service- or notice-date anchored) and
+  cannot-calculate cases; a stated deadline ("on or before 27-08-2026")
+  would arrive as free text the engine must NOT guess from.
+- Related reading applied in Step 2: §4.2 rule 1 ("service_date None →
+  ESTIMATED") cannot mean the "from date of service" case (rule 2 overrides
+  it with UNKNOWN); ESTIMATED = "assuming service = notice date" therefore
+  applies to non-service-based text (e.g. "from date of issue") and requires
+  a notice date — with no date info at all (spec case 8) the result is
+  UNKNOWN. If the spec intends something else, §4.2 must be amended first.
 
 ---
 
