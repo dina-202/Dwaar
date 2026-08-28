@@ -539,6 +539,268 @@ Special rules guardrail:
 
 Registry contains exactly five entries in Phase 2. `UNKNOWN` has no workflow.
 
+### 10.1 Current-Law Safety Decisions Governing the Five Workflows
+
+Recorded architectural decisions (August 2026):
+
+**1. Section 73 / Section 74 temporal scope.**
+
+Current CGST Sections 73 and 74 apply to determination pertaining to periods up to Financial Year 2023-24. The existing five Phase-2 workflows remain valid for notices that expressly invoke Sections 73 or 74. They must NOT be treated as substitutes for Section 74A.
+
+For a DRC-01 expressly invoking Section 74A:
+
+```text
+NoticeForm      = DRC_01
+NoticeFamily    = DEMAND_ADJUDICATION
+ProceedingType  = UNKNOWN
+SupportLevel    = TRIAGE_ONLY
+```
+
+until a dedicated Section-74A workflow is specified and tested.
+
+**Guardrail:** NEVER silently map Section 74A to `GST_SEC73_*` or `GST_SEC74_FRAUD`.
+
+**2. Section 129 penalty.**
+
+Remove the historical assumption "Penalty = 100% of tax" from workflow facts/issues/special rules. The workflow must extract the penalty proposed in the notice as a fact. Any statutory penalty computation belongs to the future deterministic arithmetic/legal-rule layer. Do not hardcode a penalty percentage into `WorkflowDefinition`.
+
+**3. Section 129 seven-day rule.**
+
+Do NOT define "taxpayer reply deadline = 7 days from service" as a universal workflow rule. The architecture must distinguish:
+
+- statutory officer notice/order timelines;
+- statutory payment/conclusion windows;
+- an explicitly stated taxpayer response/hearing date.
+
+The Deadline Engine receives only structured date inputs. A taxpayer reply deadline may be shown only when it is explicitly stated or safely calculated under an approved deadline contract.
+
+**4. MOV-09.**
+
+Record explicitly: MOV-09 is an order issued by the department in the enforcement sequence. It must NEVER be represented as "taxpayer reply in MOV-09". A Section-129 workflow output must therefore say "reviewable enforcement response/submission appropriate to the actual notice/form" and must not hardcode MOV-09 as a taxpayer reply form.
+
+### 10.2 Workflow Contract Rules
+
+1. `WorkflowDefinition` content is a CASE-HANDLING REQUIREMENT set, not a legal conclusion.
+2. `required_facts` means facts the downstream system should seek/extract. It does NOT mean the fact is true.
+3. `evidence_requirements` means evidence the CA may need to collect/review. Presence is not assumed.
+4. `issue_types` identify questions to investigate. They do NOT state the taxpayer is liable.
+5. `special_rules` are safety invariants. Every safety-critical special rule must later map to deterministic validation OR a mandatory CA-review gate.
+6. No legal proposition in a workflow may be treated as permanently current law merely because it appears in `WorkflowDefinition`.
+7. Time-sensitive legal rules/rates/limits belong eventually in the verified, versioned Legal Knowledge / Rule subsystem.
+
+### 10.3 Authoritative Five-Workflow Contracts (Phase 2 Step 5)
+
+The following five contracts are the AUTHORITATIVE content for Phase 2 Step 5. Implement each `WorkflowDefinition` verbatim from these lists. Do not invent, add, drop, or reinterpret content.
+
+**Contract 1 — `GST_SEC73_ITC`**
+
+- `proceeding_type`: `GST_SEC73_ITC`
+- `default_severity`: `MEDIUM`
+
+`required_facts`:
+
+1. "ITC claimed in GSTR-3B (amount)"
+2. "ITC reflected in GSTR-2B (amount)"
+3. "Difference between GSTR-3B and GSTR-2B (INFERRED)"
+4. "FY / tax period"
+5. "Interest proposed"
+
+`evidence_requirements`:
+
+1. "GSTR-2B for all months in the relevant period"
+2. "GSTR-3B ITC tables for the relevant period"
+3. "Invoice-level ITC reconciliation"
+4. "Supplier GSTR-1 filing status / supporting filing evidence where relevant"
+5. "Payment proof to suppliers where relevant to the claimed ITC eligibility"
+
+`issue_types`:
+
+1. "ITC_MISMATCH"
+2. "SUPPLIER_DEFAULT"
+3. "INTEREST_COMPUTATION"
+
+`output_structure`:
+
+1. "Working paper"
+2. "ITC reconciliation table"
+3. "Reviewable DRC-06 draft"
+
+`special_rules`:
+
+1. "A GSTR-3B versus GSTR-2B mismatch is not by itself proof that the ITC is legally ineligible."
+2. "Any computed difference must be treated as INFERRED and calculated deterministically from sourced amounts."
+3. "Never assume invoices, receipt of goods or services, supplier compliance, or payment to suppliers unless supported by evidence."
+4. "Final ITC eligibility is a legal/factual conclusion requiring evidence and CA review."
+
+**Contract 2 — `GST_SEC73_GENERAL`**
+
+- `proceeding_type`: `GST_SEC73_GENERAL`
+- `default_severity`: `MEDIUM`
+
+`required_facts`:
+
+1. "Tax / liability declared in GSTR-1"
+2. "Tax / liability discharged in GSTR-3B"
+3. "Difference between GSTR-1 and GSTR-3B (INFERRED)"
+4. "FY / tax period"
+5. "Interest proposed"
+
+`evidence_requirements`:
+
+1. "Monthly GSTR-1 and GSTR-3B for the relevant period"
+2. "GSTR-9 annual return where applicable/relevant"
+3. "Credit notes and amendments relevant to the mismatch"
+
+`issue_types`:
+
+1. "SHORT_PAYMENT"
+2. "GSTR_MISMATCH"
+3. "INTEREST_COMPUTATION"
+
+`output_structure`:
+
+1. "Working paper"
+2. "Month-wise GSTR-1 versus GSTR-3B reconciliation"
+3. "Reviewable DRC-06 draft"
+
+`special_rules`:
+
+1. "A return mismatch is not by itself an admission of tax short-payment."
+2. "Any computed difference must be treated as INFERRED and calculated deterministically from sourced amounts."
+3. "Credit notes, amendments, timing differences and other reconciliation items must be checked before reaching a liability conclusion."
+4. "The workflow identifies reconciliation requirements; it does not itself establish legal liability."
+
+**Contract 3 — `GST_SEC73_RCM`**
+
+- `proceeding_type`: `GST_SEC73_RCM`
+- `default_severity`: `MEDIUM`
+
+`required_facts`:
+
+1. "Service / supply category alleged to attract RCM"
+2. "Value of services / supplies alleged to be subject to RCM"
+3. "RCM tax alleged as unpaid or short-paid"
+4. "FY / tax period"
+5. "Interest proposed"
+
+`evidence_requirements`:
+
+1. "Invoices / engagement documents for suppliers alleged to be RCM-covered"
+2. "Form 26AS / TDS data where the department relies on it"
+3. "GSTR-3B table 3.1(d) for the relevant period"
+4. "Vendor-wise ledger / service-category reconciliation where required"
+
+`issue_types`:
+
+1. "RCM_LIABILITY"
+2. "ITC_REVERSAL"
+3. "INTEREST_COMPUTATION"
+
+`output_structure`:
+
+1. "Working paper"
+2. "RCM supplier / service-category reconciliation"
+3. "Reviewable DRC-06 draft with conditional RCM submissions"
+
+`special_rules`:
+
+1. "Do not assume that every payment appearing under a TDS or professional-services category is subject to GST reverse charge."
+2. "Service category and RCM applicability require verification from underlying documents and current legal sources."
+3. "Form 26AS or TDS data may be evidentiary input but is not by itself conclusive proof of GST RCM liability."
+4. "Do not assume ITC availability, revenue neutrality, or entitlement without verifying the taxpayer's facts and applicable law."
+
+**Contract 4 — `GST_SEC74_FRAUD`**
+
+- `proceeding_type`: `GST_SEC74_FRAUD`
+- `default_severity`: `CRITICAL`
+
+`required_facts`:
+
+1. "Basis of fraud / wilful-misstatement / suppression allegation"
+2. "Turnover, tax, refund or ITC amount alleged by the department (ALLEGED unless independently established)"
+3. "FY / tax period"
+4. "Penalty proposed in the notice (ALLEGED)"
+5. "Limitation / extended-period basis invoked in the notice"
+
+`evidence_requirements`:
+
+1. "Books of accounts for the relevant period"
+2. "Relevant bank statements"
+3. "Filed GST returns for the relevant period"
+4. "Correspondence with the department"
+5. "Underlying third-party / RERA / external-source documents where relied upon by the department"
+
+`issue_types`:
+
+1. "FRAUD_ALLEGATION"
+2. "SUPPRESSION"
+3. "PENALTY_COMPUTATION"
+4. "LIMITATION"
+
+`output_structure`:
+
+1. "Urgent working paper"
+2. "Senior-review / escalation note"
+3. "Conditional reviewable DRC-06 draft"
+
+`special_rules`:
+
+1. "Fraud, wilful misstatement and suppression must remain departmental allegations unless established by evidence."
+2. "Never state that fraud is present or absent as an established fact without evidentiary support."
+3. "Preserve the provenance of third-party or external data relied upon by the department."
+4. "Mandatory senior CA / advocate review is required before filing."
+5. "This workflow applies only where the notice expressly invokes Section 74; it must not be used as a substitute for Section 74A."
+
+**Contract 5 — `GST_SEC129_ENFORCE`**
+
+- `proceeding_type`: `GST_SEC129_ENFORCE`
+- `default_severity`: `HIGH`
+
+`required_facts`:
+
+1. "Goods description"
+2. "Vehicle / conveyance number"
+3. "Detention / seizure date"
+4. "Section 129 notice date and service date where available"
+5. "Penalty amount proposed in the notice"
+6. "Value of goods and tax payable on the goods where stated and relevant to penalty computation"
+7. "Whether the owner of the goods has come forward, where relevant and determinable"
+8. "Explicit hearing / payment / response date stated in the notice or order"
+9. "Order date / current enforcement status if an order has already been issued"
+
+`evidence_requirements`:
+
+1. "Tax invoice for the goods"
+2. "E-Way Bill, or evidence explaining its absence where available"
+3. "Detention / seizure order, including MOV-06 where issued"
+4. "Section 129 notice and any subsequent order / MOV documents actually issued"
+5. "GR / LR / GRN / delivery or transport documents relevant to movement of goods"
+
+`issue_types`:
+
+1. "EWAY_BILL"
+2. "DETENTION"
+3. "PENALTY_COMPUTATION"
+4. "PROCEDURAL_TIMELINE"
+5. "SECTION_130_RISK"
+
+`output_structure`:
+
+1. "URGENT enforcement working paper"
+2. "Enforcement chronology / deadline alert"
+3. "Penalty computation verification checklist"
+4. "Reviewable response / submission appropriate to the actual notice or proceeding"
+
+`special_rules`:
+
+1. "Never assume the tax invoice is valid; invoice validity remains REQUIRES_VERIFICATION until supported by evidence."
+2. "Never invent a reason for a missing or defective E-Way Bill."
+3. "Do not hardcode a 100% penalty assumption; extract the proposed penalty and defer statutory computation to the deterministic arithmetic/legal-rule layer."
+4. "Do not treat the Section 129 seven-day statutory notice/order timeline as a universal taxpayer reply deadline."
+5. "MOV-09 is a departmental order and must never be described as the taxpayer's reply form."
+6. "A Section-130-only proceeding does not use this deep workflow and remains TRIAGE_ONLY until a separate workflow exists."
+7. "Active detention/seizure requires urgent CA escalation, but deadline status must come from the deterministic Deadline Engine and explicit procedural dates."
+
 ---
 
 ## 11. Triage-Only Output Contract
@@ -593,6 +855,7 @@ It MUST NOT invent:
 | DRC-01B | TRIAGE_ONLY initially; likely future high-priority workflow |
 | DRC-01C | TRIAGE_ONLY initially; likely future high-priority workflow |
 | Section 130-only (NoticeForm `UNKNOWN`, family `ENFORCEMENT`, proceeding `UNKNOWN` — §3.9) | TRIAGE_ONLY |
+| DRC-01 expressly invoking Section 74A | TRIAGE_ONLY — never mapped to `GST_SEC73_*` or `GST_SEC74_FRAUD` (§10.1) |
 
 Section 130 appears in this table as a proceeding-marker combination only. It is NOT a `NoticeForm` registry entry (§3.9, §5.2) and no workflow treats it as one.
 
@@ -640,9 +903,22 @@ New Phase 2 components follow the v1 §6 folder conventions: pure-Python no-LLM 
 - Must classify the four fixtures to their deep workflows.
 - Must also be testable with synthetic ASMT-10 / REG-17 / DRC-01B / DRC-01C / Section-130-only text and return TRIAGE_ONLY rather than forcing a deep workflow.
 
+**Step 4 follow-up (before Step 5 code):** add/verify an offline classifier safety test:
+
+```text
+DRC-01 + Section 74A
+    → NoticeForm.DRC_01
+    → NoticeFamily.DEMAND_ADJUDICATION
+    → ProceedingType.UNKNOWN
+    → SupportLevel.TRIAGE_ONLY
+```
+
+No Section-74A deep type may be invented in Phase 2.
+
 ### Step 5 — Deep Workflow Registry
 
 - Implement exactly five `WorkflowDefinition` objects.
+- The per-workflow content of `required_facts`, `evidence_requirements`, `issue_types`, `output_structure` and `special_rules` is defined authoritatively in §10.3. Implement those lists verbatim; do not invent content.
 - Registry keyed by `ProceedingType`.
 - No workflow for `UNKNOWN`.
 - No LLM.
@@ -718,6 +994,7 @@ Do not implement this expansion until the Phase 2 architecture is stable and CA 
 13. A workflow cannot be considered production-ready `DEEP_WORKFLOW` until every safety-critical special rule has a deterministic Validation Engine check or a mandatory CA-review gate.
 14. A notice-stated due date is data, never a calculated deadline; stated and calculated dates are presented separately, and a conflict between them is surfaced as a warning.
 15. Presence signals and verification actions are modeled separately (`CommunicationIdentifierStatus` vs `portal_verification_required`; `AuthorityDetailsStatus` vs `authority_verification_required`).
+16. A notice expressly invoking Section 74A must never be silently mapped to `GST_SEC73_*` or `GST_SEC74_FRAUD`; it remains TRIAGE_ONLY until a dedicated Section-74A workflow is specified and tested (§10.1).
 
 ---
 
@@ -731,8 +1008,21 @@ These notes informed v1.1 and should be re-verified when legal sources are versi
 - CBIC assessment/audit rules confirm distinct ASMT-02, ASMT-10, ASMT-14 and ADT-01 proceedings.
 - CBIC refund rules confirm RFD-08 is a refund-rejection notice with a specific reply mechanism.
 
+### 16.1 Current-Law Workflow Verification Notes (August 2026)
+
+As verified in August 2026:
+
+- Current CGST Sections 73 and 74 state that they apply to determination pertaining to periods up to FY 2023-24.
+- Section 74A exists for later demand proceedings and is NOT yet a Phase-2 deep workflow.
+- Current Section 129 no longer supports the historical static "100% penalty" assumption used in old v1.
+- Current Section 129 contains statutory seven-day notice/order timing; this is not to be converted automatically into a taxpayer reply deadline.
+- MOV-09 is treated as a departmental order, not a taxpayer reply form.
+- Rule 142 continues to provide DRC-06 as the representation/reply mechanism for notices whose summary is uploaded in DRC-01, including current demand provisions.
+
+These are architecture verification notes, NOT the future legal knowledge database. They must eventually come from versioned authoritative sources.
+
 **This document does not itself become a legal knowledge database.** It defines architecture boundaries only.
 
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
