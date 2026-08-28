@@ -179,6 +179,47 @@ class ArithmeticStatus(Enum):
     INSUFFICIENT_DATA = "insufficient_data"
 
 
+# --- Phase 2 Step 6.1 enum (ARCHITECTURE_SPEC_v1_1 §17.1) -------------------
+
+class FactType(Enum):
+    """Machine-readable fact category for structured fact extraction.
+
+    Identifies WHAT KIND of information was extracted from a notice. It does
+    NOT decide whether the underlying legal proposition is true (§17.1).
+    """
+
+    NOTICE_REFERENCE = "notice_reference"
+    NOTICE_DATE = "notice_date"
+    TAXPAYER_NAME = "taxpayer_name"
+    GSTIN = "gstin"
+
+    AUTHORITY_NAME = "authority_name"
+    AUTHORITY_DESIGNATION = "authority_designation"
+    AUTHORITY_OFFICE = "authority_office"
+    JURISDICTION_TEXT = "jurisdiction_text"
+
+    RFN = "rfn"
+    DIN = "din"
+
+    STATUTORY_SECTION = "statutory_section"
+    STATUTORY_RULE = "statutory_rule"
+    STATUTORY_NOTIFICATION = "statutory_notification"
+
+    TAX_PERIOD = "tax_period"
+
+    STATED_DUE_DATE = "stated_due_date"
+    HEARING_DETAILS = "hearing_details"
+
+    STATED_AMOUNT = "stated_amount"
+
+    DEPARTMENT_ALLEGATION = "department_allegation"
+
+    REQUESTED_DOCUMENT = "requested_document"
+    REFERENCED_ANNEXURE = "referenced_annexure"
+
+    OTHER_NOTICE_FACT = "other_notice_fact"
+
+
 # --- 3.2 Core Data Objects -------------------------------------------------
 
 @dataclass
@@ -189,6 +230,9 @@ class ExtractedFact:
     source_text: Optional[str] = None  # Exact text from notice
     source_page: Optional[int] = None
     allowed_in_draft: DraftPermission = DraftPermission.CONDITIONAL
+    # §17.2: additive Step 6.1 field, placed last with a default so all
+    # pre-Step-6.1 construction forms remain backward compatible.
+    fact_type: FactType = FactType.OTHER_NOTICE_FACT
 
 
 @dataclass
