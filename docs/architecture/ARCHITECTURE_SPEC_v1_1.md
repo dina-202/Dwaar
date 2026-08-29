@@ -3505,6 +3505,831 @@ Reaffirm: Step 8 adds ZERO LLM calls. Do not use model semantic matching
 for required facts, evidence, special rules, fact roles or arithmetic
 roles. All mappings are closed deterministic contracts.
 
+### 19.56 Step 8B machine-contract amendment — scope
+
+Step 8.1 committed the Step-8 models and the five workflow validation
+profiles. Before Step 8.2 may implement `run_validation`, the following
+machine contracts must be closed:
+
+- `ValidationItem.check_id` values are stable, architecture-owned machine
+  identifiers with a general rule (§19.57) and a closed catalog
+  (§19.58–§19.62);
+- arithmetic checks use indexed templates, not free-form IDs
+  (§19.64–§19.65);
+- workflow special-rule checks use profile-anchored templates
+  (§19.66–§19.71);
+- `ReviewRequirement.review_id` / `reason` are deterministic (§19.63,
+  §19.68);
+- Step 8.2 behavior is staged while Steps 8.3/8.4 remain unfinished
+  (§19.72–§19.75).
+
+These IDs are externally testable/stable machine contracts. Step 8.2 MUST
+NOT invent them. This amendment defines IDs/templates only; no model,
+enum, profile or workflow mapping changes (§19.78).
+
+### 19.57 `ValidationItem.check_id` general rule
+
+`ValidationItem.check_id` is a stable architecture-owned machine
+identifier. Rules:
+
+- lowercase ASCII;
+- dot-separated;
+- no spaces;
+- no user/notice text inside an ID;
+- deterministic: the same validation rule always uses the same ID /
+  template;
+- human-readable wording belongs in `ValidationItem.message`;
+- related facts and calculation types belong in their dedicated fields
+  (`related_fact_ids`, `related_calculation_types`).
+
+Do not generate random IDs.
+
+### 19.58 Support-gate check IDs
+
+Fixed support-gate IDs:
+
+```text
+support.level
+support.workflow_registered
+support.profile_registered
+support.workflow_alignment
+support.profile_alignment
+support.requirement_alignment
+support.special_rule_coverage
+```
+
+`support.level` validates `SupportLevel` / specialist-drafting
+availability:
+
+```text
+TRIAGE_ONLY → FAIL
+    "Specialist deep-workflow drafting is unavailable for this recognized notice."
+
+SupportLevel.UNKNOWN OR ProceedingType.UNKNOWN → FAIL
+    "Specialist deep-workflow drafting is unavailable because the notice classification is unsupported or unknown."
+
+valid DEEP_WORKFLOW → PASS
+    "Deep workflow support is available for the classified proceeding."
+```
+
+The remaining six support checks are emitted only when
+`support_level == DEEP_WORKFLOW`. They implement §19.46 exactly:
+
+```text
+support.workflow_registered
+    PASS: "A deep WorkflowDefinition is registered for the classified proceeding."
+    FAIL: "No deep WorkflowDefinition is registered for the classified proceeding."
+
+support.profile_registered
+    PASS: "A WorkflowValidationProfile is registered for the classified proceeding."
+    FAIL: "No WorkflowValidationProfile is registered for the classified proceeding."
+
+support.workflow_alignment
+    PASS: "WorkflowDefinition proceeding type matches the classification."
+    FAIL: "WorkflowDefinition proceeding type does not match the classification."
+
+support.profile_alignment
+    PASS: "WorkflowValidationProfile proceeding type matches the classification."
+    FAIL: "WorkflowValidationProfile proceeding type does not match the classification."
+
+support.requirement_alignment
+    PASS: "Workflow requirement profile matches the workflow required-facts contract."
+    FAIL: "Workflow requirement profile does not match the workflow required-facts contract."
+
+support.special_rule_coverage
+    PASS: "Every workflow special rule has an authoritative validation/review handling mapping."
+    FAIL: "One or more workflow special rules lack an authoritative handling mapping."
+```
+
+Any FAIL from these checks blocks specialist drafting. No fallback
+workflow is permitted.
+
+### 19.59 Extraction health check ID
+
+Fixed ID:
+
+```text
+extraction.status
+```
+
+Exact mappings:
+
+```text
+SUCCESS → PASS
+    "Fact extraction completed successfully."
+
+PARTIAL → WARNING
+    "Fact extraction was partial; validated positive facts remain usable but absence-based conclusions are not reliable."
+
+FAILED → FAIL
+    "Fact extraction failed; specialist drafting is blocked."
+
+NO_INPUT → FAIL
+    "No usable notice text was available for fact extraction; specialist drafting is blocked."
+```
+
+### 19.60 Fact-invariant check IDs
+
+Fixed IDs:
+
+```text
+fact.department_allegation_status
+fact.department_allegation_draft_permission
+fact.other_notice_fact_status
+fact.requires_verification_draft_permission
+fact.confirmed_draft_permission
+fact.alleged_draft_permission
+fact.fact_id_present
+fact.source_text_present
+fact.fact_id_unique
+fact.role_compatibility
+```
+
+One `ValidationItem` is produced per invariant (§19.28 checks 1–9).
+
+`related_fact_ids`:
+
+```text
+PASS → []
+FAIL → IDs of all offending facts in extraction order
+```
+
+Special rules:
+
+- `fact.fact_id_present`: facts whose `fact_id` is empty cannot contribute
+  a usable ID. `related_fact_ids` therefore contains the non-empty IDs of
+  offending facts when any exist; the message must still report the
+  failure even when the `related_fact_ids` list is empty.
+- `fact.fact_id_unique`: `related_fact_ids` contains duplicated non-empty
+  IDs once each, preserving first duplicate-detection order.
+
+Message templates:
+
+```text
+PASS: "<invariant description> is satisfied."
+FAIL: "<invariant description> failed."
+```
+
+Invariant descriptions:
+
+```text
+fact.department_allegation_status            "Department-allegation status invariant"
+fact.department_allegation_draft_permission  "Department-allegation draft-permission invariant"
+fact.other_notice_fact_status                "Other-notice-fact status invariant"
+fact.requires_verification_draft_permission  "Requires-verification draft-permission invariant"
+fact.confirmed_draft_permission              "Confirmed-fact draft-permission invariant"
+fact.alleged_draft_permission                "Alleged-fact draft-permission invariant"
+fact.fact_id_present                         "Fact-ID presence invariant"
+fact.source_text_present                     "Fact source-text presence invariant"
+fact.fact_id_unique                          "Fact-ID uniqueness invariant"
+fact.role_compatibility                      "FactRole compatibility invariant"
+```
+
+Every violation is `ValidationStatus.FAIL` and
+`DraftEligibility.BLOCKED`. No mutation/repair.
+
+### 19.61 Preflight check IDs
+
+Fixed IDs:
+
+```text
+preflight.portal_verification
+preflight.authority_verification
+preflight.communication_identifier
+preflight.authority_details
+preflight.deadline_conflict
+```
+
+```text
+portal_verification_required == True → WARNING
+    "GST portal identifier/authenticity verification is required."
+portal_verification_required == False → PASS
+    "GST portal identifier/authenticity verification is not currently flagged by preflight."
+
+authority_verification_required == True → WARNING
+    "Issuing-authority competence/jurisdiction requires CA/legal verification."
+authority_verification_required == False → PASS
+    "Issuing-authority verification is not currently flagged by preflight."
+
+CommunicationIdentifierStatus.UNKNOWN → WARNING
+    "Communication identifier status is UNKNOWN."
+any other CommunicationIdentifierStatus value → PASS
+    "Communication identifier status is available."
+
+AuthorityDetailsStatus.UNKNOWN → WARNING
+    "Authority details status is UNKNOWN."
+any other AuthorityDetailsStatus value → PASS
+    "Authority details status is available."
+
+DeadlineConflictStatus.CONFLICT → WARNING
+    "The notice-stated due date conflicts with the calculated response deadline."
+
+DeadlineConflictStatus.CANNOT_COMPARE:
+    if stated_due_date_fact_ids is non-empty OR deadline_result is not None → WARNING
+        "The notice-stated due date and calculated response deadline cannot be reliably compared."
+    otherwise → PASS
+        "No deadline comparison is currently available or required."
+
+DeadlineConflictStatus.MATCH → PASS
+    "The notice-stated due date matches the calculated response deadline."
+```
+
+No legal-validity conclusion.
+
+### 19.62 Deadline and hearing check IDs
+
+If `deadline_result` is None: emit no `deadline.status` and no
+`hearing.status`.
+
+If supplied:
+
+```text
+deadline.status
+
+    DeadlineStatus.UPCOMING → PASS
+        "The calculated response deadline is upcoming."
+    DeadlineStatus.CRITICAL → WARNING
+        "The calculated response deadline is critical."
+    DeadlineStatus.PASSED → WARNING
+        "The calculated response deadline has passed."
+    DeadlineStatus.UNKNOWN → WARNING
+        "The calculated response deadline is unknown."
+
+hearing.status
+
+    HearingStatus.UPCOMING → PASS
+        "The scheduled hearing is upcoming."
+    HearingStatus.TODAY → WARNING
+        "The scheduled hearing is today."
+    HearingStatus.PASSED → WARNING
+        "The scheduled hearing has passed."
+    HearingStatus.NOT_SCHEDULED → PASS
+        "No hearing is currently scheduled in the DeadlineResult."
+```
+
+Do NOT calculate dates.
+
+### 19.63 Deadline urgent-review contract
+
+```text
+DeadlineStatus.CRITICAL →
+    review_id = "deadline.urgent_review"
+    level = ReviewLevel.URGENT_CA_REVIEW
+    reason = "Deadline status is CRITICAL; urgent CA review is required."
+    mandatory = True
+
+DeadlineStatus.PASSED →
+    review_id = "deadline.urgent_review"
+    level = ReviewLevel.URGENT_CA_REVIEW
+    reason = "Deadline status is PASSED; urgent CA review is required."
+    mandatory = True
+```
+
+No deadline review for `UPCOMING` / `UNKNOWN`. Case severity behavior
+remains exactly §19.32.
+
+### 19.64 Arithmetic check-ID templates
+
+For each `ArithmeticResult` in input order, use one-based index N:
+
+```text
+arithmetic.{N}.calculation_type
+arithmetic.{N}.draft_permission
+arithmetic.{N}.source_resolution
+arithmetic.{N}.role_provenance
+arithmetic.{N}.result_status_consistency
+arithmetic.{N}.outcome
+```
+
+Examples:
+
+```text
+arithmetic.1.calculation_type
+arithmetic.1.role_provenance
+arithmetic.2.outcome
+```
+
+N is input-list position starting at 1. Do NOT derive N from calculation
+type: duplicate calculation types are allowed as input and must be
+detected later rather than collapsed.
+
+`related_calculation_types`:
+
+```text
+result.calculation_type is a valid ArithmeticCalculationType → [result.calculation_type]
+otherwise → []
+```
+
+`related_fact_ids`:
+
+```text
+source-resolution / role-provenance checks →
+    result.source_fact_ids in stored order, restricted to valid non-empty strings
+all other arithmetic checks → []
+```
+
+### 19.65 Arithmetic check semantics
+
+```text
+arithmetic.{N}.calculation_type
+    valid approved ArithmeticCalculationType → PASS
+        "Arithmetic calculation type is approved."
+    otherwise → FAIL
+        "Arithmetic calculation type is unsupported."
+
+arithmetic.{N}.draft_permission
+    CONDITIONAL → PASS
+        "Arithmetic draft permission is CONDITIONAL."
+    otherwise → FAIL
+        "Arithmetic draft permission must be CONDITIONAL."
+
+arithmetic.{N}.source_resolution
+    all source_fact_ids resolve uniquely to extraction facts → PASS
+        "Arithmetic source facts resolve uniquely."
+    otherwise → FAIL
+        "Arithmetic source facts do not resolve uniquely."
+
+arithmetic.{N}.role_provenance
+    roles match §19.15 exactly → PASS
+        "Arithmetic operand FactRoles match the approved calculation contract."
+    otherwise → FAIL
+        "Arithmetic operand FactRoles do not match the approved calculation contract."
+
+arithmetic.{N}.result_status_consistency
+    PASS + result == Decimal("0")
+    OR MISMATCH + result is not None and result != Decimal("0")
+    OR INSUFFICIENT_DATA + result is None
+        → PASS
+        "Arithmetic status and result are internally consistent."
+    otherwise → FAIL
+        "Arithmetic status and result are internally inconsistent."
+
+arithmetic.{N}.outcome
+    ArithmeticStatus.PASS → PASS
+        "Arithmetic result matches."
+    ArithmeticStatus.MISMATCH → WARNING
+        "Arithmetic result is a mismatch."
+    ArithmeticStatus.INSUFFICIENT_DATA → WARNING
+        "Arithmetic result has insufficient data."
+```
+
+Structural arithmetic FAIL always blocks drafting. Do not recompute the
+result.
+
+### 19.66 Workflow special-rule check-ID template
+
+For a workflow special rule at zero-based index I and handling H:
+
+```text
+workflow.<PREFIX>.special_rule.<I>.<H>
+```
+
+PREFIX values are exactly:
+
+```text
+sec73_itc
+sec73_general
+sec73_rcm
+sec74_fraud
+sec129
+```
+
+H is exactly the `SpecialRuleHandling` enum value:
+
+```text
+deterministic_check
+review_gate
+upstream_invariant
+future_legal_rule
+```
+
+Examples:
+
+```text
+workflow.sec74_fraud.special_rule.1.review_gate
+workflow.sec73_rcm.special_rule.1.future_legal_rule
+workflow.sec129.special_rule.6.review_gate
+```
+
+Indices remain zero-based because `WorkflowValidationProfile` mappings
+are zero-based.
+
+### 19.67 Review-gate validation items
+
+For every `REVIEW_GATE` handling:
+
+```text
+status = WARNING
+check_id = workflow.<PREFIX>.special_rule.<I>.review_gate
+message = "Mandatory review gate applies: <SPECIAL_RULE_TEXT>"
+related_fact_ids = []
+related_calculation_types = []
+```
+
+`<SPECIAL_RULE_TEXT>` is the exact corresponding
+`WorkflowDefinition.special_rules[I]` string.
+
+This WARNING ensures review conditions participate in overall
+aggregation.
+
+### 19.68 ReviewRequirement ID / reason contract
+
+For every `REVIEW_GATE`:
+
+```text
+review_id = workflow.<PREFIX>.special_rule.<I>.review
+level = exact WorkflowValidationProfile.review_rules[I]
+reason = exact WorkflowDefinition.special_rules[I]
+mandatory = True
+```
+
+Do not paraphrase `reason`. This gives review requirements stable machine
+IDs while preserving the authoritative workflow rule as the human reason.
+
+### 19.69 FUTURE_LEGAL_RULE item
+
+For `FUTURE_LEGAL_RULE`:
+
+```text
+check_id = workflow.<PREFIX>.special_rule.<I>.future_legal_rule
+status = WARNING
+message = "This workflow rule requires future verified legal-rule support and CA review."
+```
+
+No legal inference. The same rule currently also has `REVIEW_GATE`, so a
+`ReviewRequirement` is created separately by the §19.68 review-gate
+rules.
+
+### 19.70 UPSTREAM_INVARIANT item
+
+For `UPSTREAM_INVARIANT`:
+
+```text
+check_id = workflow.<PREFIX>.special_rule.<I>.upstream_invariant
+```
+
+If Step 8.2 has an explicitly authorized structured recheck: perform it.
+
+If rechecking would require source-code introspection, natural-language
+interpretation, legal inference, or re-running classifier/arithmetic:
+
+```text
+status = PASS
+message = "This safety boundary is enforced by an authoritative upstream component and is not re-run by validation."
+```
+
+Do not inspect source files at runtime.
+
+### 19.71 DETERMINISTIC_CHECK item
+
+For `DETERMINISTIC_CHECK`:
+
+```text
+check_id = workflow.<PREFIX>.special_rule.<I>.deterministic_check
+```
+
+Step 8.2 may perform ONLY the deterministic special checks explicitly
+authorized by §19.41. Do not interpret `special_rule` text generically.
+
+Where a §19.41 check is already covered by another generic
+`ValidationItem`, the special-rule item may report `PASS` only if that
+corresponding generic check passed. If the corresponding generic check
+failed: special-rule item = `FAIL`.
+
+No duplicate re-calculation.
+
+### 19.72 ReviewRequirement deduplication
+
+Preserve §19.42: deduplicate by `(level, reason)`, preserving first
+occurrence. When duplicates collapse, keep the `review_id` of the first
+occurrence.
+
+### 19.73 Staged Step-8.2 run_validation contract
+
+Step 8.2 WILL introduce the architecture-approved public (§19.7):
+
+```text
+run_validation(
+    classification,
+    extraction_result,
+    preflight_result,
+    arithmetic_results,
+    deadline_result=None
+) -> ValidationEngineResult
+```
+
+Steps 8.3 and 8.4 remain unfinished. Therefore during Step 8.2 ONLY:
+
+```text
+requirements = []
+evidence_checklist = []
+```
+
+This is an explicitly temporary staged implementation state.
+
+Step 8.2 MUST implement:
+
+- support gate
+- extraction health
+- fact invariants
+- preflight checks
+- deadline/hearing checks
+- arithmetic safety
+- special-rule handling/review gates
+- ReviewRequirement dedup
+- overall ValidationStatus aggregation
+- case_severity
+- DraftEligibility using only conditions currently available
+
+Step 8.2 MUST NOT implement:
+
+- WorkflowRequirementSpec resolution
+- SATISFIED/MISSING/UNKNOWN requirement results
+- evidence checklist generation
+- EvidenceGap generation
+
+Step 8.3 will populate `requirements`; Step 8.4 will populate
+`evidence_checklist` and finalize the complete aggregation behavior.
+
+### 19.74 Interim integration prohibition
+
+Until Step 8.4 is complete, `domain/validation_engine.py` must NOT be
+wired into:
+
+```text
+app.py
+modules/notice_explainer.py
+specialist Step-9 drafting
+production rendering
+```
+
+The staged Step-8.2 `ValidationEngineResult` is testable architecture
+work, not yet the final integrated validation surface. This prevents
+empty requirements/evidence lists from being interpreted as "complete".
+
+### 19.75 Interim Step-8.2 DraftEligibility
+
+During Step 8.2: `BLOCKED` when any existing §19.26 blocking condition
+that is currently implementable holds, including:
+
+- support level != DEEP_WORKFLOW
+- missing workflow/profile
+- structural support-gate failure
+- extraction FAILED / NO_INPUT
+- fact invariant FAIL
+- arithmetic structural FAIL
+
+Otherwise: because preflight verification flags are always True in
+current Phase 2, the result will normally be `REVIEW_REQUIRED`, as
+already clarified by §19.26.
+
+Do NOT artificially create `ALLOWED`. Do NOT use empty
+requirements/evidence lists to infer completeness.
+
+### 19.76 Overall status aggregation
+
+Preserve §19.25 deterministic aggregation exactly:
+
+```text
+any FAIL        → FAIL
+else any WARNING → WARNING
+else             → PASS
+```
+
+Every review gate generates a WARNING item before aggregation.
+
+### 19.77 FAIL semantics
+
+Reaffirm §19.23: `ValidationStatus.FAIL` means the product/workflow/
+drafting safety gate failed. It does NOT mean:
+
+```text
+notice legally invalid
+department allegation false
+taxpayer not liable
+officer lacks jurisdiction
+proceeding void
+```
+
+### 19.78 No new Step-8B model
+
+Do NOT add or change:
+
+- enums
+- dataclasses
+- FactRole
+- WorkflowValidationProfile
+- validation profiles
+- workflow definitions
+
+Step 8B defines IDs/templates only.
+
+### 19.79 Zero LLM
+
+Reaffirm: the Step 8.2 Validation Engine is pure deterministic Python.
+
+No:
+
+```text
+modules.llm_client
+Gemini
+network
+legal research
+semantic matching
+```
+
+### 19.80 Contract counts preserved
+
+Step 8B changes no mapping content:
+
+```text
+FactRole members = 22
+workflow requirement mappings = 29
+workflow special-rule mappings = 24
+validation profiles = 5
+```
+
+### 19.81 Step-8.2 derived-rule deferral (SEC73 ITC / GENERAL)
+
+Step 8.2 special-rule handling must process the workflow
+`DETERMINISTIC_CHECK` mappings (§19.40, §19.71). Exactly five such
+mappings exist today:
+
+```text
+GST_SEC73_ITC      index 1
+GST_SEC73_GENERAL  index 1
+GST_SEC74_FRAUD    index 0
+GST_SEC74_FRAUD    index 2
+GST_SEC129_ENFORCE index 6
+```
+
+Two of the five concern the workflow's DERIVED difference requirement,
+whose resolution is owned by Step 8.3 (§19.73). Step 8.2 must NOT invent
+completeness logic early for them.
+
+During Step 8.2 ONLY, for `GST_SEC73_ITC` special rule index 1:
+
+```text
+check_id = workflow.sec73_itc.special_rule.1.deterministic_check
+status = WARNING
+message = "Derived workflow validation is deferred until Step 8.3 requirement resolution."
+related_fact_ids = []
+related_calculation_types = [ArithmeticCalculationType.ITC_DIFFERENCE]
+```
+
+During Step 8.2 ONLY, for `GST_SEC73_GENERAL` special rule index 1:
+
+```text
+check_id = workflow.sec73_general.special_rule.1.deterministic_check
+status = WARNING
+message = "Derived workflow validation is deferred until Step 8.3 requirement resolution."
+related_fact_ids = []
+related_calculation_types = [ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE]
+```
+
+Step 8.2 must NOT decide whether the workflow requirement is:
+
+```text
+DERIVED
+UNKNOWN
+MISSING
+SATISFIED
+```
+
+Requirement resolution stays with Step 8.3.
+
+### 19.82 Step-8.3 replacement rule
+
+When Step 8.3 is implemented, the temporary WARNING behavior of §19.81
+is REPLACED under the SAME stable check IDs:
+
+```text
+workflow.sec73_itc.special_rule.1.deterministic_check
+workflow.sec73_general.special_rule.1.deterministic_check
+```
+
+Step 8.3 will use the authoritative requirement-resolution contract
+(§19.16, §19.41-A) to determine the real PASS / FAIL / WARNING behavior
+of the two derived checks.
+
+The temporary warning must NOT survive after Step 8.3 implements those
+derived requirements.
+
+This patch does NOT define Step-8.3 implementation details.
+
+### 19.83 Fraud rule 0 — status safety (GST_SEC74_FRAUD index 0)
+
+During Step 8.2, for `GST_SEC74_FRAUD` special rule index 0, the
+corresponding deterministic check is the already-emitted generic fact
+invariant `fact.department_allegation_status` (§19.60). Do NOT re-run the
+fact invariant.
+
+```text
+check_id = workflow.sec74_fraud.special_rule.0.deterministic_check
+
+if fact.department_allegation_status == PASS:
+    status = PASS
+    message = "Fraud/suppression allegations remain departmental allegations."
+
+if fact.department_allegation_status == FAIL:
+    status = FAIL
+    message = "Fraud/suppression allegation status safety failed."
+
+related_fact_ids =
+    same offending fact IDs as the corresponding generic check when FAIL,
+    otherwise [].
+related_calculation_types = []
+```
+
+### 19.84 Fraud rule 2 — provenance safety (GST_SEC74_FRAUD index 2)
+
+During Step 8.2, for `GST_SEC74_FRAUD` special rule index 2, the
+corresponding deterministic check is the already-emitted generic fact
+invariant `fact.source_text_present` (§19.60). Do NOT re-run provenance
+logic.
+
+```text
+check_id = workflow.sec74_fraud.special_rule.2.deterministic_check
+
+if fact.source_text_present == PASS:
+    status = PASS
+    message = "Fraud-workflow fact provenance is present."
+
+if fact.source_text_present == FAIL:
+    status = FAIL
+    message = "Fraud-workflow fact provenance safety failed."
+
+related_fact_ids =
+    same offending IDs as fact.source_text_present when FAIL,
+    otherwise [].
+related_calculation_types = []
+```
+
+### 19.85 Section-129 rule 6 — deadline-source boundary
+
+During Step 8.2, for `GST_SEC129_ENFORCE` special rule index 6, the
+deterministic check is an architectural-boundary assertion (§19.41-F):
+
+```text
+check_id = workflow.sec129.special_rule.6.deterministic_check
+status = PASS
+message = "Section-129 deadline handling uses only supplied preflight/deadline results; validation adds no statutory deadline calculation."
+related_fact_ids = []
+related_calculation_types = []
+```
+
+This rule does NOT authorize a new date calculation. The Validation
+Engine must use ONLY:
+
+```text
+supplied PreflightResult
+supplied optional DeadlineResult
+```
+
+for deadline/hearing validation. It must NOT:
+
+```text
+import deadline_engine
+calculate a seven-day deadline
+infer a statutory response period
+derive a deadline from Section 129 text
+inspect free-text special_rule content
+```
+
+The truth of this PASS must additionally be pinned by Step-8.2 purity
+tests confirming that `validation_engine.py` does not import or call
+`deadline_engine`.
+
+The same special rule index also has `REVIEW_GATE`
+(`URGENT_CA_REVIEW`, §19.39), so its separate review item
+(`workflow.sec129.special_rule.6.review_gate`, §19.67) and
+`ReviewRequirement` (§19.68) remain unchanged.
+
+### 19.86 No other special-rule changes
+
+This patch defines Step-8.2 execution semantics for the five current
+`DETERMINISTIC_CHECK` mappings only. It does NOT change:
+
+```text
+special_rule_handling mappings
+review_rules
+workflow text
+requirement mappings
+check-ID templates
+review-ID templates
+```
+
+### 19.87 Staged status clarification
+
+The two derived-rule temporary warnings (§19.81) contribute to
+`ValidationEngineResult.overall_status` normally (§19.25, §19.76).
+
+They also reinforce `DraftEligibility.REVIEW_REQUIRED` during Step 8.2
+(§19.75).
+
+They are NOT structural failures and therefore do NOT themselves cause
+`DraftEligibility.BLOCKED` (§19.75).
+
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
