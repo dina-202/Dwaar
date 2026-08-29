@@ -124,7 +124,7 @@ class ExtractedFactContractTests(unittest.TestCase):
         self.assertIs(by_name["claim"].type, str)
         self.assertIs(by_name["status"].type, FactStatus)
         self.assertIs(by_name["source_text"].type, Optional[str])
-        self.assertIs(by_name["source_page"].type, Optional[int])
+        self.assertEqual(by_name["source_page"].type, Optional[int])
         self.assertIs(by_name["allowed_in_draft"].type, DraftPermission)
         self.assertIs(by_name["fact_type"].type, FactType)
 
