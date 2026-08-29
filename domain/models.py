@@ -220,6 +220,23 @@ class FactType(Enum):
     OTHER_NOTICE_FACT = "other_notice_fact"
 
 
+# --- Phase 2 Step 6.3 enum (ARCHITECTURE_SPEC_v1_1 §18.1) -------------------
+
+class FactExtractionStatus(Enum):
+    """Additive fact-extraction outcome channel (ARCHITECTURE_SPEC_v1_1 §18.1).
+
+    Distinguishes successful extraction (including a genuinely empty facts
+    list) from partial or failed extraction, so downstream preflight never
+    draws absence-based conclusions from a non-successful extraction
+    (§18.3). Values follow the repo convention: lowercase member names.
+    """
+
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    NO_INPUT = "no_input"
+
+
 # --- 3.2 Core Data Objects -------------------------------------------------
 
 @dataclass
@@ -337,3 +354,21 @@ class NoticeClassification:
     support_level: SupportLevel
     confidence: ClassificationConfidence
     classification_reasons: List[str]
+
+
+# --- Phase 2 Step 6.3 dataclass (ARCHITECTURE_SPEC_v1_1 §18.2) ---------------
+
+@dataclass
+class FactExtractionResult:
+    """Additive extraction outcome wrapper (ARCHITECTURE_SPEC_v1_1 §18.2).
+
+    The backward-compatible `extract_facts` returns exactly this object's
+    `facts`. The status channel exists so downstream preflight can
+    distinguish successful from partial/failed extraction (§18.3). Pure
+    data contract only — no provider exception strings, no API internals,
+    no raw error objects.
+    """
+
+    facts: List[ExtractedFact]
+    status: FactExtractionStatus
+    rejected_item_count: int = 0

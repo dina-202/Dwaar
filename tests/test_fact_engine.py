@@ -19,7 +19,11 @@ v1.1 §17 Fact Engine contract:
   - prompt safety: notice text delimited as DATA, embedded instructions
     ignored, no status / allowed_in_draft / fact_id words in the prompt;
   - module purity: stdlib + domain.models + modules.llm_client only, no
-    direct Gemini SDK, no forbidden coupling.
+    direct Gemini SDK, no forbidden coupling;
+  - §18.1–18.2 additive outcome channel: extract_facts_with_status
+    returns FactExtractionResult with NO_INPUT / FAILED / SUCCESS /
+    PARTIAL semantics, extract_facts stays the facts-only wrapper, and
+    each API makes exactly ONE LLM call.
 
 Every test mocks the LLM client at the modules.llm_client boundary, so the
 suite is fully offline — no real Gemini call, no network.
@@ -42,6 +46,8 @@ from domain.models import (
     ClassificationConfidence,
     DraftPermission,
     ExtractedFact,
+    FactExtractionResult,
+    FactExtractionStatus,
     FactStatus,
     FactType,
     NoticeClassification,
@@ -119,6 +125,20 @@ def run_extraction(raw_text, response, classification=None):
         fact_engine, "call_gemini", return_value=response
     ) as fake:
         result = fact_engine.extract_facts(
+            raw_text, classification or make_classification()
+        )
+    return result, fake
+
+
+def run_extraction_with_status(raw_text, response, classification=None):
+    """Run extract_facts_with_status with the LLM mocked to `response`.
+
+    Returns (result, fake) where result is a FactExtractionResult.
+    """
+    with mock.patch.object(
+        fact_engine, "call_gemini", return_value=response
+    ) as fake:
+        result = fact_engine.extract_facts_with_status(
             raw_text, classification or make_classification()
         )
     return result, fake
@@ -865,6 +885,206 @@ class ModulePurityTests(unittest.TestCase):
         # Exactly one LLM path: the imported modules.llm_client.call_gemini,
         # not a direct Gemini SDK instantiation.
         self.assertIs(fact_engine.call_gemini, llm_client.call_gemini)
+
+
+class StatusApiContractTests(unittest.TestCase):
+    """§18.2: the additive status API exists with the exact signature."""
+
+    def test_extract_facts_with_status_exists(self):
+        self.assertTrue(callable(fact_engine.extract_facts_with_status))
+
+    def test_extract_facts_with_status_signature_exact(self):
+        sig = inspect.signature(fact_engine.extract_facts_with_status)
+        self.assertEqual(
+            list(sig.parameters), ["raw_text", "classification"]
+        )
+        self.assertEqual(sig.return_annotation, FactExtractionResult)
+
+
+class NoInputStatusTests(unittest.TestCase):
+    """§18.1 NO_INPUT: unusable input -> [], rejected=0, ZERO LLM calls."""
+
+    def assert_no_input(self, raw_text):
+        result, fake = run_extraction_with_status(
+            raw_text, facts_response(candidate())
+        )
+        self.assertIs(result.status, FactExtractionStatus.NO_INPUT)
+        self.assertEqual(result.facts, [])
+        self.assertEqual(result.rejected_item_count, 0)
+        self.assertEqual(fake.call_count, 0)
+
+    def test_empty_string_is_no_input(self):
+        self.assert_no_input("")
+
+    def test_whitespace_only_is_no_input(self):
+        self.assert_no_input("   \n\t  ")
+
+    def test_none_is_no_input(self):
+        self.assert_no_input(None)
+
+    def test_non_string_is_no_input(self):
+        self.assert_no_input(12345)
+
+
+class SuccessStatusTests(unittest.TestCase):
+    """§18.1 SUCCESS: structurally valid response, zero rejections."""
+
+    def test_empty_facts_list_is_success(self):
+        # {"facts": []} is SUCCESS, not FAILED (§18.1).
+        result, fake = run_extraction_with_status(
+            RICH_NOTICE, facts_response()
+        )
+        self.assertIs(result.status, FactExtractionStatus.SUCCESS)
+        self.assertEqual(result.facts, [])
+        self.assertEqual(result.rejected_item_count, 0)
+        self.assertEqual(fake.call_count, 1)
+
+    def test_single_valid_fact_is_success(self):
+        result, _ = run_extraction_with_status(
+            RICH_NOTICE, facts_response(candidate())
+        )
+        self.assertIs(result.status, FactExtractionStatus.SUCCESS)
+        self.assertEqual(len(result.facts), 1)
+        self.assertIs(result.facts[0].fact_type, FactType.NOTICE_REFERENCE)
+        self.assertEqual(result.rejected_item_count, 0)
+
+
+class PartialStatusTests(unittest.TestCase):
+    """§18.1 PARTIAL: valid structure, one or more rejected items."""
+
+    def test_mixed_batch_is_partial_with_exact_rejected_count(self):
+        items = [
+            candidate(fact_type="bogus"),          # rejected
+            "not a dict",                          # rejected
+            candidate(claim="first"),              # accepted
+            candidate(source_text="absent text"),  # rejected
+        ]
+        result, _ = run_extraction_with_status(
+            RICH_NOTICE, facts_response(*items)
+        )
+        self.assertIs(result.status, FactExtractionStatus.PARTIAL)
+        self.assertEqual(len(result.facts), 1)
+        self.assertEqual(result.facts[0].claim, "first")
+        self.assertEqual(result.rejected_item_count, 3)
+
+    def test_all_items_rejected_is_partial_with_zero_facts(self):
+        result, _ = run_extraction_with_status(
+            RICH_NOTICE,
+            facts_response(candidate(fact_type="bogus"), "not a dict"),
+        )
+        self.assertIs(result.status, FactExtractionStatus.PARTIAL)
+        self.assertEqual(result.facts, [])
+        self.assertEqual(result.rejected_item_count, 2)
+
+    def test_rejected_items_consume_no_fact_ids_in_status_api(self):
+        result, _ = run_extraction_with_status(
+            RICH_NOTICE,
+            facts_response(candidate(fact_type="bogus"),
+                           candidate(claim="good")),
+        )
+        self.assertIs(result.status, FactExtractionStatus.PARTIAL)
+        self.assertEqual([f.fact_id for f in result.facts], ["F-001"])
+        self.assertEqual(result.rejected_item_count, 1)
+
+
+class FailedStatusTests(unittest.TestCase):
+    """§18.1 FAILED: overall extraction failure, no per-item counting."""
+
+    def assert_failed(self, response):
+        result, _ = run_extraction_with_status(RICH_NOTICE, response)
+        self.assertIs(result.status, FactExtractionStatus.FAILED)
+        self.assertEqual(result.facts, [])
+        self.assertEqual(result.rejected_item_count, 0)
+
+    def test_malformed_json_is_failed(self):
+        self.assert_failed("this is not json {{{")
+
+    def test_non_string_response_is_failed(self):
+        self.assert_failed(12345)
+
+    def test_root_list_is_failed(self):
+        self.assert_failed(json.dumps(["a", "b"]))
+
+    def test_missing_facts_key_is_failed(self):
+        self.assert_failed(json.dumps({"nope": []}))
+
+    def test_facts_not_a_list_is_failed(self):
+        self.assert_failed(json.dumps({"facts": "not a list"}))
+
+    def test_llm_exception_is_failed(self):
+        with mock.patch.object(
+            fact_engine, "call_gemini", side_effect=RuntimeError("down")
+        ):
+            result = fact_engine.extract_facts_with_status(
+                RICH_NOTICE, make_classification()
+            )
+        self.assertIs(result.status, FactExtractionStatus.FAILED)
+        self.assertEqual(result.facts, [])
+        self.assertEqual(result.rejected_item_count, 0)
+
+
+class BackwardCompatibilityTests(unittest.TestCase):
+    """§18.2: extract_facts stays the facts-only wrapper, ONE call each."""
+
+    def test_extract_facts_returns_exactly_status_facts(self):
+        response = facts_response(
+            candidate(),
+            candidate(fact_type="bogus"),
+            candidate(fact_type="gstin", claim="gstin",
+                      source_text="GSTIN: 27ABCDE1234F1Z5"),
+        )
+        with mock.patch.object(
+            fact_engine, "call_gemini", return_value=response
+        ):
+            wrapper_result = fact_engine.extract_facts(
+                RICH_NOTICE, make_classification()
+            )
+        with mock.patch.object(
+            fact_engine, "call_gemini", return_value=response
+        ):
+            status_result = fact_engine.extract_facts_with_status(
+                RICH_NOTICE, make_classification()
+            )
+        self.assertIs(status_result.status, FactExtractionStatus.PARTIAL)
+        self.assertEqual(len(wrapper_result), 2)
+        self.assertEqual(wrapper_result, status_result.facts)
+
+    def test_extract_facts_makes_exactly_one_llm_call(self):
+        _, fake = run_extraction(
+            RICH_NOTICE, facts_response(candidate(), candidate())
+        )
+        self.assertEqual(fake.call_count, 1)
+
+    def test_extract_facts_with_status_makes_exactly_one_llm_call(self):
+        _, fake = run_extraction_with_status(
+            RICH_NOTICE, facts_response(candidate(), candidate())
+        )
+        self.assertEqual(fake.call_count, 1)
+
+    def test_status_api_does_not_mutate_classification(self):
+        classification = make_classification()
+        snapshot = (
+            classification.notice_family,
+            classification.notice_form,
+            classification.proceeding_type,
+            classification.support_level,
+            classification.confidence,
+            list(classification.classification_reasons),
+        )
+        _, _ = run_extraction_with_status(
+            RICH_NOTICE,
+            facts_response(candidate()),
+            classification=classification,
+        )
+        after = (
+            classification.notice_family,
+            classification.notice_form,
+            classification.proceeding_type,
+            classification.support_level,
+            classification.confidence,
+            list(classification.classification_reasons),
+        )
+        self.assertEqual(after, snapshot)
 
 
 if __name__ == "__main__":

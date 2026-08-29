@@ -9,7 +9,8 @@ Pipeline:
         -> untrusted candidate JSON
         -> strict parsing + per-item validation
         -> Python-owned FactType / FactStatus / DraftPermission / fact_id
-        -> List[ExtractedFact]
+        -> FactExtractionResult (additive status channel, §18.1–18.2);
+           the backward-compatible extract_facts returns its .facts
 
 The LLM is advisory for extraction only. Python is authoritative for
 structure, final status, draft permission, provenance and IDs (§17).
@@ -25,6 +26,8 @@ from typing import Dict, List, Optional, Tuple
 from domain.models import (
     DraftPermission,
     ExtractedFact,
+    FactExtractionResult,
+    FactExtractionStatus,
     FactStatus,
     FactType,
     NoticeClassification,
@@ -242,10 +245,33 @@ def _validate_item(
     return (fact_type, claim, source_text, source_page)
 
 
-def extract_facts(
+def extract_facts_with_status(
     raw_text: str, classification: NoticeClassification
-) -> List[ExtractedFact]:
-    """Extract document-native facts from a notice, safely (§17).
+) -> FactExtractionResult:
+    """Extract document-native facts with an explicit outcome status
+    (§18.1–§18.2).
+
+    The additive status channel distinguishes successful extraction
+    (including a genuinely empty facts list) from partial or failed
+    extraction, so downstream preflight never draws absence-based
+    conclusions from a non-successful extraction (§18.3).
+
+    Status semantics (§18.1):
+
+    - NO_INPUT: raw_text is non-string, empty or whitespace-only — zero
+      LLM calls, facts=[], rejected_item_count=0.
+    - FAILED: the LLM call raised, or the response could not be parsed to
+      a dict with a top-level "facts" list — facts=[],
+      rejected_item_count=0. Provider/internal errors are never exposed.
+    - SUCCESS: structurally valid response, zero rejected items. A valid
+      {"facts": []} is SUCCESS.
+    - PARTIAL: structurally valid response with one or more rejected
+      items; may contain zero or more accepted facts.
+
+    All Step 6.2 behavior is unchanged: Python-owned fact_type, FactStatus,
+    DraftPermission and sequential F-001... IDs (rejected items consume no
+    ID), per-item rejection with valid items preserved, no dedup, no
+    arithmetic, allegation safety (§17).
 
     Args:
         raw_text: The extracted notice text (untrusted data).
@@ -253,35 +279,38 @@ def extract_facts(
             context only. The same engine serves DEEP_WORKFLOW,
             TRIAGE_ONLY and UNKNOWN; classification is never mutated and a
             UNKNOWN classification does not prevent extraction.
-
-    Returns:
-        The accepted ExtractedFact list, with Python-owned fact_type,
-        FactStatus, DraftPermission and sequential F-001... IDs. Empty or
-        non-string input returns [] with no LLM call. A malformed or
-        unusable overall response returns [] (§17.11); individually invalid
-        items are rejected while valid items are preserved.
     """
     if not isinstance(raw_text, str) or not raw_text.strip():
-        return []
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.NO_INPUT
+        )
 
     prompt = _build_extraction_prompt(raw_text, classification)
     try:
         response = call_gemini(prompt)  # exactly one LLM call, existing router
     except Exception:
-        return []
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.FAILED
+        )
 
     candidate = _parse_candidate(response)
     if candidate is None:
-        return []
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.FAILED
+        )
     facts = candidate.get("facts")
     if not isinstance(facts, list):
-        return []
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.FAILED
+        )
 
     accepted: List[ExtractedFact] = []
+    rejected_item_count = 0
     for item in facts:
         validated = _validate_item(item, raw_text)
         if validated is None:
-            continue  # rejected items consume no ID
+            rejected_item_count += 1  # rejected items consume no ID
+            continue
         fact_type, claim, source_text, source_page = validated
         status = _status_for_fact_type(fact_type)
         permission = _draft_permission_for_status(status)
@@ -297,4 +326,23 @@ def extract_facts(
                 fact_type=fact_type,
             )
         )
-    return accepted
+    return FactExtractionResult(
+        facts=accepted,
+        status=(
+            FactExtractionStatus.SUCCESS
+            if rejected_item_count == 0
+            else FactExtractionStatus.PARTIAL
+        ),
+        rejected_item_count=rejected_item_count,
+    )
+
+
+def extract_facts(
+    raw_text: str, classification: NoticeClassification
+) -> List[ExtractedFact]:
+    """Backward-compatible facts-only API (§18.2).
+
+    Returns exactly extract_facts_with_status(...).facts. Extraction runs
+    exactly once — this wrapper never triggers a second LLM call.
+    """
+    return extract_facts_with_status(raw_text, classification).facts

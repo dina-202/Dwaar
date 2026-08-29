@@ -13,6 +13,10 @@ compatible ExtractedFact.fact_type field (ARCHITECTURE_SPEC_v1_1 §17.1,
     still works and defaults to FactType.OTHER_NOTICE_FACT;
   - the existing allowed_in_draft default remains
     DraftPermission.CONDITIONAL;
+  - FactExtractionStatus adds exactly the four §18.1 members, in order,
+    with the lowercase spec values;
+  - FactExtractionResult is the §18.2 dataclass with exactly the fields
+    facts / status / rejected_item_count and no extras;
   - domain/models.py remains standard-library-only.
 
 Pure contract tests only. No Fact Engine behavior is implemented or
@@ -32,6 +36,8 @@ from typing import List, Optional
 from domain.models import (
     DraftPermission,
     ExtractedFact,
+    FactExtractionResult,
+    FactExtractionStatus,
     FactStatus,
     FactType,
 )
@@ -200,6 +206,79 @@ class ExtractedFactContractTests(unittest.TestCase):
         self.assertIsNone(fact.source_page)
         self.assertIs(fact.allowed_in_draft, DraftPermission.CONDITIONAL)
         self.assertIs(fact.fact_type, FactType.DEPARTMENT_ALLEGATION)
+
+
+# Exact members, in §18.1 spec order, with the repository enum-value
+# convention (lowercase member names).
+EXPECTED_FACT_EXTRACTION_STATUSES = {
+    "SUCCESS": "success",
+    "PARTIAL": "partial",
+    "FAILED": "failed",
+    "NO_INPUT": "no_input",
+}
+
+
+class FactExtractionStatusContractTests(unittest.TestCase):
+    """FactExtractionStatus: imports, Enum subclass, exact §18.1 members."""
+
+    def test_fact_extraction_status_imports_and_is_enum(self):
+        self.assertTrue(issubclass(FactExtractionStatus, Enum))
+
+    def test_fact_extraction_status_members_and_values_exact(self):
+        # Order + names + values pinned in one shot: exactly the §18.1
+        # members, no extras, no renames, no value drift.
+        self.assertEqual(
+            [(member.name, member.value) for member in FactExtractionStatus],
+            list(EXPECTED_FACT_EXTRACTION_STATUSES.items()),
+        )
+
+    def test_fact_extraction_status_has_exactly_4_members(self):
+        self.assertEqual(len(FactExtractionStatus), 4)
+
+    def test_fact_extraction_status_values_are_lowercase_member_names(self):
+        for member in FactExtractionStatus:
+            self.assertEqual(member.value, member.name.lower(), member.name)
+
+
+class FactExtractionResultContractTests(unittest.TestCase):
+    """FactExtractionResult: the exact §18.2 dataclass field contract."""
+
+    EXPECTED_FIELDS = ["facts", "status", "rejected_item_count"]
+
+    def test_fact_extraction_result_imports_and_is_dataclass(self):
+        self.assertTrue(is_dataclass(FactExtractionResult))
+
+    def test_field_names_and_order_exact(self):
+        self.assertEqual(
+            [f.name for f in fields(FactExtractionResult)],
+            self.EXPECTED_FIELDS,
+        )
+
+    def test_no_extra_fields(self):
+        self.assertEqual(len(fields(FactExtractionResult)), 3)
+
+    def test_field_types_exact(self):
+        by_name = {f.name: f for f in fields(FactExtractionResult)}
+        self.assertEqual(by_name["facts"].type, List[ExtractedFact])
+        self.assertIs(by_name["status"].type, FactExtractionStatus)
+        self.assertIs(by_name["rejected_item_count"].type, int)
+
+    def test_rejected_item_count_defaults_to_zero(self):
+        result = FactExtractionResult(
+            facts=[], status=FactExtractionStatus.SUCCESS
+        )
+        self.assertEqual(result.rejected_item_count, 0)
+
+    def test_supplied_values_preserved(self):
+        fact = ExtractedFact("F-001", "claim", FactStatus.CONFIRMED)
+        result = FactExtractionResult(
+            facts=[fact],
+            status=FactExtractionStatus.PARTIAL,
+            rejected_item_count=2,
+        )
+        self.assertEqual(result.facts, [fact])
+        self.assertIs(result.status, FactExtractionStatus.PARTIAL)
+        self.assertEqual(result.rejected_item_count, 2)
 
 
 class StdlibPurityTests(unittest.TestCase):
