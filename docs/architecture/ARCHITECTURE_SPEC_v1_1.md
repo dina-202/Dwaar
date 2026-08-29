@@ -953,6 +953,7 @@ The authoritative Preflight + Arithmetic contract is defined in §18 (finalized 
 - Workflow-specific structured prompt (deep workflows only).
 - LLM writes narrative and draft only after code supplies classification, facts, deadline, workflow, arithmetic and evidence requirements.
 - TRIAGE_ONLY rendering has no LLM drafting call (§11).
+- The specialist drafting LLM call is gated by `ValidationEngineResult.draft_eligibility`; `BLOCKED` forbids the call. The authoritative Step-9 gate is defined in §19.53 (Phase 2 Step 8A).
 
 ### Step 10 — App Integration + Regression
 
@@ -1077,19 +1078,27 @@ DEPARTMENT_ALLEGATION = "department_allegation"
 REQUESTED_DOCUMENT = "requested_document"
 REFERENCED_ANNEXURE = "referenced_annexure"
 
+DOCUMENT_DETAIL = "document_detail"
+
 OTHER_NOTICE_FACT = "other_notice_fact"
 ```
 
 `FactType` identifies WHAT KIND of information was extracted. It does NOT
 decide whether the underlying legal proposition is true.
 
+`DOCUMENT_DETAIL` is added by Phase 2 Step 8A; its authoritative definition
+and `FactStatus` mapping are in §19.1 / §19.6. Step 8A also introduces the
+closed `FactRole` semantic-role vocabulary (§19.2) and the additive
+`ExtractedFact.fact_role` field (§19.3).
+
 ### 17.2 `ExtractedFact` additive change
 
-Add one field, with a default, so existing Step-1 constructors remain
+Add fields, each with a default, so existing Step-1 constructors remain
 backward compatible:
 
 ```text
 fact_type: FactType = FactType.OTHER_NOTICE_FACT
+fact_role: FactRole = FactRole.NONE          # added by Phase 2 Step 8A (§19.3)
 ```
 
 Final conceptual contract:
@@ -1102,11 +1111,13 @@ source_text
 source_page
 allowed_in_draft
 fact_type
+fact_role
 ```
 
 No existing `ExtractedFact` field is removed or renamed. The implementation
-places `fact_type` last so positional and keyword construction from Step 1
-continues to work unchanged.
+places the additive fields last (`fact_type`, then `fact_role`) so
+positional and keyword construction from Step 1 continues to work
+unchanged. `FactRole` is authorized by §19.2.
 
 ### 17.3 Fact Engine input contract
 
@@ -1159,7 +1170,8 @@ The focused extraction LLM call returns STRICT JSON only:
 {
   "facts": [
     {
-      "fact_type": "NOTICE_REFERENCE",
+      "fact_type": "notice_reference",
+      "fact_role": "none",
       "claim": "Notice reference is ...",
       "source_text": "exact text copied from the notice",
       "source_page": 1
@@ -1172,13 +1184,21 @@ Candidate fields are exactly:
 
 ```text
 fact_type
+fact_role
 claim
 source_text
 source_page
 ```
 
+Phase 2 Step 8A amends this candidate from four to five fields (§19.4):
+`fact_role` uses the closed `FactRole` vocabulary (§19.2); `"none"` is the
+default for facts whose role is not workflow-relevant.
+
 The LLM must NOT output or control `fact_id`, `status` or
 `allowed_in_draft` — those are Python-owned.
+
+Python validates `fact_role` as a closed enum: an invalid role rejects the
+candidate item. Role is never inferred later from claim text.
 
 The LLM must NOT create:
 
@@ -1216,6 +1236,7 @@ HEARING_DETAILS
 STATED_AMOUNT
 REQUESTED_DOCUMENT
 REFERENCED_ANNEXURE
+DOCUMENT_DETAIL
 ```
 
 Example: if a notice prints `"Penalty proposed: ₹5,00,000"`, the
@@ -1231,6 +1252,11 @@ merely because they appear in an official notice.
 For `OTHER_NOTICE_FACT`, final status is
 `FactStatus.REQUIRES_VERIFICATION` — a conservative fallback. Python must
 never convert `OTHER_NOTICE_FACT` directly into `CONFIRMED`.
+
+For `DOCUMENT_DETAIL` (added by Phase 2 Step 8A; authoritative definition
+in §19.1), final status is `FactStatus.CONFIRMED`: the notice explicitly
+states the detail, and that says nothing about whether the underlying
+legal proposition is correct.
 
 ### 17.7 Status values NOT created by Step 6
 
@@ -2206,4 +2232,1279 @@ Those remain later phases.
 
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+## 19. Validation + Workflow Completeness Contract (Phase 2 Step 8A — authoritative)
+
+This section finalizes the deterministic Step 8 contract. It resolves the
+Step 8 review finding that deterministic workflow completeness cannot be
+implemented from `required_facts: List[str]` plus generic `FactType` values
+alone, because multiple workflow requirements can share the same
+`FactType`. Example: `GST_SEC73_ITC` requires the ITC claimed in GSTR-3B,
+the ITC reflected in GSTR-2B and the interest proposed — all of which may
+currently be `FactType.STATED_AMOUNT`. Step 8 MUST NOT inspect English
+claim text or ask an LLM which amount is which.
+
+This amendment therefore introduces `FactRole`, the closed machine-readable
+semantic slot for extracted facts:
+
+```text
+FactType = WHAT kind of datum is this?
+FactRole = WHAT ROLE does this datum play in workflow logic?
+```
+
+Example:
+
+```text
+fact_type = STATED_AMOUNT
+fact_role = GSTR3B_ITC_CLAIMED_AMOUNT
+```
+
+Step 8 is pure deterministic Python: ZERO LLM calls, and no model semantic
+matching over required facts, evidence, special rules, fact roles,
+arithmetic roles or claim text. Every mapping in this section is a closed
+deterministic contract.
+
+### 19.1 Additive `FactType.DOCUMENT_DETAIL`
+
+Approve one additive `FactType` member:
+
+```text
+DOCUMENT_DETAIL = "document_detail"
+```
+
+`DOCUMENT_DETAIL` is a document-native textual/date/status detail that is
+explicitly printed in the notice but does not fit the existing specialized
+`FactType`s. Examples:
+
+```text
+goods description
+vehicle number
+detention/seizure date
+service-date information
+limitation basis stated in notice
+owner-came-forward status
+enforcement/order status
+```
+
+Python status mapping:
+
+```text
+FactType.DOCUMENT_DETAIL → FactStatus.CONFIRMED
+```
+
+`CONFIRMED` means only: the notice explicitly states the detail. It does
+NOT mean the underlying legal proposition is correct.
+
+`OTHER_NOTICE_FACT → REQUIRES_VERIFICATION` remains unchanged.
+
+### 19.2 `FactRole` — closed semantic role vocabulary
+
+Approve enum `FactRole` with exactly these 22 members:
+
+```text
+NONE = "none"
+
+GSTR3B_ITC_CLAIMED_AMOUNT = "gstr3b_itc_claimed_amount"
+GSTR2B_ITC_REFLECTED_AMOUNT = "gstr2b_itc_reflected_amount"
+INTEREST_PROPOSED_AMOUNT = "interest_proposed_amount"
+
+GSTR1_LIABILITY_DECLARED_AMOUNT = "gstr1_liability_declared_amount"
+GSTR3B_LIABILITY_DISCHARGED_AMOUNT = "gstr3b_liability_discharged_amount"
+
+RCM_CATEGORY_ALLEGED = "rcm_category_alleged"
+RCM_VALUE_ALLEGED_AMOUNT = "rcm_value_alleged_amount"
+RCM_TAX_ALLEGED_AMOUNT = "rcm_tax_alleged_amount"
+
+FRAUD_BASIS_ALLEGED = "fraud_basis_alleged"
+DEPARTMENT_ALLEGED_AMOUNT = "department_alleged_amount"
+FRAUD_PENALTY_PROPOSED_ALLEGED_AMOUNT = "fraud_penalty_proposed_alleged_amount"
+LIMITATION_BASIS = "limitation_basis"
+
+GOODS_DESCRIPTION = "goods_description"
+VEHICLE_NUMBER = "vehicle_number"
+DETENTION_OR_SEIZURE_DATE = "detention_or_seizure_date"
+SECTION129_NOTICE_OR_SERVICE_DATE = "section129_notice_or_service_date"
+SEC129_PENALTY_PROPOSED_AMOUNT = "sec129_penalty_proposed_amount"
+GOODS_VALUE_OR_TAX_PAYABLE = "goods_value_or_tax_payable"
+OWNER_CAME_FORWARD_STATUS = "owner_came_forward_status"
+EXPLICIT_PROCEDURAL_DATE = "explicit_procedural_date"
+ORDER_DATE_OR_ENFORCEMENT_STATUS = "order_date_or_enforcement_status"
+```
+
+`FactRole` is deterministic vocabulary. It does NOT determine legal
+liability.
+
+### 19.3 `ExtractedFact.fact_role` additive change
+
+Approve `fact_role` as the final additive field of `ExtractedFact`:
+
+```text
+fact_role: FactRole = FactRole.NONE
+```
+
+Preserve all prior constructor compatibility. Conceptual final fields:
+
+```text
+fact_id
+claim
+status
+source_text
+source_page
+allowed_in_draft
+fact_type
+fact_role
+```
+
+No earlier field is removed or changed. The implementation places
+`fact_role` last, after `fact_type`.
+
+### 19.4 Fact Engine candidate contract amendment
+
+Amend the §17.5 candidate JSON from four to exactly five fields:
+
+```json
+{
+  "facts": [
+    {
+      "fact_type": "stated_amount",
+      "fact_role": "gstr3b_itc_claimed_amount",
+      "claim": "The notice states GSTR-3B ITC of ...",
+      "source_text": "exact notice text",
+      "source_page": 1
+    }
+  ]
+}
+```
+
+Candidate fields exactly:
+
+```text
+fact_type
+fact_role
+claim
+source_text
+source_page
+```
+
+The LLM still must NOT control `fact_id`, `status` or `allowed_in_draft`.
+Python validates `FactRole` as a closed enum: an invalid role rejects the
+candidate item. Role is never inferred later from claim text.
+
+### 19.5 FactRole compatibility
+
+Approve the deterministic role → FactType compatibility table.
+
+For these roles the allowed `FactType` is `STATED_AMOUNT`:
+
+```text
+GSTR3B_ITC_CLAIMED_AMOUNT
+GSTR2B_ITC_REFLECTED_AMOUNT
+INTEREST_PROPOSED_AMOUNT
+GSTR1_LIABILITY_DECLARED_AMOUNT
+GSTR3B_LIABILITY_DISCHARGED_AMOUNT
+SEC129_PENALTY_PROPOSED_AMOUNT
+```
+
+For these roles the allowed `FactType` is `DEPARTMENT_ALLEGATION`:
+
+```text
+RCM_CATEGORY_ALLEGED
+RCM_VALUE_ALLEGED_AMOUNT
+RCM_TAX_ALLEGED_AMOUNT
+FRAUD_BASIS_ALLEGED
+DEPARTMENT_ALLEGED_AMOUNT
+FRAUD_PENALTY_PROPOSED_ALLEGED_AMOUNT
+```
+
+For these roles the allowed `FactType` is `DOCUMENT_DETAIL`:
+
+```text
+LIMITATION_BASIS
+GOODS_DESCRIPTION
+VEHICLE_NUMBER
+DETENTION_OR_SEIZURE_DATE
+SECTION129_NOTICE_OR_SERVICE_DATE
+GOODS_VALUE_OR_TAX_PAYABLE
+OWNER_CAME_FORWARD_STATUS
+ORDER_DATE_OR_ENFORCEMENT_STATUS
+```
+
+For `EXPLICIT_PROCEDURAL_DATE` the allowed `FactType`s are:
+
+```text
+STATED_DUE_DATE
+HEARING_DETAILS
+DOCUMENT_DETAIL
+```
+
+`FactRole.NONE` is allowed with any `FactType`.
+
+If a non-`NONE` role is incompatible with its `FactType`: reject the
+candidate item. Do not silently change the role or the FactType.
+
+### 19.6 Status remains FactType-owned
+
+`FactRole` does NOT choose `FactStatus`. Python status remains determined
+from `FactType` (§17.6):
+
+```text
+document-native FactTypes including DOCUMENT_DETAIL → CONFIRMED
+DEPARTMENT_ALLEGATION                              → ALLEGED
+OTHER_NOTICE_FACT                                  → REQUIRES_VERIFICATION
+```
+
+A role cannot upgrade an allegation into `CONFIRMED`.
+
+### 19.7 Step 8 public input contract
+
+```text
+run_validation(
+    classification: NoticeClassification,
+    extraction_result: FactExtractionResult,
+    preflight_result: PreflightResult,
+    arithmetic_results: List[ArithmeticResult],
+    deadline_result: Optional[DeadlineResult] = None
+) -> ValidationEngineResult
+```
+
+Step 8 does NOT receive:
+
+- a separate facts list — facts are accessed only through
+  `extraction_result.facts`;
+- `raw_text`;
+- uploaded-document metadata in Phase 2 Step 8;
+- `WorkflowDefinition` from the caller.
+
+The Validation Engine deterministically obtains the `WorkflowDefinition`
+and the `WorkflowValidationProfile` from
+`classification.proceeding_type`. This prevents an inconsistent
+caller-supplied workflow.
+
+### 19.8 Zero LLM
+
+Step 8 is pure deterministic Python. No LLM call. Step 8 must not import:
+
+```text
+modules.llm_client
+Gemini / Google SDK
+network libraries
+```
+
+The approved Phase-2 LLM surfaces remain:
+
+```text
+proceeding classification
+fact extraction
+later deep drafting/reasoning
+```
+
+### 19.9 `RequirementStatus`
+
+Approve enum `RequirementStatus` with exactly:
+
+```text
+SATISFIED = "satisfied"
+DERIVED = "derived"
+REQUIRES_VERIFICATION = "requires_verification"
+UNKNOWN = "unknown"
+MISSING = "missing"
+```
+
+No `NOT_APPLICABLE` in Phase 2.
+
+### 19.10 `RequirementKind`
+
+Approve enum `RequirementKind` with exactly:
+
+```text
+FACT = "fact"
+DERIVED = "derived"
+```
+
+### 19.11 `WorkflowRequirementSpec`
+
+Approve dataclass `WorkflowRequirementSpec` with exactly eight fields:
+
+```text
+requirement_id: str
+requirement_text: str
+kind: RequirementKind
+
+fact_type: Optional[FactType] = None
+fact_role: Optional[FactRole] = None
+calculation_type: Optional[ArithmeticCalculationType] = None
+
+accepted_fact_statuses: Tuple[FactStatus, ...] = (FactStatus.CONFIRMED,)
+absent_on_success: RequirementStatus = RequirementStatus.MISSING
+```
+
+Rules:
+
+- A `FACT` requirement uses `fact_type` and/or `fact_role`.
+- A `DERIVED` requirement uses `calculation_type`.
+- No claim-text matching.
+- `requirement_text` MUST equal the corresponding
+  `workflow.required_facts` string verbatim.
+
+### 19.12 `RequirementResult`
+
+Approve dataclass `RequirementResult` with exactly:
+
+```text
+requirement_id: str
+requirement_text: str
+status: RequirementStatus
+related_fact_ids: List[str]
+calculation_type: Optional[ArithmeticCalculationType] = None
+```
+
+No free-form LLM explanation field.
+
+### 19.13 FACT requirement resolution
+
+For a `FACT` requirement, collect facts matching every selector supplied
+by the spec — `fact_type` if not `None`, `fact_role` if not `None`. Then:
+
+- If at least one matching fact has a `FactStatus` listed in
+  `accepted_fact_statuses`: `SATISFIED`, and `related_fact_ids` contains
+  all accepted matching fact IDs in extraction order.
+- If matching facts exist but none has an accepted status:
+  - if any has `REQUIRES_VERIFICATION`: `REQUIRES_VERIFICATION`;
+  - otherwise: `UNKNOWN`.
+- If no matching fact exists:
+  - when `extraction_result.status == SUCCESS`: return
+    `spec.absent_on_success`;
+  - when extraction status is `PARTIAL`, `FAILED` or `NO_INPUT`: return
+    `UNKNOWN`.
+
+This extends the §18.3 absence-safety principle to workflow completeness:
+do not call missing when extraction itself is incomplete or failed.
+
+### 19.14 DERIVED requirement resolution
+
+For a `DERIVED` requirement, find `ArithmeticResult` objects whose
+`calculation_type` matches the spec:
+
+- Exactly one matching result with `PASS` or `MISMATCH`: `DERIVED`.
+  `MISMATCH` still means the difference was deterministically calculated;
+  it separately generates a validation WARNING.
+- Exactly one matching result with `INSUFFICIENT_DATA`: `UNKNOWN`.
+- No matching result: `UNKNOWN`.
+- Multiple results for the same required calculation type: `UNKNOWN` and a
+  validation WARNING for ambiguous derived output. Do not arbitrarily
+  select one.
+
+### 19.15 Arithmetic role validation
+
+Step 8 must validate the source roles of approved arithmetic.
+`ArithmeticResult.source_fact_ids` is interpreted in operand order — left
+operand first, right operand second (§18.19).
+
+For `ITC_DIFFERENCE`:
+
+```text
+left  source fact must have FactRole.GSTR3B_ITC_CLAIMED_AMOUNT
+right source fact must have FactRole.GSTR2B_ITC_REFLECTED_AMOUNT
+```
+
+For `OUTPUT_TAX_DIFFERENCE`:
+
+```text
+left  source fact must have FactRole.GSTR1_LIABILITY_DECLARED_AMOUNT
+right source fact must have FactRole.GSTR3B_LIABILITY_DISCHARGED_AMOUNT
+```
+
+If role provenance does not match: validation `FAIL`, the derived
+requirement is `UNKNOWN`, and specialist drafting is `BLOCKED`. This is
+how Step 8 verifies the caller selected the correct arithmetic operands
+without inspecting natural-language claims.
+
+### 19.16 Authoritative requirement mappings
+
+The following are exact mapping contracts. Requirement IDs are stable
+Phase-2 identifiers. `text` is the corresponding workflow `required_facts`
+string verbatim. `accepted` is shorthand for `accepted_fact_statuses`; any
+field not listed keeps its §19.11 default. The five proceeding prefixes
+`sec73_itc`, `sec73_general`, `sec73_rcm`, `sec74_fraud`, `sec129` are also
+the stable evidence-ID prefixes (§19.18).
+
+**GST_SEC73_ITC**
+
+```text
+R1  id          = "sec73_itc.r1"
+    text        = "ITC claimed in GSTR-3B (amount)"
+    kind        = FACT
+    fact_type   = STATED_AMOUNT
+    fact_role   = GSTR3B_ITC_CLAIMED_AMOUNT
+    accepted    = CONFIRMED
+
+R2  id          = "sec73_itc.r2"
+    text        = "ITC reflected in GSTR-2B (amount)"
+    kind        = FACT
+    fact_type   = STATED_AMOUNT
+    fact_role   = GSTR2B_ITC_REFLECTED_AMOUNT
+    accepted    = CONFIRMED
+
+R3  id          = "sec73_itc.r3"
+    text        = "Difference between GSTR-3B and GSTR-2B (INFERRED)"
+    kind        = DERIVED
+    calculation_type = ITC_DIFFERENCE
+
+R4  id          = "sec73_itc.r4"
+    text        = "FY / tax period"
+    kind        = FACT
+    fact_type   = TAX_PERIOD
+    fact_role   = NONE
+    accepted    = CONFIRMED
+
+R5  id          = "sec73_itc.r5"
+    text        = "Interest proposed"
+    kind        = FACT
+    fact_type   = STATED_AMOUNT
+    fact_role   = INTEREST_PROPOSED_AMOUNT
+    accepted    = CONFIRMED
+```
+
+**GST_SEC73_GENERAL**
+
+```text
+R1  id          = "sec73_general.r1"
+    text        = "Tax / liability declared in GSTR-1"
+    kind        = FACT
+    fact_type   = STATED_AMOUNT
+    fact_role   = GSTR1_LIABILITY_DECLARED_AMOUNT
+    accepted    = CONFIRMED
+
+R2  id          = "sec73_general.r2"
+    text        = "Tax / liability discharged in GSTR-3B"
+    kind        = FACT
+    fact_type   = STATED_AMOUNT
+    fact_role   = GSTR3B_LIABILITY_DISCHARGED_AMOUNT
+    accepted    = CONFIRMED
+
+R3  id          = "sec73_general.r3"
+    text        = "Difference between GSTR-1 and GSTR-3B (INFERRED)"
+    kind        = DERIVED
+    calculation_type = OUTPUT_TAX_DIFFERENCE
+
+R4  id          = "sec73_general.r4"
+    text        = "FY / tax period"
+    kind        = FACT
+    fact_type   = TAX_PERIOD
+    fact_role   = NONE
+    accepted    = CONFIRMED
+
+R5  id          = "sec73_general.r5"
+    text        = "Interest proposed"
+    kind        = FACT
+    fact_type   = STATED_AMOUNT
+    fact_role   = INTEREST_PROPOSED_AMOUNT
+    accepted    = CONFIRMED
+```
+
+**GST_SEC73_RCM**
+
+```text
+R1  id          = "sec73_rcm.r1"
+    text        = "Service / supply category alleged to attract RCM"
+    kind        = FACT
+    fact_type   = DEPARTMENT_ALLEGATION
+    fact_role   = RCM_CATEGORY_ALLEGED
+    accepted    = ALLEGED
+
+R2  id          = "sec73_rcm.r2"
+    text        = "Value of services / supplies alleged to be subject to RCM"
+    kind        = FACT
+    fact_type   = DEPARTMENT_ALLEGATION
+    fact_role   = RCM_VALUE_ALLEGED_AMOUNT
+    accepted    = ALLEGED
+
+R3  id          = "sec73_rcm.r3"
+    text        = "RCM tax alleged as unpaid or short-paid"
+    kind        = FACT
+    fact_type   = DEPARTMENT_ALLEGATION
+    fact_role   = RCM_TAX_ALLEGED_AMOUNT
+    accepted    = ALLEGED
+
+R4  id          = "sec73_rcm.r4"
+    text        = "FY / tax period"
+    kind        = FACT
+    fact_type   = TAX_PERIOD
+    fact_role   = NONE
+    accepted    = CONFIRMED
+
+R5  id          = "sec73_rcm.r5"
+    text        = "Interest proposed"
+    kind        = FACT
+    fact_type   = STATED_AMOUNT
+    fact_role   = INTEREST_PROPOSED_AMOUNT
+    accepted    = CONFIRMED
+```
+
+**GST_SEC74_FRAUD**
+
+```text
+R1  id          = "sec74_fraud.r1"
+    text        = "Basis of fraud / wilful-misstatement / suppression allegation"
+    kind        = FACT
+    fact_type   = DEPARTMENT_ALLEGATION
+    fact_role   = FRAUD_BASIS_ALLEGED
+    accepted    = ALLEGED
+
+R2  id          = "sec74_fraud.r2"
+    text        = "Turnover, tax, refund or ITC amount alleged by the department (ALLEGED unless independently established)"
+    kind        = FACT
+    fact_type   = DEPARTMENT_ALLEGATION
+    fact_role   = DEPARTMENT_ALLEGED_AMOUNT
+    accepted    = ALLEGED
+
+R3  id          = "sec74_fraud.r3"
+    text        = "FY / tax period"
+    kind        = FACT
+    fact_type   = TAX_PERIOD
+    fact_role   = NONE
+    accepted    = CONFIRMED
+
+R4  id          = "sec74_fraud.r4"
+    text        = "Penalty proposed in the notice (ALLEGED)"
+    kind        = FACT
+    fact_type   = DEPARTMENT_ALLEGATION
+    fact_role   = FRAUD_PENALTY_PROPOSED_ALLEGED_AMOUNT
+    accepted    = ALLEGED
+
+R5  id          = "sec74_fraud.r5"
+    text        = "Limitation / extended-period basis invoked in the notice"
+    kind        = FACT
+    fact_type   = DOCUMENT_DETAIL
+    fact_role   = LIMITATION_BASIS
+    accepted    = CONFIRMED
+```
+
+**GST_SEC129_ENFORCE**
+
+```text
+R1  id          = "sec129.r1"
+    text        = "Goods description"
+    kind        = FACT
+    fact_type   = DOCUMENT_DETAIL
+    fact_role   = GOODS_DESCRIPTION
+    accepted    = CONFIRMED
+
+R2  id          = "sec129.r2"
+    text        = "Vehicle / conveyance number"
+    kind        = FACT
+    fact_type   = DOCUMENT_DETAIL
+    fact_role   = VEHICLE_NUMBER
+    accepted    = CONFIRMED
+
+R3  id          = "sec129.r3"
+    text        = "Detention / seizure date"
+    kind        = FACT
+    fact_type   = DOCUMENT_DETAIL
+    fact_role   = DETENTION_OR_SEIZURE_DATE
+    accepted    = CONFIRMED
+
+R4  id          = "sec129.r4"
+    text        = "Section 129 notice date and service date where available"
+    kind        = FACT
+    fact_type   = DOCUMENT_DETAIL
+    fact_role   = SECTION129_NOTICE_OR_SERVICE_DATE
+    accepted    = CONFIRMED
+
+R5  id          = "sec129.r5"
+    text        = "Penalty amount proposed in the notice"
+    kind        = FACT
+    fact_type   = STATED_AMOUNT
+    fact_role   = SEC129_PENALTY_PROPOSED_AMOUNT
+    accepted    = CONFIRMED
+
+R6  id          = "sec129.r6"
+    text        = "Value of goods and tax payable on the goods where stated and relevant to penalty computation"
+    kind        = FACT
+    fact_type   = DOCUMENT_DETAIL
+    fact_role   = GOODS_VALUE_OR_TAX_PAYABLE
+    accepted    = CONFIRMED
+    absent_on_success = REQUIRES_VERIFICATION
+
+R7  id          = "sec129.r7"
+    text        = "Whether the owner of the goods has come forward, where relevant and determinable"
+    kind        = FACT
+    fact_type   = DOCUMENT_DETAIL
+    fact_role   = OWNER_CAME_FORWARD_STATUS
+    accepted    = CONFIRMED
+    absent_on_success = REQUIRES_VERIFICATION
+
+R8  id          = "sec129.r8"
+    text        = "Explicit hearing / payment / response date stated in the notice or order"
+    kind        = FACT
+    fact_type   = None
+    fact_role   = EXPLICIT_PROCEDURAL_DATE
+    accepted    = CONFIRMED
+
+R9  id          = "sec129.r9"
+    text        = "Order date / current enforcement status if an order has already been issued"
+    kind        = FACT
+    fact_type   = DOCUMENT_DETAIL
+    fact_role   = ORDER_DATE_OR_ENFORCEMENT_STATUS
+    accepted    = CONFIRMED
+    absent_on_success = REQUIRES_VERIFICATION
+```
+
+Total: 5 + 5 + 5 + 5 + 9 = 29 requirement mappings. In order, they are the
+complete verbatim `required_facts` lists of the five current workflows
+(§10.3).
+
+### 19.17 `EvidenceStatus`
+
+Approve enum `EvidenceStatus` with exactly:
+
+```text
+UNKNOWN = "unknown"
+PRESENT = "present"
+MISSING = "missing"
+REQUIRES_VERIFICATION = "requires_verification"
+```
+
+Phase-2 Step 8 has NO uploaded-document metadata input. Therefore Step 8
+itself may emit ONLY `EvidenceStatus.UNKNOWN` for workflow evidence
+requirements. `PRESENT` / `MISSING` are reserved for later integration when
+concrete upload metadata exists. Do not infer `PRESENT` merely because a
+notice references a document.
+
+### 19.18 `EvidenceChecklistItem`
+
+Approve dataclass `EvidenceChecklistItem` with exactly:
+
+```text
+evidence_id: str
+requirement_text: str
+status: EvidenceStatus
+```
+
+For each workflow `evidence_requirements` item, create one checklist item
+using stable IDs `"<proceeding-prefix>.e1"`, `"<proceeding-prefix>.e2"`,
+... `requirement_text` must equal the workflow string verbatim. During
+current Phase 2 Step 8: `status = UNKNOWN` for all.
+
+Step 8 creates NO `EvidenceGap` object from these `UNKNOWN` checklist
+entries.
+
+### 19.19 EvidenceGap deferral
+
+`EvidenceGap` generation based on documents not uploaded — missing invoice,
+missing return, missing bank record, referenced-but-not-uploaded annexure —
+is explicitly DEFERRED until integration has an uploaded-document metadata
+contract. Do not invent absence from notice text.
+
+### 19.20 `ReviewLevel`
+
+Approve enum `ReviewLevel` with exactly:
+
+```text
+CA_REVIEW = "ca_review"
+SENIOR_CA_OR_ADVOCATE = "senior_ca_or_advocate"
+URGENT_CA_REVIEW = "urgent_ca_review"
+```
+
+### 19.21 `ReviewRequirement`
+
+Approve dataclass `ReviewRequirement` with exactly:
+
+```text
+review_id: str
+level: ReviewLevel
+reason: str
+mandatory: bool = True
+```
+
+No filing decision field.
+
+### 19.22 `DraftEligibility`
+
+Approve enum `DraftEligibility` with exactly:
+
+```text
+ALLOWED = "allowed"
+REVIEW_REQUIRED = "review_required"
+BLOCKED = "blocked"
+```
+
+Meaning:
+
+- `ALLOWED` — specialist AI draft generation may proceed.
+- `REVIEW_REQUIRED` — specialist AI draft generation may proceed, but
+  mandatory CA/senior/urgent review conditions must remain visible.
+- `BLOCKED` — the specialist AI drafting LLM must NOT run.
+
+None of these means: filing approved, legally valid, or CA review
+unnecessary. Even `ALLOWED` output remains an AI working paper / CA-review
+draft.
+
+### 19.23 `ValidationItem`
+
+Do NOT mutate the legacy `ValidationCheck` contract. Approve the new Step-8
+dataclass `ValidationItem` with exactly:
+
+```text
+check_id: str
+status: ValidationStatus
+message: str
+related_fact_ids: List[str]
+related_calculation_types: List[ArithmeticCalculationType]
+```
+
+Status uses `ValidationStatus` (`PASS`, `WARNING`, `FAIL`). No LLM text
+generation — messages are deterministic static templates.
+
+`ValidationStatus.FAIL` semantics: `FAIL` means that a deterministic
+validation, structural-safety, provenance, support, or drafting-gate check
+failed. It does NOT mean:
+
+```text
+the GST notice is legally invalid
+the department's allegation is false
+the taxpayer is not liable
+the officer lacks jurisdiction
+the proceeding is void
+```
+
+`ValidationStatus` is product/workflow safety state, not a legal
+conclusion. This applies to `ValidationItem.status` and to
+`ValidationEngineResult.overall_status`.
+
+### 19.24 `ValidationEngineResult`
+
+Do NOT replace legacy `ValidationResult`. Approve the new:
+
+```text
+ValidationEngineResult
+```
+
+with exactly seven fields:
+
+```text
+overall_status: ValidationStatus
+draft_eligibility: DraftEligibility
+case_severity: Optional[IssueSeverity]
+
+checks: List[ValidationItem]
+requirements: List[RequirementResult]
+evidence_checklist: List[EvidenceChecklistItem]
+review_requirements: List[ReviewRequirement]
+```
+
+Do NOT include `PotentialDefence`. Do NOT include legal-validity fields.
+
+### 19.25 Overall ValidationStatus aggregation
+
+Deterministic dominance:
+
+```text
+any ValidationItem.status == FAIL      → overall_status = FAIL
+else any ValidationItem.status == WARNING → overall_status = WARNING
+else                                      → overall_status = PASS
+```
+
+Requirement/evidence/review conditions must create their corresponding
+`ValidationItem` entries before aggregation. Overall status is never
+calculated separately from the checks.
+
+### 19.26 Draft eligibility aggregation
+
+`BLOCKED` when ANY of these holds:
+
+1. `classification.support_level != DEEP_WORKFLOW`
+2. `classification.proceeding_type` has no registered `WorkflowDefinition`
+3. `classification.proceeding_type` has no `WorkflowValidationProfile`
+4. extraction status is `FAILED` or `NO_INPUT`
+5. a structural safety invariant produces `ValidationStatus.FAIL`
+6. arithmetic role provenance fails (§19.15)
+
+Otherwise, if ANY of these holds:
+
+- `overall_status == WARNING`
+- extraction status == `PARTIAL`
+- any requirement is `MISSING`, `UNKNOWN` or `REQUIRES_VERIFICATION`
+- any evidence checklist item is `UNKNOWN`
+- one or more `ReviewRequirement` objects exist
+
+then `REVIEW_REQUIRED`. Else `ALLOWED`.
+
+Specialist drafting may run for `ALLOWED` and `REVIEW_REQUIRED`. It must
+NOT run for `BLOCKED`.
+
+**Phase-2 ALLOWED reachability.** During the current Phase-2 contract,
+`portal_verification_required = True` and
+`authority_verification_required = True` are always produced by Preflight
+(§18.6 / §18.8), and §19.30 maps each True verification requirement to
+`ValidationStatus.WARNING`. Therefore, for a `DEEP_WORKFLOW` case that is
+not `BLOCKED`, `DraftEligibility` will currently resolve to
+`REVIEW_REQUIRED` rather than `ALLOWED`. This is intentional in Phase 2:
+AI specialist drafting may still run, but mandatory human CA review
+remains visible. `DraftEligibility.ALLOWED` is retained in the model for
+future phases where verification state can be deterministically
+resolved/cleared.
+
+This does NOT weaken `portal_verification_required` or
+`authority_verification_required` (they remain always True in Phase 2) and
+does NOT remove `ALLOWED`.
+
+### 19.27 Extraction health validation
+
+```text
+SUCCESS  → PASS extraction-health check
+PARTIAL  → WARNING; positive validated facts remain usable;
+           absence-based requirement conclusions remain UNKNOWN
+FAILED   → FAIL; draft BLOCKED
+NO_INPUT → FAIL; draft BLOCKED
+```
+
+### 19.28 Fact safety invariants
+
+Step 8 re-checks, read-only:
+
+1. `DEPARTMENT_ALLEGATION` must have `FactStatus.ALLEGED`.
+2. `DEPARTMENT_ALLEGATION` must not have `DraftPermission.YES`.
+3. `OTHER_NOTICE_FACT` must have `FactStatus.REQUIRES_VERIFICATION`.
+4. `REQUIRES_VERIFICATION` must have `DraftPermission.NO`.
+5. `CONFIRMED` must have `DraftPermission.YES`.
+6. `ALLEGED` must have `DraftPermission.CONDITIONAL`.
+7. every accepted fact: non-empty `fact_id`, non-empty `source_text`.
+8. fact IDs must be unique.
+9. `FactRole` compatibility from §19.5 must hold.
+
+Violation: `ValidationStatus.FAIL` and draft `BLOCKED`. Step 8 does not
+mutate facts to repair them.
+
+### 19.29 Arithmetic safety invariants
+
+Step 8 re-checks each supplied `ArithmeticResult`:
+
+- calculation type belongs to the two-item whitelist (§18.23);
+- `allowed_in_draft == CONDITIONAL`;
+- `source_fact_ids` resolve uniquely;
+- role provenance matches §19.15;
+- result/status consistency:
+  - `PASS` requires `result == 0`;
+  - `MISMATCH` requires `result != 0`;
+  - `INSUFFICIENT_DATA` requires `result is None`.
+
+Violation: `FAIL`, `BLOCKED`.
+
+Valid statuses map to `ValidationItem` status as:
+
+```text
+MISMATCH           → WARNING
+INSUFFICIENT_DATA  → WARNING
+PASS               → PASS
+```
+
+Step 8 does NOT recompute the arithmetic result.
+
+### 19.30 Preflight validation mappings
+
+```text
+portal_verification_required == True  → WARNING
+    "GST portal identifier/authenticity verification is required."
+
+authority_verification_required == True → WARNING
+    "Issuing-authority competence/jurisdiction requires CA/legal verification."
+
+CommunicationIdentifierStatus.UNKNOWN → WARNING
+AuthorityDetailsStatus.UNKNOWN        → WARNING
+DeadlineConflictStatus.CONFLICT       → WARNING
+DeadlineConflictStatus.CANNOT_COMPARE → WARNING only when
+    stated_due_date_fact_ids is non-empty OR deadline_result is not None
+```
+
+Do not mark the notice invalid.
+
+### 19.31 Deadline safety mapping
+
+Step 8 never recalculates deadlines.
+
+If `deadline_result` is None: no deadline-status `ValidationItem`.
+
+If supplied:
+
+```text
+DeadlineStatus.PASSED   → WARNING; case_severity = CRITICAL;
+                          mandatory ReviewRequirement level = URGENT_CA_REVIEW
+DeadlineStatus.CRITICAL → WARNING; case_severity = CRITICAL;
+                          mandatory ReviewRequirement level = URGENT_CA_REVIEW
+DeadlineStatus.UPCOMING → PASS
+DeadlineStatus.UNKNOWN  → WARNING
+```
+
+Hearing:
+
+```text
+HearingStatus.PASSED  → WARNING
+HearingStatus.UPCOMING → PASS
+```
+
+Deadline status is never converted into legal validity.
+
+### 19.32 Case severity
+
+If a DEEP workflow exists: start with `workflow.default_severity`. If
+deadline status is `CRITICAL` or `PASSED`:
+`case_severity = IssueSeverity.CRITICAL`. Otherwise keep the workflow
+default.
+
+For `TRIAGE_ONLY` / `UNKNOWN` with no deep workflow: `case_severity =
+CRITICAL` only if the supplied deadline status is `CRITICAL` or `PASSED`;
+otherwise `case_severity = None`.
+
+Severity does not override `DraftEligibility` rules.
+
+### 19.33 `SpecialRuleHandling`
+
+Approve enum `SpecialRuleHandling` with exactly:
+
+```text
+DETERMINISTIC_CHECK = "deterministic_check"
+REVIEW_GATE = "review_gate"
+UPSTREAM_INVARIANT = "upstream_invariant"
+FUTURE_LEGAL_RULE = "future_legal_rule"
+```
+
+A workflow special rule may map to ONE OR MORE handling types. Every
+safety-critical special rule must have at least one handling mapping. No
+special rule may remain unmapped.
+
+### 19.34 `WorkflowValidationProfile`
+
+Approve dataclass `WorkflowValidationProfile` with exactly:
+
+```text
+proceeding_type: ProceedingType
+requirement_specs: List[WorkflowRequirementSpec]
+special_rule_handling: Dict[int, Tuple[SpecialRuleHandling, ...]]
+review_rules: Dict[int, ReviewLevel]
+```
+
+Indices in `special_rule_handling` / `review_rules` are zero-based indices
+into the workflow's exact `special_rules` list. Each current special rule
+index must be mapped. The Phase-2 registry contains exactly five profiles,
+one per deep workflow, keyed by `ProceedingType`.
+
+In the mappings below, `REVIEW_GATE (LEVEL)` means
+`special_rule_handling[index]` contains `REVIEW_GATE` and
+`review_rules[index] = LEVEL`.
+
+### 19.35 Special-rule mapping — GST_SEC73_ITC
+
+```text
+index 0 — REVIEW_GATE (CA_REVIEW)
+    rule: "A GSTR-3B versus GSTR-2B mismatch is not by itself proof that the ITC is legally ineligible."
+
+index 1 — DETERMINISTIC_CHECK
+    rule: "Any computed difference must be treated as INFERRED and calculated deterministically from sourced amounts."
+
+index 2 — REVIEW_GATE (CA_REVIEW)
+    rule: "Never assume invoices, receipt of goods or services, supplier compliance, or payment to suppliers unless supported by evidence."
+
+index 3 — REVIEW_GATE (CA_REVIEW)
+    rule: "Final ITC eligibility is a legal/factual conclusion requiring evidence and CA review."
+```
+
+### 19.36 Special-rule mapping — GST_SEC73_GENERAL
+
+```text
+index 0 — REVIEW_GATE (CA_REVIEW)
+    rule: "A return mismatch is not by itself an admission of tax short-payment."
+
+index 1 — DETERMINISTIC_CHECK
+    rule: "Any computed difference must be treated as INFERRED and calculated deterministically from sourced amounts."
+
+index 2 — REVIEW_GATE (CA_REVIEW)
+    rule: "Credit notes, amendments, timing differences and other reconciliation items must be checked before reaching a liability conclusion."
+
+index 3 — REVIEW_GATE (CA_REVIEW)
+    rule: "The workflow identifies reconciliation requirements; it does not itself establish legal liability."
+```
+
+### 19.37 Special-rule mapping — GST_SEC73_RCM
+
+```text
+index 0 — REVIEW_GATE (CA_REVIEW)
+    rule: "Do not assume that every payment appearing under a TDS or professional-services category is subject to GST reverse charge."
+
+index 1 — FUTURE_LEGAL_RULE + REVIEW_GATE (CA_REVIEW)
+    rule: "Service category and RCM applicability require verification from underlying documents and current legal sources."
+
+index 2 — REVIEW_GATE (CA_REVIEW)
+    rule: "Form 26AS or TDS data may be evidentiary input but is not by itself conclusive proof of GST RCM liability."
+
+index 3 — REVIEW_GATE (CA_REVIEW)
+    rule: "Do not assume ITC availability, revenue neutrality, or entitlement without verifying the taxpayer's facts and applicable law."
+```
+
+### 19.38 Special-rule mapping — GST_SEC74_FRAUD
+
+```text
+index 0 — DETERMINISTIC_CHECK
+    rule: "Fraud, wilful misstatement and suppression must remain departmental allegations unless established by evidence."
+
+index 1 — REVIEW_GATE (SENIOR_CA_OR_ADVOCATE)
+    rule: "Never state that fraud is present or absent as an established fact without evidentiary support."
+
+index 2 — DETERMINISTIC_CHECK
+    rule: "Preserve the provenance of third-party or external data relied upon by the department."
+
+index 3 — REVIEW_GATE (SENIOR_CA_OR_ADVOCATE)
+    rule: "Mandatory senior CA / advocate review is required before filing."
+
+index 4 — UPSTREAM_INVARIANT
+    rule: "This workflow applies only where the notice expressly invokes Section 74; it must not be used as a substitute for Section 74A."
+```
+
+At least one `SENIOR_CA_OR_ADVOCATE` `ReviewRequirement` is mandatory for
+every `GST_SEC74_FRAUD` deep case.
+
+### 19.39 Special-rule mapping — GST_SEC129_ENFORCE
+
+```text
+index 0 — REVIEW_GATE (CA_REVIEW)
+    rule: "Never assume the tax invoice is valid; invoice validity remains REQUIRES_VERIFICATION until supported by evidence."
+
+index 1 — REVIEW_GATE (CA_REVIEW)
+    rule: "Never invent a reason for a missing or defective E-Way Bill."
+
+index 2 — UPSTREAM_INVARIANT
+    rule: "Do not hardcode a 100% penalty assumption; extract the proposed penalty and defer statutory computation to the deterministic arithmetic/legal-rule layer."
+
+index 3 — UPSTREAM_INVARIANT
+    rule: "Do not treat the Section 129 seven-day statutory notice/order timeline as a universal taxpayer reply deadline."
+
+index 4 — REVIEW_GATE (CA_REVIEW)
+    rule: "MOV-09 is a departmental order and must never be described as the taxpayer's reply form."
+
+index 5 — UPSTREAM_INVARIANT
+    rule: "A Section-130-only proceeding does not use this deep workflow and remains TRIAGE_ONLY until a separate workflow exists."
+
+index 6 — DETERMINISTIC_CHECK + REVIEW_GATE (URGENT_CA_REVIEW)
+    rule: "Active detention/seizure requires urgent CA escalation, but deadline status must come from the deterministic Deadline Engine and explicit procedural dates."
+```
+
+Every `GST_SEC129_ENFORCE` deep case therefore receives an
+`URGENT_CA_REVIEW` `ReviewRequirement`.
+
+The five mappings above cover all 24 current workflow special rules
+(4 + 4 + 4 + 5 + 7); every rule index is mapped.
+
+### 19.40 Special-rule execution policy
+
+- `REVIEW_GATE`: create a `ReviewRequirement` using the `review_rules`
+  mapping.
+- `FUTURE_LEGAL_RULE`: create a deterministic WARNING:
+  `"This workflow rule requires future verified legal-rule support and CA review."`
+  It must also have `REVIEW_GATE` in the current five profiles.
+- `UPSTREAM_INVARIANT`: re-check the applicable upstream invariant where a
+  deterministic structured input exists. If the invariant cannot be
+  rechecked without prohibited source-code introspection: emit a `PASS`
+  informational check that names the upstream enforced boundary. Do NOT
+  re-run classification or arithmetic.
+- `DETERMINISTIC_CHECK`: execute only checks explicitly defined by the
+  Step-8 contract (§19.41). Do NOT attempt to interpret free-text
+  `special_rules` generically.
+
+Profiles are authoritative mappings.
+
+### 19.41 Deterministic special checks
+
+Approved Step-8 deterministic checks:
+
+A. Difference-derived rules: a requirement is marked `DERIVED` only from a
+   valid `ArithmeticResult`.
+B. Fraud allegation rule: `FRAUD_BASIS_ALLEGED` and
+   `DEPARTMENT_ALLEGED_AMOUNT` facts must remain `FactStatus.ALLEGED`.
+C. Fraud third-party provenance rule: all facts still require `source_text`;
+   Step 8 re-checks provenance.
+D. Section-74A exclusion: the `GST_SEC74_FRAUD` profile is valid only when
+   `classification.proceeding_type == GST_SEC74_FRAUD`. The classifier's
+   Section-74A hard block remains authoritative.
+E. Section-130 exclusion: the `GST_SEC129_ENFORCE` profile is valid only
+   when `classification.proceeding_type == GST_SEC129_ENFORCE`.
+   Section-130-only classification must remain outside deep workflow.
+F. Section-129 deadline source: Step 8 uses only the supplied
+   `DeadlineResult` / `PreflightResult`. It invents no seven-day taxpayer
+   reply rule.
+
+No other legal check is authorized.
+
+### 19.42 ReviewRequirement deduplication
+
+Deduplicate `ReviewRequirement` objects by `(level, reason)` while
+preserving first-occurrence order. Do not merge different review levels.
+
+### 19.43 Evidence checklist effect
+
+Because every current Phase-2 evidence checklist entry is `UNKNOWN`, deep
+workflows will normally have `DraftEligibility.REVIEW_REQUIRED`. This is
+intentional: it means an AI draft may be generated for CA review, not that
+evidence is complete. Do not treat `UNKNOWN` evidence as `FAIL`.
+
+### 19.44 TRIAGE_ONLY
+
+For `SupportLevel.TRIAGE_ONLY`, run generic validation:
+
+```text
+extraction-health
+fact invariants
+preflight checks
+deadline checks
+arithmetic safety if results were supplied
+```
+
+Do NOT load a deep `WorkflowValidationProfile`, run `required_facts`
+completeness, or invent evidence requirements.
+
+Add support-gate FAIL:
+
+```text
+"Specialist deep-workflow drafting is unavailable for this recognized notice."
+```
+
+`DraftEligibility`: `BLOCKED`. Generic triage rendering remains allowed
+outside the specialist drafting LLM.
+
+### 19.45 UNKNOWN support / proceeding
+
+For `SupportLevel.UNKNOWN` or `ProceedingType.UNKNOWN`: run generic
+validation where structured data exists. No deep workflow/profile. Add the
+same support-gate FAIL. `DraftEligibility`: `BLOCKED`. Do not invent a
+workflow fallback.
+
+### 19.46 Deep workflow supported-gate
+
+For `SupportLevel.DEEP_WORKFLOW`, validation requires:
+
+1. `get_workflow(classification.proceeding_type)` exists
+2. a `WorkflowValidationProfile` exists
+3. `workflow.proceeding_type` matches `classification.proceeding_type`
+4. `profile.proceeding_type` matches `classification.proceeding_type`
+5. number/order/text of `requirement_specs` exactly matches
+   `workflow.required_facts`
+6. every `special_rules` index has at least one handling mapping
+
+Failure: `ValidationStatus.FAIL` and `DraftEligibility.BLOCKED`. No
+fallback to `SEC73_GENERAL`.
+
+### 19.47 issue_types
+
+Step 8 does NOT create issue instances. `workflow.issue_types` remain
+static metadata/questions for Step 9. No liability conclusion is derived
+from them.
+
+### 19.48 Default severity
+
+Step 8 uses `workflow.default_severity` only for `case_severity` (§19.32).
+It is not automatically copied onto every `ValidationItem`.
+
+### 19.49 PotentialDefence
+
+Step 8 creates ZERO `PotentialDefence` objects. `PotentialDefence` remains
+a Step-9 deep reasoning/drafting artifact. Validation must not invent legal
+defences.
+
+### 19.50 Fact conflicts — explicitly deferred
+
+General semantic fact-conflict detection is DEFERRED beyond the minimum
+Phase-2 Step 8 implementation. Do NOT attempt generic conflict NLP.
+Existing specialized deterministic conflict handling remains
+`PreflightResult.deadline_conflict_status`. No new FactConflict model in
+Step 8A.
+
+### 19.51 Semantic deduplication — explicitly deferred
+
+Step 8 does NOT merge semantically duplicate facts. Do not destroy
+provenance. Fact ID uniqueness is checked as a safety invariant (§19.28).
+General semantic consolidation is future integration work.
+
+### 19.52 Legacy validation models
+
+Do NOT modify or remove:
+
+```text
+ValidationCheck
+ValidationResult
+EvidenceGap
+PotentialDefence
+```
+
+They remain compatibility artifacts. Step 8 uses the new Step-8-specific
+models.
+
+### 19.53 Step 9 gate
+
+This subsection amends the Step-9 architecture contract (§13). Before a
+specialist drafting LLM call, `ValidationEngineResult.draft_eligibility`
+must be checked:
+
+- `BLOCKED` — do NOT call the specialist drafting LLM.
+- `REVIEW_REQUIRED` / `ALLOWED` — specialist drafting may run only for
+  `SupportLevel.DEEP_WORKFLOW`.
+
+Step 9 receives:
+
+```text
+classification
+extraction_result / facts
+preflight_result
+arithmetic_results
+workflow
+ValidationEngineResult
+```
+
+For `REVIEW_REQUIRED` output: mandatory review requirements and unresolved
+requirement/evidence states must be carried into the working paper / draft
+context. No validation result means no specialist drafting call.
+
+### 19.54 Implementation split
+
+After Step 8A:
+
+```text
+Step 6.4
+    Add DOCUMENT_DETAIL
+    Add FactRole
+    Add ExtractedFact.fact_role
+    Update Fact Engine candidate contract / role compatibility
+    Preserve prior APIs
+
+Step 8.1
+    Add Step-8 enums/dataclasses
+    Add authoritative workflow validation-profile registry
+    Contract tests only
+
+Step 8.2
+    Implement generic deterministic validation:
+        support gate
+        extraction health
+        fact invariants
+        preflight checks
+        deadline checks
+        arithmetic safety
+        special review gates
+
+Step 8.3
+    Implement deterministic workflow requirement completeness
+    and arithmetic-role mapping.
+
+Step 8.4
+    Add evidence checklist generation
+    + final ValidationEngineResult aggregation / DraftEligibility.
+```
+
+Each separate commit.
+
+### 19.55 No Step-8 LLM
+
+Reaffirm: Step 8 adds ZERO LLM calls. Do not use model semantic matching
+for required facts, evidence, special rules, fact roles or arithmetic
+roles. All mappings are closed deterministic contracts.
+
+---
+
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
