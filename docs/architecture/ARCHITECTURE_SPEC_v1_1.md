@@ -6061,4 +6061,632 @@ limitation is intentional.
 
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+## 21. Controlled Drafting Context + Prompt Assembly Contract (Phase 2 Step 9B — authoritative)
+
+This section closes the Step-9.2 machine contract: the exact
+controlled-context JSON shape and key order, fact filtering, arithmetic
+and validation inclusion gates, prompt asset ownership and loading,
+missing-asset behavior, deterministic prompt assembly and the Step-9.2
+module boundary. Implementation must not invent any of it. Step 9.2
+builds the controlled context and the deterministic prompt with ZERO LLM
+calls; Step 9.3 owns the single LLM call through the existing
+`modules.llm_client.call_gemini(prompt: str) -> str` boundary (§20.4,
+§20.40). This section supplements §20 and supersedes nothing in it:
+where §20 already pins a rule (token grammar, response schema, gates,
+prompt keys), that rule is reused verbatim and not re-interpreted.
+
+### 21.1 Controlled context is JSON
+
+Step 9.2 builds exactly ONE controlled-context JSON object. It is the
+ONLY dynamic case-specific content placed into the specialist drafting
+prompt.
+
+No Python repr. No dataclass repr. No ad-hoc prose interpolation of case
+values. No raw notice text. No arbitrary caller context.
+
+Use deterministic:
+
+```text
+json.dumps(...)
+```
+
+with UTF-8-compatible JSON semantics.
+
+### 21.2 Top-level context key order
+
+The architecture-owned top-level key order is exactly:
+
+```text
+1. schema_version
+2. proceeding_type
+3. draft_eligibility
+4. sections
+5. facts
+6. arithmetic
+7. preflight
+8. deadline
+9. unresolved_requirements
+10. evidence_checklist
+11. review_requirements
+12. validation_warnings
+```
+
+No other top-level key in Phase 2.
+
+Exact schema_version value:
+
+```text
+"phase2.step9.v1"
+```
+
+### 21.3 Proceeding / eligibility serialization
+
+```text
+proceeding_type      classification.proceeding_type.value
+draft_eligibility    validation_result.draft_eligibility.value
+```
+
+Do not serialize enum repr or member name.
+
+### 21.4 Sections
+
+`sections` is the drafting profile's exact ordered section list
+(`WorkflowDraftingProfile.sections`). Each object has exactly:
+
+```text
+section_id
+title
+```
+
+in that field order. Values come directly from the profile. No
+LLM-generated title. No output_structure semantic interpretation
+(§20.19).
+
+### 21.5 Facts
+
+`facts` contains ONLY facts permitted by §20.5–§20.7:
+
+```text
+DraftPermission.YES
+DraftPermission.CONDITIONAL
+```
+
+No DraftPermission.NO fact.
+
+Each fact object has EXACTLY these keys in this order:
+
+```text
+1. fact_id
+2. fact_type
+3. fact_role
+4. status
+5. source_text
+6. source_page
+7. allowed_in_draft
+```
+
+Serialization:
+
+```text
+fact_id            exact stored string
+fact_type          fact.fact_type.value
+fact_role          fact.fact_role.value
+status             fact.status.value
+source_text        exact stored source_text
+source_page        integer or null
+allowed_in_draft   fact.allowed_in_draft.value
+```
+
+Do NOT include `claim`. Do NOT include raw notice text. Preserve
+`extraction_result.facts` order after filtering.
+
+### 21.6 Fact token usage
+
+The context does NOT add a separate token field. The drafting model
+constructs the authorized reference token from `fact_id` using:
+
+```text
+[[FACT:<fact_id>]]
+```
+
+No implementation-generated alternative aliases.
+
+### 21.7 Arithmetic inclusion gate
+
+Arithmetic context uses the ORIGINAL one-based position N in
+`arithmetic_results` (§20.11). Do not renumber after filtering.
+
+An ArithmeticResult may enter the affirmative arithmetic context only
+when BOTH hold:
+
+1. all five corresponding Step-8 structural checks (§19.29, §19.64) are
+   PASS:
+
+   ```text
+   arithmetic.{N}.calculation_type
+   arithmetic.{N}.draft_permission
+   arithmetic.{N}.source_resolution
+   arithmetic.{N}.role_provenance
+   arithmetic.{N}.result_status_consistency
+   ```
+
+2. `result.status` is `ArithmeticStatus.PASS` or
+   `ArithmeticStatus.MISMATCH`.
+
+`INSUFFICIENT_DATA` is not included as affirmative arithmetic context. A
+structurally invalid result is not included. The emitted
+`arithmetic.{N}.outcome` check is NOT structural (§19.64) and does not
+participate in this gate. The unresolved arithmetic state remains
+represented through `unresolved_requirements` / `validation_warnings`
+(§20.12). No arithmetic recomputation.
+
+### 21.8 Arithmetic object shape
+
+Each included arithmetic object has exactly these fields in this order:
+
+```text
+1. index
+2. calculation_type
+3. status
+4. source_fact_ids
+5. operand_values
+6. result
+7. formula
+8. currency
+9. allowed_in_draft
+```
+
+Serialization:
+
+```text
+index               original one-based integer N
+calculation_type    enum .value
+status              enum .value
+source_fact_ids     stored list order, exact strings
+operand_values      Decimal values as exact decimal strings, stored order
+result              Decimal as exact decimal string, or null
+formula             exact stored formula
+currency            exact stored currency
+allowed_in_draft    enum .value
+```
+
+No float conversion. No token field. The model references this item
+using `[[ARITH:<index>]]`.
+
+### 21.9 Preflight context
+
+Preflight is Python-owned structured context. Using the CURRENT committed
+PreflightResult dataclass, transcribe its exact existing fields in model
+order. Do not rename fields. Do not omit a current field. Do not add a
+field:
+
+```text
+1. fact_extraction_status              Enum → .value
+2. communication_identifier_status     Enum → .value
+3. portal_verification_required        bool → JSON boolean
+4. authority_details_status            Enum → .value
+5. authority_verification_required     bool → JSON boolean
+6. stated_due_date_fact_ids            List[str] → JSON array, order preserved
+7. parsed_stated_due_dates             List[date] → JSON array of ISO
+                                       YYYY-MM-DD strings, order preserved
+8. unparsed_stated_due_date_fact_ids   List[str] → JSON array, order preserved
+9. deadline_conflict_status            Enum → .value
+10. hearing_fact_ids                   List[str] → JSON array, order preserved
+11. requested_document_fact_ids        List[str] → JSON array, order preserved
+12. referenced_annexure_fact_ids       List[str] → JSON array, order preserved
+```
+
+Serialization: Enum → `.value`; date → ISO `YYYY-MM-DD`; List[str] →
+JSON array preserving order; List[date] → JSON array of ISO `YYYY-MM-DD`
+strings preserving order; bool → JSON boolean; None → null. The committed
+PreflightResult contains no other primitive types.
+
+IMPORTANT: preflight structured values are informational/review context.
+The drafting model must not reinterpret them as legal validity,
+authenticity determination, jurisdiction determination or
+officer-competence determination.
+
+### 21.10 Deadline context
+
+`deadline` is `null` when `deadline_result is None`. Otherwise, using the
+CURRENT committed DeadlineResult dataclass, transcribe its exact existing
+fields in model order. Do not rename, omit or add fields:
+
+```text
+1. notice_date                       date → ISO YYYY-MM-DD or null
+2. service_date                      date → ISO YYYY-MM-DD or null
+3. response_period_days              int → JSON integer or null
+4. response_deadline                 date → ISO YYYY-MM-DD or null
+5. deadline_confidence               Enum → .value
+6. deadline_status                   Enum → .value
+7. days_remaining                    int → JSON integer or null
+8. hearing_date                      date → ISO YYYY-MM-DD or null
+9. hearing_status                    Enum → .value
+10. portal_verification_required     bool → JSON boolean
+11. notes                            List[str] → JSON array, order preserved
+```
+
+Serialization: Enum → `.value`; date → ISO `YYYY-MM-DD`;
+bool/int/string → normal JSON primitive; None → null. The committed
+DeadlineResult contains no other field types.
+
+No current date is added. No date calculation occurs. No inferred
+deadline field (§20.13).
+
+### 21.11 Unresolved requirements
+
+Include ONLY RequirementResult objects whose status is:
+
+```text
+MISSING
+UNKNOWN
+REQUIRES_VERIFICATION
+```
+
+Preserve `validation_result.requirements` order after filtering.
+
+Each object exactly:
+
+```text
+1. requirement_id
+2. requirement_text
+3. status
+4. related_fact_ids
+5. calculation_type
+```
+
+Serialization: `requirement_id` exact; `requirement_text` exact;
+`status` enum .value; `related_fact_ids` JSON list preserving stored
+order; `calculation_type` enum .value or null. No SATISFIED or DERIVED
+requirement in this unresolved list (§20.15).
+
+### 21.12 Evidence checklist
+
+Include `validation_result.evidence_checklist` in exact stored order.
+Each object exactly:
+
+```text
+1. evidence_id
+2. requirement_text
+3. status
+```
+
+`status`: enum .value. Current real Phase-2 status remains `"unknown"`.
+No transformation to PRESENT/MISSING. No attachment claim (§20.16).
+
+### 21.13 Review requirements
+
+Include `validation_result.review_requirements` in exact stored order.
+Each object exactly:
+
+```text
+1. review_id
+2. level
+3. reason
+4. mandatory
+```
+
+Serialization: `level` enum .value; `mandatory` JSON boolean; `reason`
+copied verbatim — no paraphrasing.
+
+This context is advisory to the LLM. The authoritative user-visible
+review list remains Python-owned in SpecialistDraftResult (§20.17). The
+LLM is NOT responsible for reproducing these objects.
+
+### 21.14 Validation warnings
+
+Include ONLY ValidationItem objects from `validation_result.checks`
+whose status is `ValidationStatus.WARNING`. Preserve check order. Do NOT
+include PASS checks.
+
+A permitted draft should not contain unresolved FAIL safety checks; do
+not silently omit an unexpected FAIL and proceed. If a ValidationItem
+FAIL exists while Step 9 is otherwise apparently eligible, treat the
+drafting precondition as inconsistent and do not construct a permitted
+LLM prompt.
+
+The failure mapping must use an already-authorized DraftFailureCode:
+
+```text
+DraftFailureCode.DRAFT_BLOCKED
+```
+
+No new failure code.
+
+Each warning object exactly:
+
+```text
+1. check_id
+2. status
+3. message
+4. related_fact_ids
+5. related_calculation_types
+```
+
+Serialization: `status` enum .value; `related_calculation_types` enum
+.value strings preserving order. No additional explanation.
+
+### 21.15 Deterministic general serialization
+
+Closed scalar rules:
+
+```text
+Enum         enum.value
+Decimal      exact decimal string, never float
+date         ISO YYYY-MM-DD
+None         JSON null
+bool         JSON true/false
+int          JSON integer
+str          exact string
+Tuple/List   JSON array preserving source order
+```
+
+No: repr(), str(Enum), locale date formatting, locale numeric
+formatting, float conversion, key sorting that changes
+architecture-owned key order.
+
+### 21.16 Context must not contain
+
+Explicitly prohibit these anywhere in the controlled context:
+
+```text
+raw notice text
+ExtractedFact.claim
+DraftPermission.NO source_text
+workflow.special_rules
+workflow.issue_types
+workflow.required_facts
+workflow.evidence_requirements as a second duplicate surface
+legacy NoticeAnalysis
+EvidenceGap
+PotentialDefence
+caller-supplied context
+current date/time
+environment variables
+filesystem paths
+API keys
+prompt file paths
+arbitrary legal research
+external URLs
+```
+
+Workflow evidence enters only through
+`validation_result.evidence_checklist`. Workflow unresolved facts enter
+only through `validation_result.requirements` (§20.15, §20.16).
+
+### 21.17 Prompt asset contract
+
+Step 9.2 creates exactly:
+
+```text
+prompts/drafting/base_rules.txt
+
+prompts/drafting/gst/sec73_itc.txt
+prompts/drafting/gst/sec73_general.txt
+prompts/drafting/gst/sec73_rcm.txt
+prompts/drafting/gst/sec74_fraud.txt
+prompts/drafting/gst/sec129.txt
+```
+
+UTF-8 text files. No other specialist prompt file. Do not modify
+`prompts/notice_prompt.txt` (§20.22).
+
+### 21.18 Base prompt responsibility
+
+`base_rules.txt` owns ONLY cross-workflow drafting rules. It must
+explicitly require:
+
+```text
+output only the strict §20.23 JSON object
+exact supplied section IDs/order
+no additional sections
+body_template must be non-empty
+use only approved token families: [[FACT:<id>]], [[ARITH:<N>]],
+    [[DEADLINE]], [[HEARING]]
+do not reproduce case facts manually when a token should be used
+do not invent taxpayer facts
+do not convert allegations into established facts
+do not claim UNKNOWN evidence is attached/present
+do not invent case law/citations/URLs
+do not invent statutory quotations
+do not calculate arithmetic
+do not calculate deadlines
+do not decide authenticity/jurisdiction/officer competence
+unresolved requirements remain unresolved
+review requirements remain mandatory
+prose is a CA working draft, not filing approval
+general legal correctness still requires CA review
+```
+
+The base prompt must NOT contain actual notice facts, actual GSTIN,
+actual dates, actual amounts, or raw `workflow.special_rules`.
+
+### 21.19 Workflow prompt responsibility
+
+Each workflow prompt owns only workflow-specific drafting guidance for
+the approved section IDs.
+
+It may refer to: section IDs, exact section titles, proceeding identity,
+and the high-level purpose already established by the workflow
+architecture.
+
+It must NOT introduce: new legal rules, new statutory formula, new
+deadline rule, new penalty rule, new evidence-presence assumption, case
+law, citations, raw `workflow.special_rules`, raw notice text, hidden
+factual assumptions.
+
+The workflow prompt must list every approved section ID exactly once and
+in profile order. No prompt may add a section not in
+WorkflowDraftingProfile.
+
+### 21.20 Workflow prompt safety reminders
+
+Pin the following minimum workflow-specific reminders:
+
+```text
+SEC73 ITC:
+    arithmetic difference is reconciliation output, not final liability.
+    unresolved ITC/evidence issues stay unresolved.
+
+SEC73 GENERAL:
+    arithmetic difference is reconciliation output, not final liability.
+    unresolved liability/evidence issues stay unresolved.
+
+SEC73 RCM:
+    departmental RCM assertions remain allegations where represented by
+    ALLEGED facts.
+    no RCM amount calculation is added.
+
+SEC74 FRAUD:
+    fraud/suppression content remains departmental allegation.
+    never state fraud as established/proved.
+    senior CA/advocate review remains mandatory outside LLM control.
+
+SEC129:
+    no static 100% penalty.
+    no universal seven-day response rule.
+    MOV-09 is not treated as taxpayer reply form.
+    no invented e-way-bill reason.
+    no Section-130 deep-workflow assumption.
+    deadline/arithmetic only from supplied tokens.
+```
+
+These reminders are prompt safeguards. They do NOT replace deterministic
+validation.
+
+### 21.21 Prompt file loading
+
+Prompt assets are selected only through
+`WorkflowDraftingProfile.prompt_key` (§20.22). Closed mapping:
+
+```text
+sec73_itc       → prompts/drafting/gst/sec73_itc.txt
+sec73_general   → prompts/drafting/gst/sec73_general.txt
+sec73_rcm       → prompts/drafting/gst/sec73_rcm.txt
+sec74_fraud     → prompts/drafting/gst/sec74_fraud.txt
+sec129          → prompts/drafting/gst/sec129.txt
+```
+
+No caller path. No arbitrary filename. No path traversal. No dynamic
+prompt discovery. No network prompt loading. UTF-8 only.
+
+### 21.22 Missing / empty prompt asset
+
+If either `base_rules.txt` or the selected workflow prompt does not
+exist, cannot be read, or is empty/whitespace-only, then specialist
+drafting is unavailable. ZERO LLM calls.
+
+When the public Step-9 engine exists in Step 9.3, map this to:
+
+```text
+DraftGenerationStatus.BLOCKED
+DraftFailureCode.WORKFLOW_UNAVAILABLE
+```
+
+Do NOT fall back to `notice_prompt.txt`, another workflow prompt, an
+embedded emergency prompt, or raw workflow metadata.
+
+### 21.23 Prompt assembly order
+
+The final specialist LLM prompt is assembled in exactly this order:
+
+```text
+1. base prompt text, trimmed
+2. one blank line
+3. selected workflow prompt text, trimmed
+4. one blank line
+5. literal line: CONTROLLED_CONTEXT_JSON_BEGIN
+6. newline
+7. deterministic controlled-context JSON
+8. newline
+9. literal line: CONTROLLED_CONTEXT_JSON_END
+```
+
+No other dynamic material before or after the context. No markdown code
+fence around the JSON. No raw_text append. No current-date append. No
+hidden second context block.
+
+### 21.24 JSON output formatting for prompt
+
+The controlled-context JSON placed in the prompt must use deterministic
+serialization. Pin exactly:
+
+```text
+indent=2
+ensure_ascii=False
+```
+
+Use architecture-owned insertion order (§21.2). Do not sort keys
+alphabetically. No trailing explanatory text inside the JSON block.
+
+### 21.25 Static prompt text is not case data
+
+The base/workflow prompt assets are static architecture-controlled
+instructions. They are not inputs from the user, facts, evidence, law
+retrieval, or notice text. The only case-specific dynamic content is the
+controlled JSON object (§21.1).
+
+### 21.26 Zero LLM in Step 9.2
+
+Step 9.2 MUST NOT call `call_gemini`, any LLM, any provider, or the
+network. The task ends after deterministic prompt construction. Step 9.3
+owns the single LLM call (§20.4).
+
+### 21.27 Step-9.2 module public surface
+
+Do NOT introduce a second public drafting API. The architecture-owned
+public Step-9 API remains `generate_specialist_draft(...)` (§20.1),
+which is implemented in Step 9.3. During Step 9.2,
+`domain/drafting_engine.py` may contain private underscore-prefixed
+helpers/constants needed for eligibility/context construction,
+serialization, prompt loading and prompt assembly. No non-underscore
+public callable is authorized yet. Private helper naming is
+implementation-local and NOT a stable external machine contract.
+
+### 21.28 Step-9.2 gate responsibility
+
+Even before the actual LLM call exists, the context builder must refuse
+to construct a permitted specialist prompt unless the §20.3 gate is
+satisfied. Additionally refuse when `validation_result.checks` contains
+any FAIL, because that state contradicts a permitted specialist draft.
+
+No prompt construction for: BLOCKED, TRIAGE_ONLY, UNKNOWN, missing
+workflow, missing drafting profile, missing/empty prompt asset. Tests
+should be able to verify zero controlled prompt is returned/produced for
+these cases. The exact private helper return shape may remain
+implementation-local in Step 9.2. Do not add a public result model.
+
+### 21.29 No post-draft work
+
+Step 9.2 does NOT implement: LLM response parsing, DraftSection
+generation, token validation, token resolution, rendered_text,
+DraftPostValidationResult, raw-fact leakage regexes, evidence lexical
+validator, citation validator. Those remain Step 9.3/9.4 (§20.40).
+
+### 21.30 No app integration
+
+Do NOT modify or integrate `app.py`, `modules/notice_explainer.py`,
+`prompts/notice_prompt.txt`. Step 10 owns integration (§20.40).
+
+### 21.31 File ownership
+
+After this spec amendment, Step 9.2 is authorized to create/modify only:
+
+```text
+domain/drafting_engine.py
+
+prompts/drafting/base_rules.txt
+prompts/drafting/gst/sec73_itc.txt
+prompts/drafting/gst/sec73_general.txt
+prompts/drafting/gst/sec73_rcm.txt
+prompts/drafting/gst/sec74_fraud.txt
+prompts/drafting/gst/sec129.txt
+
+tests/test_drafting_engine.py
+```
+
+No existing workflow/profile/model changes should be needed.
+
+---
+
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20; amended 2026-08-29 by Phase 2 Step 9B: authoritative Controlled Drafting Context + Prompt Assembly contract added as §21 (§21.1–§21.31). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
