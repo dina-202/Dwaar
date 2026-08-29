@@ -4330,6 +4330,816 @@ They also reinforce `DraftEligibility.REVIEW_REQUIRED` during Step 8.2
 They are NOT structural failures and therefore do NOT themselves cause
 `DraftEligibility.BLOCKED` (§19.75).
 
+### 19.88 Step 8C machine-contract amendment — scope
+
+This patch finalizes the Step-8.3 workflow-requirement machine contracts
+(§19.89–§19.117) so the Step-8.3 implementation can resolve all 29
+`WorkflowRequirementSpec` objects without inventing behavior.
+
+It closes, in machine-exact form: requirement check IDs, emission order,
+FACT selector/matching and related-ID behavior, DERIVED arithmetic
+matching with structural-validity reuse, multiple-result ambiguity, the
+Step-8.3 replacement of the two temporary derived-rule warnings, the
+RequirementStatus → ValidationStatus / DraftEligibility mappings, the
+Step-8.3 processing precondition and order, and the remaining staging
+boundaries (evidence deferral, no new models, zero LLM, integration
+prohibition).
+
+It does NOT amend §19.13, §19.14, §19.16, §19.26, or any other existing
+section. Those remain authoritative; the sections below make their
+execution semantics machine-exact.
+
+### 19.89 Requirement check-ID template
+
+Step 8.3 approves exactly ONE `ValidationItem` per
+`WorkflowRequirementSpec`. Stable check ID:
+
+```text
+requirement.<requirement_id>
+```
+
+Examples:
+
+```text
+requirement.sec73_itc.r1
+requirement.sec73_itc.r3
+requirement.sec73_general.r3
+requirement.sec129.r9
+```
+
+`requirement_id` is the exact architecture-owned
+`WorkflowRequirementSpec.requirement_id` (§19.16). Step 8.3 must NOT
+renumber independently and must NOT use workflow requirement text inside
+the ID.
+
+### 19.90 Requirement emission order
+
+For a valid `DEEP_WORKFLOW` profile, emit requirement results/checks in:
+
+```text
+profile.requirement_specs list order
+```
+
+This preserves exact workflow requirement order.
+
+For `TRIAGE_ONLY` / `UNKNOWN`:
+
+```text
+requirements = []
+```
+
+No requirement `ValidationItem`s are emitted.
+
+If the deep workflow/profile fails structural support checks such that
+the profile cannot safely be used:
+
+```text
+requirements = []
+```
+
+Do not guess. Do not fall back.
+
+### 19.91 FACT requirement selector contract
+
+For `RequirementKind.FACT`, start with `extraction_result.facts` in
+extraction order. A fact matches only when every selector supplied by
+the spec matches:
+
+- If `spec.fact_type is not None`: require
+  `fact.fact_type == spec.fact_type`.
+- If `spec.fact_role is not None`: require
+  `fact.fact_role == spec.fact_role`.
+
+`FactRole.NONE` is a REAL selector value. It means:
+
+```text
+fact.fact_role must equal FactRole.NONE
+```
+
+It is NOT a wildcard. Python `None` is the only wildcard/no-selector
+value.
+
+Step 8.3 must NOT inspect:
+
+```text
+claim
+source_text
+```
+
+for semantic matching.
+
+### 19.92 FACT requirement — SATISFIED
+
+If at least one matching fact has a status contained in
+`spec.accepted_fact_statuses`:
+
+```text
+RequirementResult.status = SATISFIED
+```
+
+`related_fact_ids`:
+
+```text
+all matching facts with an accepted status,
+in extraction order,
+including only usable non-empty string fact IDs.
+```
+
+Do not include matching facts with unaccepted statuses. Do not
+deduplicate semantic duplicates.
+
+`ValidationItem`:
+
+```text
+check_id = requirement.<requirement_id>
+status = PASS
+message = "Workflow requirement is satisfied: <REQUIREMENT_TEXT>"
+```
+
+where `REQUIREMENT_TEXT` is `spec.requirement_text` verbatim.
+
+```text
+related_fact_ids =
+    same as RequirementResult.related_fact_ids
+related_calculation_types = []
+```
+
+### 19.93 FACT requirement — REQUIRES_VERIFICATION
+
+If matching facts exist but NONE has an accepted status, and at least
+one matching fact has `FactStatus.REQUIRES_VERIFICATION`:
+
+```text
+RequirementResult.status = RequirementStatus.REQUIRES_VERIFICATION
+```
+
+`related_fact_ids`:
+
+```text
+all matching REQUIRES_VERIFICATION facts with usable non-empty IDs,
+in extraction order.
+```
+
+`ValidationItem`:
+
+```text
+check_id = requirement.<requirement_id>
+status = WARNING
+message = "Workflow requirement requires verification: <REQUIREMENT_TEXT>"
+related_fact_ids =
+    same as RequirementResult
+related_calculation_types = []
+```
+
+### 19.94 FACT requirement — UNKNOWN from matching facts
+
+If matching facts exist but:
+
+- none has an accepted status, and
+- none has `REQUIRES_VERIFICATION`
+
+then:
+
+```text
+RequirementResult.status = UNKNOWN
+```
+
+`related_fact_ids`:
+
+```text
+all matching facts with usable non-empty IDs,
+in extraction order.
+```
+
+`ValidationItem`:
+
+```text
+check_id = requirement.<requirement_id>
+status = WARNING
+message = "Workflow requirement status is unknown: <REQUIREMENT_TEXT>"
+related_calculation_types = []
+```
+
+This includes, for example, a fact whose status does not satisfy that
+requirement's `accepted_fact_statuses`. Do not change the underlying
+fact.
+
+### 19.95 FACT requirement — no match on SUCCESS
+
+If no matching fact exists AND `extraction_result.status == SUCCESS`:
+
+```text
+RequirementResult.status = spec.absent_on_success
+```
+
+Current authoritative values are:
+
+```text
+MISSING
+```
+
+or, for the three approved Section-129 rows (§19.16, `sec129.r6`,
+`sec129.r7`, `sec129.r9`):
+
+```text
+REQUIRES_VERIFICATION
+```
+
+If the status becomes `MISSING`:
+
+```text
+ValidationItem.status = WARNING
+message = "Workflow requirement is missing from a successful extraction: <REQUIREMENT_TEXT>"
+related_fact_ids = []
+related_calculation_types = []
+```
+
+If `absent_on_success` produces `REQUIRES_VERIFICATION`:
+
+```text
+ValidationItem.status = WARNING
+message = "Workflow requirement requires verification: <REQUIREMENT_TEXT>"
+related_fact_ids = []
+related_calculation_types = []
+```
+
+Do NOT invent placeholder facts.
+
+### 19.96 FACT requirement — no match on non-SUCCESS
+
+If no matching fact exists and extraction status is:
+
+```text
+PARTIAL
+FAILED
+NO_INPUT
+```
+
+then:
+
+```text
+RequirementResult.status = UNKNOWN
+```
+
+`ValidationItem`:
+
+```text
+check_id = requirement.<requirement_id>
+status = WARNING
+message = "Workflow requirement status is unknown because fact extraction was not fully successful: <REQUIREMENT_TEXT>"
+related_fact_ids = []
+related_calculation_types = []
+```
+
+This preserves the §18.3/§19.13 absence-safety rule. Do NOT call the
+requirement `MISSING`.
+
+### 19.97 RequirementResult.calculation_type — FACT requirements
+
+For every `RequirementKind.FACT` requirement:
+
+```text
+RequirementResult.calculation_type = None
+```
+
+### 19.98 DERIVED requirement arithmetic matching
+
+For `RequirementKind.DERIVED`, `spec.calculation_type` identifies the
+authoritative calculation type.
+
+Find `ArithmeticResult` objects whose:
+
+```text
+result.calculation_type == spec.calculation_type
+```
+
+using exact enum equality.
+
+Do NOT:
+
+```text
+infer calculation type from formula
+inspect natural-language claims
+normalize unsupported runtime values
+collapse duplicates
+```
+
+Preserve `arithmetic_results` input order.
+
+### 19.99 Structurally valid ArithmeticResult (Step 8.3)
+
+For Step-8.3 requirement resolution, an `ArithmeticResult` at one-based
+arithmetic index N is "structurally valid" only when ALL five
+corresponding Step-8.2 structural `ValidationItem`s for that N are
+`PASS` (§19.64):
+
+```text
+arithmetic.{N}.calculation_type
+arithmetic.{N}.draft_permission
+arithmetic.{N}.source_resolution
+arithmetic.{N}.role_provenance
+arithmetic.{N}.result_status_consistency
+```
+
+The arithmetic outcome item:
+
+```text
+arithmetic.{N}.outcome
+```
+
+is NOT a structural-validity check. Therefore `MISMATCH` may still be a
+structurally valid derived result.
+
+Do NOT rerun arithmetic structural logic in Step 8.3. Reuse the
+already-emitted Step-8.2 checks.
+
+### 19.100 DERIVED requirement — exactly one PASS/MISMATCH result
+
+If exactly ONE `ArithmeticResult` matches `spec.calculation_type`, the
+five structural checks for that result all `PASS`, and its
+`ArithmeticStatus` is:
+
+```text
+PASS
+or
+MISMATCH
+```
+
+then:
+
+```text
+RequirementResult.status = DERIVED
+RequirementResult.calculation_type = spec.calculation_type
+```
+
+`related_fact_ids`:
+
+```text
+usable non-empty source_fact_ids from that ArithmeticResult
+in stored operand order.
+```
+
+`ValidationItem`:
+
+```text
+check_id = requirement.<requirement_id>
+status = PASS
+message = "Workflow requirement is deterministically derived: <REQUIREMENT_TEXT>"
+related_fact_ids =
+    same as RequirementResult
+related_calculation_types =
+    [spec.calculation_type]
+```
+
+`ArithmeticStatus.MISMATCH` still means the requirement was successfully
+derived. The separate:
+
+```text
+arithmetic.{N}.outcome
+```
+
+`WARNING` remains responsible for communicating the mismatch. Do not
+turn the requirement itself into `WARNING` merely because the computed
+difference is non-zero.
+
+### 19.101 DERIVED requirement — INSUFFICIENT_DATA
+
+If exactly ONE matching `ArithmeticResult` exists, its structural checks
+are `PASS`, but:
+
+```text
+result.status == ArithmeticStatus.INSUFFICIENT_DATA
+```
+
+then:
+
+```text
+RequirementResult.status = UNKNOWN
+RequirementResult.calculation_type = spec.calculation_type
+```
+
+`related_fact_ids`:
+
+```text
+usable non-empty source_fact_ids from that result,
+in stored order.
+```
+
+`ValidationItem`:
+
+```text
+check_id = requirement.<requirement_id>
+status = WARNING
+message = "Derived workflow requirement has insufficient arithmetic data: <REQUIREMENT_TEXT>"
+related_fact_ids =
+    same as RequirementResult
+related_calculation_types =
+    [spec.calculation_type]
+```
+
+### 19.102 DERIVED requirement — structural arithmetic failure
+
+If exactly ONE matching `ArithmeticResult` exists, but ANY of its five
+structural arithmetic checks is `FAIL`:
+
+```text
+RequirementResult.status = UNKNOWN
+RequirementResult.calculation_type = spec.calculation_type
+```
+
+`related_fact_ids`:
+
+```text
+usable non-empty source_fact_ids from that result,
+in stored order.
+```
+
+`ValidationItem`:
+
+```text
+check_id = requirement.<requirement_id>
+status = WARNING
+message = "Derived workflow requirement cannot be trusted because its arithmetic result failed structural validation: <REQUIREMENT_TEXT>"
+related_fact_ids =
+    same as RequirementResult
+related_calculation_types =
+    [spec.calculation_type]
+```
+
+The structural arithmetic `FAIL` already blocks `DraftEligibility`
+through Step 8.2 (§19.75). The requirement item itself remains
+`WARNING`. Do not create a second independent blocking rule.
+
+### 19.103 DERIVED requirement — no matching result
+
+If zero `ArithmeticResult` objects match:
+
+```text
+RequirementResult.status = UNKNOWN
+RequirementResult.calculation_type = spec.calculation_type
+related_fact_ids = []
+```
+
+`ValidationItem`:
+
+```text
+check_id = requirement.<requirement_id>
+status = WARNING
+message = "Derived workflow requirement has no matching arithmetic result: <REQUIREMENT_TEXT>"
+related_fact_ids = []
+related_calculation_types =
+    [spec.calculation_type]
+```
+
+### 19.104 DERIVED requirement — multiple matching results
+
+If MORE THAN ONE `ArithmeticResult` matches `spec.calculation_type`:
+
+Do NOT select one. Do NOT prefer `PASS` over `MISMATCH`. Do NOT prefer a
+structurally valid result.
+
+```text
+RequirementResult.status = UNKNOWN
+RequirementResult.calculation_type = spec.calculation_type
+```
+
+`related_fact_ids`:
+
+```text
+collect usable non-empty source_fact_ids from all matching results,
+in arithmetic-results input order and each result's stored operand order,
+preserving first occurrence of each fact ID.
+```
+
+`ValidationItem`:
+
+```text
+check_id = requirement.<requirement_id>
+status = WARNING
+message = "Derived workflow requirement is ambiguous because multiple arithmetic results match: <REQUIREMENT_TEXT>"
+related_fact_ids =
+    same as RequirementResult
+related_calculation_types =
+    [spec.calculation_type]
+```
+
+This `ValidationItem` itself is the required ambiguity warning. Do NOT
+create a second ambiguity check ID.
+
+### 19.105 RequirementStatus → ValidationStatus
+
+Closed mapping:
+
+```text
+SATISFIED
+    → PASS
+
+DERIVED
+    → PASS
+
+REQUIRES_VERIFICATION
+    → WARNING
+
+UNKNOWN
+    → WARNING
+
+MISSING
+    → WARNING
+```
+
+No workflow-completeness state alone produces `FAIL` in Phase 2.
+`FAIL` remains reserved for structural/safety failures defined
+elsewhere.
+
+### 19.106 RequirementStatus → DraftEligibility
+
+After Step 8.3: if ANY `RequirementResult.status` is:
+
+```text
+MISSING
+UNKNOWN
+REQUIRES_VERIFICATION
+```
+
+then a non-BLOCKED case must resolve to at least:
+
+```text
+DraftEligibility.REVIEW_REQUIRED
+```
+
+`SATISFIED` and `DERIVED` do not independently force review.
+
+Existing `BLOCKED` conditions remain dominant. Existing `ValidationItem`
+WARNING/review-gate behavior remains dominant.
+
+Do not use requirement incompleteness alone to BLOCK specialist draft
+generation.
+
+### 19.107 Step-8.3 special-rule replacement — SEC73 ITC
+
+Replace the temporary Step-8.2 behavior for:
+
+```text
+workflow.sec73_itc.special_rule.1.deterministic_check
+```
+
+under the SAME stable check ID, using the resolved `RequirementResult`
+for `sec73_itc.r3` (§19.16, §19.41-A).
+
+If `requirement.status == DERIVED`:
+
+```text
+ValidationItem.status = PASS
+message = "Deterministic ITC-difference workflow requirement is derived from approved arithmetic output."
+related_fact_ids =
+    requirement.related_fact_ids
+```
+
+If `requirement.status != DERIVED`:
+
+- If a matching `ITC_DIFFERENCE` `ArithmeticResult` exists and ANY of
+  its five structural Step-8.2 checks failed:
+
+```text
+ValidationItem.status = FAIL
+message = "Deterministic ITC-difference workflow requirement failed arithmetic structural validation."
+related_fact_ids =
+    usable non-empty source_fact_ids from matching ITC_DIFFERENCE
+    results, preserving arithmetic input/source order and first
+    occurrence.
+```
+
+- Otherwise:
+
+```text
+ValidationItem.status = WARNING
+message = "Deterministic ITC-difference workflow requirement could not be resolved from one sufficient arithmetic result."
+related_fact_ids =
+    requirement.related_fact_ids
+```
+
+For every outcome:
+
+```text
+related_calculation_types =
+    [ArithmeticCalculationType.ITC_DIFFERENCE]
+```
+
+No duplicate arithmetic calculation.
+
+### 19.108 Step-8.3 special-rule replacement — SEC73 GENERAL
+
+Replace the temporary Step-8.2 behavior for:
+
+```text
+workflow.sec73_general.special_rule.1.deterministic_check
+```
+
+under the SAME stable check ID, using the resolved `RequirementResult`
+for `sec73_general.r3` (§19.16, §19.41-A).
+
+If `requirement.status == DERIVED`:
+
+```text
+ValidationItem.status = PASS
+message = "Deterministic output-tax-difference workflow requirement is derived from approved arithmetic output."
+related_fact_ids =
+    requirement.related_fact_ids
+```
+
+If `requirement.status != DERIVED`:
+
+- If a matching `OUTPUT_TAX_DIFFERENCE` `ArithmeticResult` exists and
+  ANY of its five structural Step-8.2 checks failed:
+
+```text
+ValidationItem.status = FAIL
+message = "Deterministic output-tax-difference workflow requirement failed arithmetic structural validation."
+related_fact_ids =
+    usable non-empty source_fact_ids from matching
+    OUTPUT_TAX_DIFFERENCE results, preserving arithmetic input/source
+    order and first occurrence.
+```
+
+- Otherwise:
+
+```text
+ValidationItem.status = WARNING
+message = "Deterministic output-tax-difference workflow requirement could not be resolved from one sufficient arithmetic result."
+related_fact_ids =
+    requirement.related_fact_ids
+```
+
+For every outcome:
+
+```text
+related_calculation_types =
+    [ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE]
+```
+
+### 19.109 Temporary-warning removal rule
+
+After Step 8.3 is implemented, the Step-8.2 temporary message:
+
+```text
+"Derived workflow validation is deferred until Step 8.3 requirement resolution."
+```
+
+must NEVER be emitted.
+
+The stable check IDs remain unchanged.
+
+### 19.110 Step-8.3 ValidationEngineResult staging
+
+After Step 8.3:
+
+```text
+requirements
+```
+
+must contain the resolved `RequirementResult` list for a structurally
+valid `DEEP_WORKFLOW`/profile.
+
+For `TRIAGE_ONLY` / `UNKNOWN` / unusable deep profile:
+
+```text
+requirements = []
+```
+
+Step 8.3 still leaves:
+
+```text
+evidence_checklist = []
+```
+
+because Step 8.4 owns evidence generation. Empty `evidence_checklist`
+must still NOT be interpreted as evidence complete.
+
+### 19.111 Requirement processing precondition
+
+Resolve workflow requirements only when ALL are true:
+
+```text
+classification.support_level == DEEP_WORKFLOW
+classification.proceeding_type != UNKNOWN
+workflow exists
+profile exists
+workflow/proceeding alignment passes
+profile/proceeding alignment passes
+support.requirement_alignment == PASS
+```
+
+If these are not all true:
+
+```text
+requirements = []
+```
+
+No fallback. No partial requirement profile execution.
+
+### 19.112 Step-8.3 processing order
+
+Step 8.3 run order becomes:
+
+```text
+1. Step-8.2 generic/support/fact/preflight/deadline/arithmetic checks
+2. workflow requirement resolution
+3. requirement ValidationItems
+4. workflow special-rule processing
+   using the resolved requirement results for the two derived checks
+5. ReviewRequirement dedup
+6. overall ValidationStatus aggregation
+7. case severity
+8. DraftEligibility
+9. return ValidationEngineResult
+```
+
+This ensures special-rule deterministic checks can reuse requirement
+results without recalculating them.
+
+### 19.113 No evidence work in Step 8.3
+
+Step 8.3 MUST NOT implement:
+
+```text
+evidence checklist generation
+EvidenceStatus evaluation
+EvidenceGap generation
+upload matching
+```
+
+That remains Step 8.4.
+
+### 19.114 No new models in Step 8.3
+
+Do NOT add or change:
+
+```text
+enums
+dataclasses
+FactRole
+WorkflowRequirementSpec
+RequirementResult
+WorkflowValidationProfile
+```
+
+Existing Step-8.1 models are sufficient.
+
+### 19.115 Zero LLM / zero semantic matching
+
+Requirement resolution is pure deterministic Python.
+
+No:
+
+```text
+LLM
+network
+claim matching
+source_text NLP
+fuzzy matching
+regex semantic classification
+legal research
+```
+
+Only these are used:
+
+```text
+FactType
+FactRole
+FactStatus
+extraction status
+ArithmeticCalculationType
+ArithmeticStatus
+Step-8.2 structural validation results
+```
+
+### 19.116 Integration still prohibited
+
+Until Step 8.4 is complete, do NOT integrate the Validation Engine into:
+
+```text
+app.py
+modules/notice_explainer.py
+specialist drafting
+production rendering
+```
+
+### 19.117 Existing contracts unchanged
+
+Do NOT change:
+
+```text
+22 FactRole members
+29 WorkflowRequirementSpecs
+24 special-rule mappings
+5 profiles
+Step-8B check IDs
+review IDs
+workflow text
+evidence requirements
+legacy models
+```
+
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
