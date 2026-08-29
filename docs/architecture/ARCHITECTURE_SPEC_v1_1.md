@@ -5140,6 +5140,925 @@ evidence requirements
 legacy models
 ```
 
+## 20. Controlled Specialist Drafting Contract (Phase 2 Step 9A — authoritative)
+
+This section is the closed machine contract for Step 9 — the third and
+final Phase-2 LLM surface: specialist controlled drafting. Implementation
+must not invent any of it: the public API, permitted inputs, raw-text
+boundary, DraftEligibility gate, fact-selection rules, rendering
+ownership, workflow drafting profiles, prompt architecture, LLM response
+schema, malformed-response handling, review/requirement/evidence
+visibility, legal-research limits, the deterministic post-generation
+validator and the final `SpecialistDraftResult` contract are all defined
+below. This section supersedes the §19.53 Step-9 gate description and the
+§13 Step 9 narrative; §19.53's prohibition of a drafting call when
+`BLOCKED` is preserved and made exact.
+
+Core design principle — code-owned factual rendering. The architecture
+does NOT specify "LLM writes arbitrary draft prose and Python
+semantically checks it": Python cannot reliably prove the semantic
+meaning of arbitrary legal prose. Instead, critical case-specific facts,
+amounts, deadlines, hearing information and other deterministic outputs
+are rendered from validated structured objects by Python. The drafting
+LLM produces structured argument prose plus architecture-owned reference
+tokens; it does NOT own the authoritative rendering of notice-specific
+facts. The post-generation validator is structural / reference / lexical
+safety validation, NOT general semantic legal-prose understanding. This
+limitation is stated explicitly (§20.43).
+
+### 20.1 Public Step-9 API
+
+Approve the exact public drafting API:
+
+```text
+generate_specialist_draft(
+    classification: NoticeClassification,
+    extraction_result: FactExtractionResult,
+    preflight_result: PreflightResult,
+    arithmetic_results: List[ArithmeticResult],
+    validation_result: ValidationEngineResult,
+    deadline_result: Optional[DeadlineResult] = None,
+) -> SpecialistDraftResult
+```
+
+The drafting engine internally obtains the `WorkflowDefinition` and the
+`WorkflowDraftingProfile` using `classification.proceeding_type`. Do NOT
+accept a caller-supplied `WorkflowDefinition`. This removes the §19.53
+input ambiguity.
+
+Do NOT accept:
+
+```text
+raw_text
+current_date
+uploaded files
+uploaded-document metadata
+taxpayer-supplied facts
+CA-entered facts
+arbitrary context
+caller-supplied workflow
+caller-supplied prompt
+```
+
+No second extraction pass (§17.22).
+
+### 20.2 Raw notice text — closed prohibition
+
+Raw notice text MUST NOT be passed to the Step-9 specialist drafting
+LLM. The drafting engine public API has no `raw_text` argument. The
+controlled prompt context must be built only from validated structured
+Phase-2 objects.
+
+Reason: passing raw notice text would create an undeclared second
+extraction / reinterpretation surface and allow drafting to bypass the
+Fact Engine and Validation Engine controls.
+
+This is a hard architectural boundary.
+
+### 20.3 Draft eligibility gate
+
+Specialist drafting may execute ONLY when ALL are true:
+
+```text
+validation_result exists
+classification.support_level == SupportLevel.DEEP_WORKFLOW
+classification.proceeding_type != ProceedingType.UNKNOWN
+validation_result.draft_eligibility in (REVIEW_REQUIRED, ALLOWED)
+workflow exists
+drafting profile exists
+```
+
+If any condition fails: ZERO specialist drafting LLM calls. For
+`DraftEligibility.BLOCKED`: zero calls. For `REVIEW_REQUIRED`: exactly
+one specialist drafting call is permitted. For `ALLOWED`: exactly one
+specialist drafting call is permitted. TRIAGE_ONLY and UNKNOWN never
+invoke specialist drafting (§19.44, §19.45). Generic triage remains a
+separate deterministic rendering path (§11) and is NOT implemented by
+the Step-9 specialist drafting engine.
+
+### 20.4 LLM call count
+
+Authorize exactly ONE drafting-layer LLM call for one permitted Step-9
+request. Do NOT call once per section. Do NOT make a separate
+client-WhatsApp call. Do NOT make a second LLM validation/audit call.
+Do NOT add a drafting-layer retry. Infrastructure-level behavior
+already inside `modules.llm_client` is not counted as an additional
+Step-9 drafting surface. All Step-9 LLM access must go through the
+existing approved LLM client / router boundary (guardrail 12, AGENTS.md
+§6).
+
+### 20.5 Fact context filter
+
+The LLM drafting context must NOT receive every extracted fact. Create
+the drafting fact context deterministically. A fact may enter the
+factual drafting context only when:
+
+```text
+allowed_in_draft == DraftPermission.YES
+```
+
+or:
+
+```text
+allowed_in_draft == DraftPermission.CONDITIONAL
+```
+
+Facts with `DraftPermission.NO` must NOT be supplied as factual drafting
+context. Their existence may still influence unresolved
+`RequirementResult` metadata, but their factual claim/source content is
+not supplied to the drafting model.
+
+### 20.6 Permitted Phase-2 fact states
+
+For current Phase 2: `DraftPermission.YES` facts must satisfy the Step-8
+invariant `FactStatus.CONFIRMED`; `DraftPermission.CONDITIONAL` facts
+must satisfy `FactStatus.ALLEGED` (§17.8, §19.28). Current Phase-2
+drafting must NOT expose as affirmative factual context:
+`REQUIRES_VERIFICATION`, `UNKNOWN`. `INFERRED` notice facts are not
+produced by the current Fact Engine and must not be invented as a new
+Step-9 factual surface. Arithmetic has its separate deterministic
+contract (§18).
+
+### 20.7 Fact context fields
+
+For each permitted draftable fact, the controlled context may contain
+only:
+
+```text
+fact_id
+fact_type
+fact_role
+status
+source_text
+source_page
+allowed_in_draft
+```
+
+Do NOT send raw notice text. Do NOT require the LLM to trust or
+reproduce the free-form `ExtractedFact.claim` field. The authoritative
+notice-grounded textual material for drafting is `source_text`, because
+it carries exact notice provenance (§17.9).
+
+### 20.8 Factual rendering is Python-owned
+
+The LLM must not author the final authoritative wording of factual
+values. Instead LLM section prose may reference facts through tokens:
+
+```text
+[[FACT:<fact_id>]]
+```
+
+Example: `[[FACT:F-003]]`. Python resolves FACT tokens after structural
+validation. Closed rendering behavior:
+
+```text
+FactStatus.CONFIRMED + DraftPermission.YES
+    render: 'The notice records: "<source_text>"'
+    if source_page exists, Python may append ' (notice p. <page>)'
+
+FactStatus.ALLEGED + DraftPermission.CONDITIONAL
+    render: 'The department alleges: "<source_text>"'
+    with optional notice-page suffix
+```
+
+Do NOT render ALLEGED text without departmental attribution. Do NOT
+resolve FACT tokens for `DraftPermission.NO`, `REQUIRES_VERIFICATION`,
+`UNKNOWN`, or unsupported status/permission combinations — such a token
+is a post-draft structural FAIL. This rendering proves what Python
+controls. It does NOT convert a notice statement into legal truth.
+
+### 20.9 FACT token resolution
+
+A FACT token resolves only when its `fact_id` matches exactly ONE
+eligible draft-context fact. Case-sensitive exact equality. Zero matches
+→ FAIL. More than one match → FAIL. No arbitrary selection. No fuzzy
+matching. No semantic matching.
+
+### 20.10 Arithmetic context
+
+Step 9 does NOT recompute arithmetic. `ArithmeticResult` objects are
+supplied from the already-validated deterministic engine. Only
+`ArithmeticResult` objects whose five Step-8 structural checks (§19.29,
+§19.65) are PASS may be available for draft token resolution. No
+arithmetic result may be trusted solely because its object exists.
+
+### 20.11 Arithmetic token
+
+Use one-based arithmetic input position:
+
+```text
+[[ARITH:<N>]]
+```
+
+Examples: `[[ARITH:1]]`, `[[ARITH:2]]`. Do NOT identify arithmetic
+tokens only by calculation type, because duplicate calculation types can
+exist (§19.64). A token resolves only to the `ArithmeticResult` at exact
+one-based input position N whose five structural Step-8 checks are PASS.
+
+### 20.12 Arithmetic rendering
+
+If status is `PASS` or `MISMATCH`, Python may render the deterministic
+result. The rendered text must identify it as deterministic arithmetic /
+reconciliation output — NOT:
+
+```text
+legal liability
+admitted liability
+statutory penalty
+final tax payable
+```
+
+For `MISMATCH`, preserve that it is a calculated difference only. For
+`INSUFFICIENT_DATA`, do NOT allow an affirmative ARITH token in draft
+prose. The unresolved arithmetic state remains visible through the
+requirement / validation surfaces (§19.14, §19.105).
+
+### 20.13 Deadline context
+
+Step 9 performs ZERO date arithmetic. It may only render a supplied
+`DeadlineResult`. No supplied `DeadlineResult` → no deadline token is
+available. Use:
+
+```text
+[[DEADLINE]]
+```
+
+A deadline token may render existing deterministic deadline information
+only. The renderer must preserve: calculated deadline status; deadline
+confidence if the model exposes it; the distinction between
+notice-stated due date and calculated deadline; the preflight
+conflict / cannot-compare state. It must never describe the calculated
+deadline as finally legally binding (guardrail 14, §19.31).
+
+### 20.14 Hearing token
+
+If a supplied `DeadlineResult` contains usable hearing information,
+allow:
+
+```text
+[[HEARING]]
+```
+
+Python renders only existing `DeadlineResult` hearing fields/status. No
+hearing calculation. No inferred hearing date.
+
+### 20.15 Unresolved requirements
+
+The following `RequirementStatus` values are unresolved:
+
+```text
+MISSING
+UNKNOWN
+REQUIRES_VERIFICATION
+```
+
+They must NOT support affirmative draft facts. They must be copied by
+Python into `SpecialistDraftResult.unresolved_requirements`. They may
+also be represented to the LLM as machine-labelled unresolved context
+containing only:
+
+```text
+requirement_id
+requirement_text
+status
+related_fact_ids
+calculation_type
+```
+
+The LLM must not convert them into assertions that the missing
+information is true. `SATISFIED` / `DERIVED` requirements do not need to
+be duplicated as warnings (§19.106).
+
+### 20.16 Evidence contract
+
+Copy the existing `validation_result.evidence_checklist` into
+`SpecialistDraftResult.evidence_checklist`. The LLM may receive the
+checklist only as unresolved evidence requirements (§19.53). Current
+Phase-2 UNKNOWN evidence MUST NEVER be described as:
+
+```text
+attached
+enclosed
+annexed
+submitted
+provided
+available
+verified
+```
+
+Python, not the LLM, owns its user-visible checklist rendering. Do NOT
+create evidence claims inside the generated prose. Do NOT create
+`EvidenceGap` in Step 9 (§19.19).
+
+### 20.17 Review requirements
+
+Copy `validation_result.review_requirements` verbatim into
+`SpecialistDraftResult.review_requirements`. `ReviewRequirement` objects
+are a PYTHON-OWNED output surface. Do NOT require the LLM to reproduce
+them. The UI/integration layer must render mandatory review requirements
+separately from and before specialist draft prose. Therefore an LLM
+cannot omit or soften `CA_REVIEW`, `SENIOR_CA_OR_ADVOCATE` or
+`URGENT_CA_REVIEW`, because those objects do not depend on generated
+prose. For `SENIOR_CA_OR_ADVOCATE` and `URGENT_CA_REVIEW` the
+requirement remains mandatory before filing/use according to its
+existing reason (§19.21, §19.63). Step 9 does NOT add a filing-approval
+model.
+
+### 20.18 special_rules boundary
+
+Do NOT pass `workflow.special_rules` as raw free-text drafting context.
+The Validation Engine already converts those rules into `ValidationItem`
+objects, `ReviewRequirement` objects, requirement state and
+deterministic special-rule outcomes (§19.40). The drafting LLM receives
+those structured results where relevant. No generic semantic
+interpretation of `workflow.special_rules` occurs in Step 9.
+
+### 20.19 Workflow output_structure
+
+Do NOT make Step-9 code semantically interpret the existing free-text
+`output_structure` strings. Create a separate architecture-owned
+`WorkflowDraftingProfile` in Step 9.1. It maps each deep workflow to an
+ordered list of drafting sections. The section titles MUST correspond
+one-for-one and in order with the current
+`WorkflowDefinition.output_structure`, unless a later architecture
+amendment explicitly changes them. This preserves the current workflow
+contract while giving Step 9 stable machine IDs.
+
+### 20.20 Drafting model contracts
+
+Authorize additive Step-9 models:
+
+```text
+class DraftGenerationStatus(Enum) — exact members and values:
+    SUCCESS = "success"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+
+These values are stable machine-contract values. Enum parsing/comparison
+must use exact enum values where serialization is required. Do NOT add
+members.
+
+class DraftFailureCode(Enum) — exact members and values:
+    VALIDATION_REQUIRED = "validation_required"
+    DRAFT_BLOCKED = "draft_blocked"
+    WORKFLOW_UNAVAILABLE = "workflow_unavailable"
+    LLM_ERROR = "llm_error"
+    MALFORMED_RESPONSE = "malformed_response"
+    POST_VALIDATION_FAILED = "post_validation_failed"
+
+These are stable machine-contract values. Do NOT add aliases. Do NOT add
+a generic UNKNOWN. Do NOT add RETRY_EXHAUSTED.
+
+dataclass DraftSectionSpec — exact fields/order:
+    section_id: str
+    title: str
+
+dataclass WorkflowDraftingProfile — exact fields/order:
+    proceeding_type: ProceedingType
+    sections: Tuple[DraftSectionSpec, ...]
+    prompt_key: str
+
+dataclass DraftSection — exact fields/order:
+    section_id: str
+    title: str
+    template_text: str
+    rendered_text: str
+
+dataclass DraftPostValidationResult — exact fields/order:
+    overall_status: ValidationStatus
+    checks: List[ValidationItem]
+
+dataclass SpecialistDraftResult — exact fields/order:
+    status: DraftGenerationStatus
+    draft_eligibility: DraftEligibility
+    sections: List[DraftSection]
+    unresolved_requirements: List[RequirementResult]
+    evidence_checklist: List[EvidenceChecklistItem]
+    review_requirements: List[ReviewRequirement]
+    post_validation: Optional[DraftPostValidationResult]
+    failure_code: Optional[DraftFailureCode]
+    error_message: Optional[str]
+```
+
+Default contract: the following Step-9 dataclasses use the exact field
+order and annotations defined above and have NO architecture-authorized
+implicit field defaults:
+
+```text
+DraftSectionSpec
+WorkflowDraftingProfile
+DraftSection
+DraftPostValidationResult
+SpecialistDraftResult
+```
+
+Callers/builders must provide every field explicitly. For Optional
+fields in `SpecialistDraftResult`:
+
+```text
+post_validation
+failure_code
+error_message
+```
+
+the caller must explicitly supply `None` when absent. Do NOT introduce:
+
+```text
+default_factory=list
+automatic empty-list defaults
+automatic status defaults
+automatic failure-code defaults
+```
+
+This keeps result construction explicit and prevents partially
+initialized draft-result objects.
+
+Do NOT add `filing_approved`, `legally_valid` or `liability_confirmed`
+fields.
+
+### 20.21 Drafting profile machine IDs
+
+Use one-based section IDs:
+
+```text
+GST_SEC73_ITC:      sec73_itc.s1, sec73_itc.s2, ...
+GST_SEC73_GENERAL:  sec73_general.s1, sec73_general.s2, ...
+GST_SEC73_RCM:      sec73_rcm.s1, sec73_rcm.s2, ...
+GST_SEC74_FRAUD:    sec74_fraud.s1, sec74_fraud.s2, ...
+GST_SEC129_ENFORCE: sec129.s1, sec129.s2, ...
+```
+
+Number of sections must equal `len(workflow.output_structure)`. Title at
+each position must equal the exact `workflow.output_structure` string at
+the same position. No requirement/evidence/review section is generated
+by the LLM unless it already exists in `output_structure`. Those
+Python-owned metadata surfaces remain separately renderable.
+
+### 20.22 Prompt keys
+
+Closed prompt keys:
+
+```text
+sec73_itc
+sec73_general
+sec73_rcm
+sec74_fraud
+sec129
+```
+
+Step 9.2 will map those keys to:
+
+```text
+prompts/drafting/base_rules.txt
+prompts/drafting/gst/sec73_itc.txt
+prompts/drafting/gst/sec73_general.txt
+prompts/drafting/gst/sec73_rcm.txt
+prompts/drafting/gst/sec74_fraud.txt
+prompts/drafting/gst/sec129.txt
+```
+
+Do NOT use `prompts/notice_prompt.txt` for specialist Phase-2 drafting.
+That file remains legacy until Step 10 retirement.
+
+### 20.23 LLM response contract
+
+Authorize exactly one strict JSON object:
+
+```text
+{
+  "sections": [
+    {
+      "section_id": "<exact profile section_id>",
+      "body_template": "<string>"
+    }
+  ]
+}
+```
+
+No markdown code fence. No prose before JSON. No prose after JSON. No
+additional top-level fields. Each section object has exactly
+`section_id` and `body_template`; no extra section-object fields. There
+must be exactly one section for each profile section, in exact profile
+order, with exact `section_id`. No duplicate IDs, no missing IDs, no
+extra IDs. Every `body_template` must be a non-empty string after
+trimming.
+
+### 20.24 Malformed response
+
+Treat as malformed when:
+
+```text
+response empty
+response begins with/represents provider Error output
+invalid JSON
+root not object
+sections missing
+sections not list
+section item not object
+missing section_id / body_template
+extra top-level field
+extra section field
+wrong field type
+wrong section count
+wrong order
+unknown ID
+duplicate ID
+empty body_template
+```
+
+Malformed drafting output:
+
+```text
+DraftGenerationStatus.FAILED
+DraftFailureCode.MALFORMED_RESPONSE
+```
+
+No partial generated section may be exposed as usable specialist draft.
+Do NOT retry at the drafting layer.
+
+### 20.25 LLM exception / provider failure
+
+Provider exception or approved-client error result:
+
+```text
+status = FAILED
+failure_code = LLM_ERROR
+sections = []
+post_validation = None
+```
+
+Existing `draft_eligibility` is copied into the result but is NOT
+mutated. A failed drafting call does not retroactively change Step-8
+eligibility.
+
+### 20.26 Blocked result
+
+When drafting is prohibited before the call:
+
+```text
+status = BLOCKED
+sections = []
+post_validation = None
+```
+
+Failure codes: no usable `validation_result` → `VALIDATION_REQUIRED`;
+validation says BLOCKED or classification is not deep → `DRAFT_BLOCKED`;
+workflow/profile unavailable or inconsistent → `WORKFLOW_UNAVAILABLE`.
+ZERO LLM calls. Still preserve safe Python-owned metadata when
+available: `unresolved_requirements`, `evidence_checklist`,
+`review_requirements`.
+
+### 20.27 Generated prose role
+
+LLM `body_template` is argument/working-draft prose. Case-specific
+factual values should be expressed using architecture-owned tokens
+rather than authored as raw factual statements. The post-draft
+validator does NOT claim to understand general legal prose. It
+validates:
+
+```text
+schema
+section contract
+token syntax
+token resolution
+token permissions
+prohibited raw factual-literal patterns
+prohibited evidence-presence language
+prohibited external-citation surfaces
+```
+
+Critical notice facts are then rendered by Python from validated
+objects.
+
+### 20.28 Token grammar
+
+Closed supported tokens:
+
+```text
+[[FACT:<fact_id>]]
+[[ARITH:<positive-one-based-integer>]]
+[[DEADLINE]]
+[[HEARING]]
+```
+
+No other token families in Phase 2. Malformed tokens — `[[...]]` with an
+unknown token family, malformed delimiter, empty identifier, or
+arithmetic index <= 0 — produce a post-validation FAIL.
+
+### 20.29 Post-draft check-ID catalog
+
+Architecture-owned fixed IDs:
+
+```text
+draft.response.schema
+draft.sections.count
+draft.sections.ids
+draft.sections.order
+draft.sections.nonempty
+draft.tokens.syntax
+draft.tokens.fact_resolution
+draft.tokens.fact_permission
+draft.tokens.arithmetic_resolution
+draft.tokens.deadline_resolution
+draft.tokens.hearing_resolution
+draft.prose.raw_fact_literal
+draft.prose.evidence_presence_language
+draft.prose.external_citation_surface
+```
+
+One `ValidationItem` per ID. No implementation-owned suffixes.
+
+### 20.30 Post-draft aggregation
+
+`DraftPostValidationResult.overall_status`:
+
+```text
+any FAIL          → FAIL
+else any WARNING  → WARNING
+else              → PASS
+```
+
+For current Phase 2 these checks should normally produce PASS or FAIL.
+Do not create legal-validity semantics. If
+`post_validation.overall_status == FAIL`:
+
+```text
+SpecialistDraftResult.status = FAILED
+failure_code = POST_VALIDATION_FAILED
+```
+
+Do NOT expose rendered draft sections as usable specialist draft.
+
+### 20.31 Raw fact literal safety
+
+The architecture must NOT claim this check proves semantic truth. It is
+a leakage barrier. Outside recognized reference tokens, generated
+`body_template` must reject:
+
+```text
+GSTIN-like identifiers
+currency-value literals
+percent-value literals
+standalone date-like literals
+raw RFN/DIN-style identifier values when detectable
+exact draftable fact source_text copied verbatim beyond a conservative
+    architecture-defined minimum length
+```
+
+The exact deterministic regex/length catalog must be finalized before
+Step 9.4 implementation. Therefore Step 9A records this as an
+architecture-owned closed catalog to be implemented in Step 9.4; Step
+9.4 must NOT invent patterns. The exact regex/length literals for this
+catalog are finalized in a Step-9D spec sub-amendment before Step 9.4
+implementation. This deferral covers ONLY this narrow catalog; it does
+NOT block Step 9.1–9.3, because post-validation is Step 9.4.
+
+### 20.32 Evidence-presence language
+
+Because evidence is UNKNOWN in Phase 2, generated LLM prose must not
+claim evidence is attached/present. The post validator must prohibit
+architecture-owned lexical forms such as:
+
+```text
+"attached"
+"enclosed"
+"annexed"
+"submitted herewith"
+"we have enclosed"
+"we attach"
+```
+
+unless a future evidence contract authorizes PRESENT evidence. Do NOT
+infer semantic synonyms generically. This is a deterministic lexical
+safety check, not semantic NLP.
+
+### 20.33 External citation surface
+
+Phase-2 Step 9 has no legal-research subsystem. Generated
+`body_template` must not introduce:
+
+```text
+case-law citations
+external URLs
+unverified judicial citations
+citation footnotes
+```
+
+The post validator uses a closed lexical/regex safety catalog. Do NOT
+attempt broad semantic legal research. Notice-stated statutory material
+may enter final rendering through validated FACT tokens. The LLM should
+use generic phrasing such as "the provision invoked in the notice"
+rather than invent statutory text.
+
+### 20.34 Legal research placeholder
+
+The architecture keeps:
+
+```text
+CA LEGAL RESEARCH REQUIRED
+```
+
+as a working-paper/review concept where a workflow needs legal
+authority (§7 step 10, guardrail 8). The LLM does not fabricate case
+law. Exact UI placement belongs to Step 10. No external retrieval is
+added in Phase 2.
+
+### 20.35 Deadline / authority / portal safety
+
+Step 9 only renders already-existing structured outputs. It does not:
+
+```text
+verify GST portal
+decide authenticity
+decide officer competence
+decide jurisdiction
+recalculate deadline
+reconcile stated/calculated dates independently
+```
+
+Relevant Step-8 warnings and `ReviewRequirement` objects remain
+Python-owned context for CA review (§19.30, §19.31).
+
+### 20.36 Fraud workflow safety
+
+GST_SEC74_FRAUD: facts carrying fraud/suppression content remain:
+
+```text
+FactType.DEPARTMENT_ALLEGATION
+FactStatus.ALLEGED
+DraftPermission.CONDITIONAL
+```
+
+Their final factual rendering therefore uses `'The department alleges:
+"..."'` — never "fraud is established", "fraud is proved" or "the
+taxpayer committed fraud" as a Python-rendered fact. The existing
+mandatory `SENIOR_CA_OR_ADVOCATE` review remains outside LLM control
+and visible through the returned `ReviewRequirement` objects (§19.38).
+The post validator does not claim semantic proof of every possible
+fraud sentence; this limitation must be explicit.
+
+### 20.37 Section-129 safety
+
+Step 9 must not add any new Section-129 calculation or deadline logic.
+It receives only validated structured values. No raw workflow
+special_rules. No raw notice. No:
+
+```text
+static 100% penalty
+universal seven-day reply rule
+MOV-09 taxpayer reply form assumption
+invented e-way bill reason
+Section-130 deep workflow
+```
+
+Python-owned Section-129 review requirements remain present (§19.39).
+
+### 20.38 Draft result metadata is not LLM-owned
+
+The LLM response controls ONLY `body_template` for the approved profile
+sections. The LLM does NOT control:
+
+```text
+draft eligibility
+review requirements
+evidence checklist
+unresolved requirements
+generation status
+failure code
+section titles
+section IDs
+post-validation result
+rendered factual text
+```
+
+Those are Python-owned.
+
+### 20.39 Immutability
+
+Step 9 must not mutate:
+
+```text
+classification
+extraction_result
+facts
+preflight_result
+arithmetic_results
+deadline_result
+validation_result
+workflow
+validation profile
+drafting profile
+```
+
+Every returned list/object is a fresh output.
+
+### 20.40 Step-9 implementation split
+
+Authorize exactly this staged implementation:
+
+```text
+STEP 9.1
+    Add drafting models + five WorkflowDraftingProfiles + registry.
+    ZERO LLM. ZERO prompts. No drafting engine call.
+
+STEP 9.2
+    Add controlled drafting-context builder + prompt files.
+    Implement gate/context/filter/token-context serialization.
+    ZERO actual LLM call. No response parser.
+
+STEP 9.3
+    Add exactly-one LLM call + strict JSON parser.
+    No final token rendering until parser succeeds.
+    No application integration.
+
+STEP 9.4
+    Add deterministic post-draft structural validator +
+    token resolver + Python-owned factual/arithmetic/deadline rendering.
+
+STEP 10
+    Integrate into orchestration/Streamlit.
+    Add deterministic TRIAGE renderer.
+    Keep/retire legacy notice_explainer path according to the
+    integration plan.
+```
+
+### 20.41 Step-9 file ownership
+
+```text
+Step 9.1 expected:
+    domain/models.py
+    workflows/gst/drafting_profiles.py
+    tests/test_drafting_models.py
+    tests/test_drafting_profiles.py
+
+Step 9.2 expected:
+    domain/drafting_engine.py
+    prompts/drafting/base_rules.txt
+    prompts/drafting/gst/sec73_itc.txt
+    prompts/drafting/gst/sec73_general.txt
+    prompts/drafting/gst/sec73_rcm.txt
+    prompts/drafting/gst/sec74_fraud.txt
+    prompts/drafting/gst/sec129.txt
+    tests/test_drafting_engine.py
+
+Step 9.3 expected:
+    domain/drafting_engine.py
+    tests/test_drafting_engine.py
+
+Step 9.4 expected:
+    domain/drafting_engine.py
+    tests/test_drafting_engine.py
+```
+
+Do NOT modify during Step 9:
+
+```text
+app.py
+modules/notice_explainer.py
+prompts/notice_prompt.txt
+```
+
+unless a later explicit integration task authorizes it.
+
+`modules/llm_client.py`: DO NOT MODIFY unless the existing public
+interface proves genuinely insufficient and a separate architecture
+amendment is approved.
+
+### 20.42 Legacy models
+
+Do NOT repurpose:
+
+```text
+NoticeAnalysis
+ValidationResult
+ValidationCheck
+EvidenceGap
+PotentialDefence
+```
+
+for the new Step-9 output. They remain legacy/compatibility artifacts
+until Step 10 or later (§19.52).
+
+### 20.43 Current Phase-2 limitation
+
+Explicitly record: even with controlled token rendering and structural
+post-validation, Phase 2 does NOT claim autonomous legal correctness.
+The system guarantees important machine-enforceable boundaries:
+
+```text
+no raw notice bypass
+no BLOCKED drafting call
+no DraftPermission.NO fact rendering
+deterministic allegation wrapper
+deterministic arithmetic/deadline rendering
+UNKNOWN evidence not treated as present
+mandatory review metadata outside LLM control
+strict section/JSON/token contract
+```
+
+But general legal argument prose still requires CA review. This
+limitation is intentional.
+
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
