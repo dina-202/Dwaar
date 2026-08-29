@@ -6689,4 +6689,926 @@ No existing workflow/profile/model changes should be needed.
 
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20; amended 2026-08-29 by Phase 2 Step 9B: authoritative Controlled Drafting Context + Prompt Assembly contract added as §21 (§21.1–§21.31). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+## 22. Step-9.3 Generation / Parser Result-State Contract (Phase 2 Step 9C — authoritative)
+
+This section closes the remaining Step-9 machine-contract gap. §20 and
+§21 define the Step-9 public API, the eligibility gate, the exactly-one
+LLM call, the strict response JSON schema, the failure codes and the
+`SpecialistDraftResult` model — but not the EXACT result object Step 9.3
+must return after a valid LLM JSON response is successfully parsed and
+before Step-9.4 post-validation, token resolution and Python rendering.
+That interim result state is pinned here: every pre-call failure shape,
+failure precedence, the exact error-message catalog, provider
+error-string handling, strict-parser behavior, parsed-section
+normalization and Python-owned metadata copying are architecture-owned.
+Implementation must not choose any of it.
+
+This section supplements §20 and §21 and supersedes nothing in them:
+where §20 already pins a rule (API shape, gate, call count, response
+schema, failure codes, model contracts, metadata ownership), that rule
+is reused verbatim and not re-interpreted. §21.27–§21.28 remain
+Step-9.2-only constraints (private helpers, no public result model);
+this section activates the §20.1 public API for Step 9.3.
+
+### 22.1 Public API begins in Step 9.3
+
+Step 9.3 implements the existing authoritative public API exactly
+(§20.1):
+
+```text
+generate_specialist_draft(
+    classification: NoticeClassification,
+    extraction_result: FactExtractionResult,
+    preflight_result: PreflightResult,
+    arithmetic_results: List[ArithmeticResult],
+    validation_result: ValidationEngineResult,
+    deadline_result: Optional[DeadlineResult] = None,
+) -> SpecialistDraftResult
+```
+
+The drafting engine internally obtains the `WorkflowDefinition` and the
+`WorkflowDraftingProfile` using `classification.proceeding_type` (§20.1).
+
+```text
+No extra parameter.
+No raw_text.
+No workflow parameter.
+No prompt parameter.
+No current date.
+No overload.
+No second public callable.
+```
+
+### 22.2 Runtime None defense for validation_result
+
+Although the type contract requires `ValidationEngineResult`, the
+implementation must defensively handle a runtime:
+
+```text
+validation_result is None
+```
+
+because `DraftFailureCode.VALIDATION_REQUIRED` exists specifically for
+this precondition (§20.26).
+
+In that case: ZERO LLM calls. Return:
+
+```text
+status =
+    DraftGenerationStatus.BLOCKED
+
+draft_eligibility =
+    DraftEligibility.BLOCKED
+
+sections =
+    []
+
+unresolved_requirements =
+    []
+
+evidence_checklist =
+    []
+
+review_requirements =
+    []
+
+post_validation =
+    None
+
+failure_code =
+    DraftFailureCode.VALIDATION_REQUIRED
+
+error_message =
+    "Validation result is required before specialist drafting."
+```
+
+Do NOT crash. Do NOT synthesize a `ValidationEngineResult`.
+
+### 22.3 Pre-call failure precedence
+
+When multiple pre-call conditions are invalid, use this exact
+precedence:
+
+```text
+1. validation_result is None
+   → VALIDATION_REQUIRED
+
+2. classification/support/eligibility state prohibits specialist
+   drafting OR validation_result.checks contains any FAIL
+   → DRAFT_BLOCKED
+
+3. workflow unavailable
+   drafting profile unavailable
+   workflow/profile proceeding mismatch
+   prompt key unavailable
+   base/workflow prompt missing/unreadable/empty
+   → WORKFLOW_UNAVAILABLE
+```
+
+Only after all three pre-call classes pass may the single LLM call
+occur.
+
+This precedence is deterministic and architecture-owned. The class-2
+FAIL mapping reuses §21.14's already-authorized `DRAFT_BLOCKED` code;
+class 3 reuses §21.22's already-authorized `WORKFLOW_UNAVAILABLE` code.
+No new failure code.
+
+### 22.4 DRAFT_BLOCKED result
+
+For pre-call class 2:
+
+```text
+status =
+    DraftGenerationStatus.BLOCKED
+
+draft_eligibility =
+    validation_result.draft_eligibility
+
+sections =
+    []
+
+post_validation =
+    None
+
+failure_code =
+    DraftFailureCode.DRAFT_BLOCKED
+
+error_message =
+    "Specialist drafting is blocked by validation or classification
+    state."
+```
+
+Preserve Python-owned metadata from `validation_result` as defined in
+§22.6.
+
+ZERO LLM calls.
+
+`draft_eligibility` is copied from the existing Step-8 result and is NOT
+forced or mutated (§20.25, §20.26).
+
+### 22.5 WORKFLOW_UNAVAILABLE result
+
+For pre-call class 3:
+
+```text
+status =
+    DraftGenerationStatus.BLOCKED
+
+draft_eligibility =
+    validation_result.draft_eligibility
+
+sections =
+    []
+
+post_validation =
+    None
+
+failure_code =
+    DraftFailureCode.WORKFLOW_UNAVAILABLE
+
+error_message =
+    "Specialist drafting workflow or prompt assets are unavailable."
+```
+
+Preserve Python-owned metadata.
+
+ZERO LLM calls.
+
+No fallback (§21.22): never `notice_prompt.txt`, another workflow
+prompt, an embedded emergency prompt, or raw workflow metadata.
+
+### 22.6 Python-owned metadata copying
+
+Whenever `validation_result` exists, `SpecialistDraftResult` copies:
+
+`unresolved_requirements`:
+
+```text
+fresh list containing only validation_result.requirements whose status
+is:
+
+    MISSING
+    UNKNOWN
+    REQUIRES_VERIFICATION
+
+preserve validation-result order
+```
+
+`evidence_checklist`:
+
+```text
+fresh list(validation_result.evidence_checklist)
+```
+
+`review_requirements`:
+
+```text
+fresh list(validation_result.review_requirements)
+```
+
+The contained dataclass objects need not be deep-copied in Step 9.3,
+but the returned LIST objects must be fresh and must not alias the
+`ValidationEngineResult` list objects.
+
+Do not include SATISFIED/DERIVED requirements in
+`unresolved_requirements` (§20.15, §21.11 reused verbatim).
+
+This applies to:
+
+```text
+BLOCKED
+FAILED
+SUCCESS
+```
+
+results whenever `validation_result` exists. When
+`validation_result is None`, all three lists are empty (§22.2).
+
+### 22.7 Exactly one LLM call
+
+After all pre-call gates pass:
+
+```text
+1. build the permitted specialist prompt using the committed Step-9.2
+   builder
+2. call:
+
+   modules.llm_client.call_gemini(prompt)
+
+exactly once at the Step-9 layer
+3. parse that single returned response
+```
+
+No drafting-layer retry. No second audit call. No per-section call
+(§20.4 reused verbatim).
+
+### 22.8 Provider exception
+
+If `call_gemini` raises any Exception:
+
+```text
+status =
+    DraftGenerationStatus.FAILED
+
+draft_eligibility =
+    validation_result.draft_eligibility
+
+sections =
+    []
+
+post_validation =
+    None
+
+failure_code =
+    DraftFailureCode.LLM_ERROR
+
+error_message =
+    "Specialist drafting provider call failed."
+```
+
+Preserve Python-owned metadata.
+
+Do NOT expose exception text to `error_message`. Do NOT retry.
+
+### 22.9 Provider error-string contract
+
+The existing approved client can return provider failure as a string.
+After receiving a string:
+
+```text
+response_trimmed = response.strip()
+```
+
+If `response_trimmed` starts exactly with:
+
+```text
+"Error:"
+```
+
+then treat it as provider failure:
+
+```text
+status =
+    FAILED
+
+failure_code =
+    LLM_ERROR
+
+error_message =
+    "Specialist drafting provider call failed."
+
+sections = []
+post_validation = None
+```
+
+Do not parse it as JSON. Do not expose the raw provider error string.
+
+Case-sensitive prefix:
+
+```text
+"Error:"
+```
+
+only.
+
+Do not invent a generic semantic error detector. This pins handling of
+the committed `call_gemini` error-string behavior; if that approved
+public boundary ever changes, a separate architecture amendment is
+required before Step 9.3 handling may change.
+
+### 22.10 Non-string provider return
+
+If the approved LLM boundary unexpectedly returns a non-string runtime
+value:
+
+```text
+treat as:
+
+DraftGenerationStatus.FAILED
+DraftFailureCode.LLM_ERROR
+```
+
+with exact `error_message`:
+
+```text
+"Specialist drafting provider call failed."
+```
+
+No parser attempt.
+
+### 22.11 Empty response
+
+If the returned value is a string but:
+
+```text
+response.strip() == ""
+```
+
+then:
+
+```text
+status =
+    DraftGenerationStatus.FAILED
+
+failure_code =
+    DraftFailureCode.MALFORMED_RESPONSE
+
+error_message =
+    "Specialist drafting response did not match the required schema."
+
+sections = []
+post_validation = None
+```
+
+This is malformed output, not provider error.
+
+### 22.12 Strict JSON parsing
+
+For a non-empty, non-provider-error string: parse only:
+
+```text
+response.strip()
+```
+
+using:
+
+```text
+json.loads(...)
+```
+
+```text
+No markdown-fence stripping.
+No substring extraction.
+No attempt to locate a JSON object inside prose.
+No repair.
+No trailing-text removal.
+No parser retry.
+```
+
+Invalid JSON:
+
+```text
+MALFORMED_RESPONSE
+```
+
+### 22.13 Root schema
+
+Parsed root must be exactly:
+
+```text
+dict
+```
+
+with exactly one key:
+
+```text
+"sections"
+```
+
+No additional top-level key.
+
+`sections` must be:
+
+```text
+list
+```
+
+No coercion.
+
+Otherwise:
+
+```text
+MALFORMED_RESPONSE
+```
+
+### 22.14 Section object schema
+
+Every item in `sections` must be:
+
+```text
+dict
+```
+
+with exactly these two keys:
+
+```text
+section_id
+body_template
+```
+
+No missing key. No additional key.
+
+Values:
+
+```text
+section_id:
+    str
+
+body_template:
+    str
+```
+
+No coercion.
+
+Object-key ordering inside JSON is NOT an acceptance requirement.
+
+The section ARRAY order is authoritative.
+
+### 22.15 Section count / IDs / order
+
+The returned sections array must have exactly:
+
+```text
+len(drafting_profile.sections)
+```
+
+items.
+
+At each zero-based list position `i`:
+
+```text
+returned section_id
+    ==
+drafting_profile.sections[i].section_id
+```
+
+exact case-sensitive equality.
+
+Therefore the parser rejects:
+
+```text
+missing section
+extra section
+wrong ID
+unknown ID
+duplicate ID
+correct IDs in wrong order
+```
+
+Do not reorder an otherwise malformed response.
+
+### 22.16 Body_template normalization
+
+For every `body_template`:
+
+```text
+normalized_body = body_template.strip()
+```
+
+If `normalized_body == ""`:
+
+```text
+MALFORMED_RESPONSE
+```
+
+On successful parse:
+
+```text
+DraftSection.template_text =
+    normalized_body
+```
+
+Leading/trailing whitespace is removed once.
+
+Internal:
+
+```text
+whitespace
+line breaks
+token text
+```
+
+are preserved exactly.
+
+Do NOT perform token validation in Step 9.3.
+
+### 22.17 Interim DraftSection contract
+
+For every successfully parsed section construct:
+
+```text
+DraftSection(
+    section_id=<profile section_id>,
+    title=<profile exact section title>,
+    template_text=<normalized parsed body_template>,
+    rendered_text="",
+)
+```
+
+Critical:
+
+```text
+rendered_text == ""
+```
+
+for EVERY successful Step-9.3 section.
+
+Step 9.3 does not resolve tokens.
+
+Step 9.3 does not expose final factual rendering.
+
+Section title comes from:
+
+```text
+WorkflowDraftingProfile
+```
+
+NOT from the LLM response (§20.38).
+
+### 22.18 Step-9.3 parse-success result
+
+When:
+
+```text
+pre-call gates pass
+one LLM call succeeds
+response matches the strict schema
+```
+
+return:
+
+```text
+SpecialistDraftResult(
+    status=DraftGenerationStatus.SUCCESS,
+    draft_eligibility=validation_result.draft_eligibility,
+    sections=<parsed DraftSection list>,
+    unresolved_requirements=<Python-owned metadata>,
+    evidence_checklist=<Python-owned metadata>,
+    review_requirements=<Python-owned metadata>,
+    post_validation=None,
+    failure_code=None,
+    error_message=None,
+)
+```
+
+This is the authoritative INTERIM Step-9.3 success state.
+
+### 22.19 Success does not yet mean displayable
+
+Explicitly state — during Step 9.3 ONLY:
+
+```text
+DraftGenerationStatus.SUCCESS
+```
+
+means:
+
+```text
+the specialist drafting call completed
+AND the strict response schema parsed successfully.
+```
+
+It does NOT yet mean:
+
+```text
+post-draft validated
+token-resolved
+fact-rendered
+safe for production display
+filing-ready
+```
+
+Evidence:
+
+```text
+post_validation is None
+rendered_text == ""
+```
+
+therefore the result is NOT a completed usable specialist draft.
+
+Application integration remains prohibited (§21.30, §20.40).
+
+Step 9.4 upgrades this parsed result through post-validation and
+deterministic rendering.
+
+Do NOT add a new enum member such as:
+
+```text
+PENDING
+PARSED
+GENERATED
+```
+
+The existing three-member enum remains unchanged (§20.20).
+
+### 22.20 Malformed response result
+
+Any §20.24 / this amendment schema violation returns:
+
+```text
+status =
+    DraftGenerationStatus.FAILED
+
+draft_eligibility =
+    validation_result.draft_eligibility
+
+sections =
+    []
+
+post_validation =
+    None
+
+failure_code =
+    DraftFailureCode.MALFORMED_RESPONSE
+
+error_message =
+    "Specialist drafting response did not match the required schema."
+```
+
+Preserve Python-owned metadata.
+
+No partial parsed sections may be returned.
+
+### 22.21 No partial success
+
+```text
+If one returned section is malformed:
+
+whole response fails.
+
+If the first N sections parse but a later one fails:
+
+sections = []
+```
+
+No partial `DraftSection` list. No best effort. No salvage.
+
+### 22.22 Token content is Step 9.4
+
+A valid Step-9.3 `body_template` may still contain:
+
+```text
+valid tokens
+malformed tokens
+unsupported tokens
+prohibited factual literals
+prohibited evidence language
+citation-like language
+```
+
+Step 9.3 DOES NOT decide those issues.
+
+It validates only:
+
+```text
+LLM response schema
+section count
+section IDs
+section order
+non-empty body_template
+```
+
+Step 9.4 owns:
+
+```text
+token syntax
+token resolution
+token permission
+factual-literal leakage
+evidence-presence language
+external-citation surface
+rendered_text
+```
+
+Do NOT shift Step-9.4 work into Step 9.3 (§20.40).
+
+### 22.23 post_validation field
+
+For every Step-9.3 outcome:
+
+```text
+BLOCKED:
+post_validation = None
+
+LLM_ERROR:
+post_validation = None
+
+MALFORMED_RESPONSE:
+post_validation = None
+
+parse SUCCESS:
+post_validation = None
+```
+
+No `DraftPostValidationResult` is constructed in Step 9.3.
+
+### 22.24 Exact error_message catalog
+
+Step-9 machine `error_message` values are architecture-owned:
+
+`VALIDATION_REQUIRED`:
+
+```text
+"Validation result is required before specialist drafting."
+```
+
+`DRAFT_BLOCKED`:
+
+```text
+"Specialist drafting is blocked by validation or classification state."
+```
+
+`WORKFLOW_UNAVAILABLE`:
+
+```text
+"Specialist drafting workflow or prompt assets are unavailable."
+```
+
+`LLM_ERROR`:
+
+```text
+"Specialist drafting provider call failed."
+```
+
+`MALFORMED_RESPONSE`:
+
+```text
+"Specialist drafting response did not match the required schema."
+```
+
+`POST_VALIDATION_FAILED`:
+
+```text
+"Specialist draft failed deterministic post-generation validation."
+```
+
+`SUCCESS`:
+
+```text
+None
+```
+
+```text
+No raw exception.
+No raw provider error.
+No raw malformed LLM response.
+No stack trace.
+```
+
+Do not add implementation-specific error prose.
+
+### 22.25 Failure_code / status consistency
+
+Closed consistency contract:
+
+```text
+status == SUCCESS:
+
+    failure_code is None
+    error_message is None
+
+status == BLOCKED:
+
+    failure_code is one of:
+        VALIDATION_REQUIRED
+        DRAFT_BLOCKED
+        WORKFLOW_UNAVAILABLE
+
+    error_message is corresponding exact catalog string
+
+status == FAILED:
+
+    failure_code is one of:
+        LLM_ERROR
+        MALFORMED_RESPONSE
+        POST_VALIDATION_FAILED
+
+    error_message is corresponding exact catalog string
+```
+
+No other pairing.
+
+Step 9.3 uses only:
+
+```text
+LLM_ERROR
+MALFORMED_RESPONSE
+```
+
+for FAILED results.
+
+`POST_VALIDATION_FAILED` belongs to Step 9.4 (§20.30).
+
+### 22.26 Immutability
+
+Step 9.3 does not mutate:
+
+```text
+classification
+extraction_result
+facts
+preflight_result
+arithmetic_results
+validation_result
+deadline_result
+workflow
+drafting_profile
+```
+
+Fresh result lists must be created (§20.39 reused verbatim).
+
+### 22.27 Step-9.3 file ownership
+
+Step 9.3 is authorized to modify only:
+
+```text
+domain/drafting_engine.py
+tests/test_drafting_engine.py
+```
+
+Do NOT modify:
+
+```text
+domain/models.py
+workflows/gst/drafting_profiles.py
+prompt files
+validation engine
+modules/llm_client.py
+app.py
+modules/notice_explainer.py
+prompts/notice_prompt.txt
+```
+
+### 22.28 Step-9.3 import change
+
+Step 9.3 may newly import the existing approved:
+
+```text
+modules.llm_client
+```
+
+or its existing public call function.
+
+No provider SDK imported directly. No network library. All actual LLM
+access remains through:
+
+```text
+modules.llm_client.call_gemini
+```
+
+(§20.4, §21.26 reused).
+
+### 22.29 Step-9.4 deferral
+
+Still NOT authorized in Step 9.3:
+
+```text
+draft.response.schema post-check item
+draft.sections.* post-check items
+token parser/resolver
+fact rendering
+arithmetic rendering
+deadline/hearing rendering
+evidence lexical safety validator
+citation validator
+raw-fact-literal leakage patterns
+DraftPostValidationResult construction
+```
+
+Step 9D still owns the exact §20.31 literal/regex catalog before Step
+9.4.
+
+---
+
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20; amended 2026-08-29 by Phase 2 Step 9B: authoritative Controlled Drafting Context + Prompt Assembly contract added as §21 (§21.1–§21.31); amended 2026-08-29 by Phase 2 Step 9C: authoritative Step-9.3 Generation/Parser Result-State Contract added as §22 (§22.1–§22.29). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
