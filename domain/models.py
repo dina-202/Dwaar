@@ -716,3 +716,110 @@ class WorkflowValidationProfile:
     requirement_specs: List[WorkflowRequirementSpec]
     special_rule_handling: Dict[int, Tuple[SpecialRuleHandling, ...]]
     review_rules: Dict[int, ReviewLevel]
+
+
+# --- Phase 2 Step 9.1 enums (ARCHITECTURE_SPEC_v1_1 §20.20) -------------------
+
+class DraftGenerationStatus(Enum):
+    """Specialist drafting generation outcome (ARCHITECTURE_SPEC_v1_1 §20.20).
+
+    Exactly the three §20.20 members. Stable machine-contract values: no
+    aliases and no generic UNKNOWN member.
+    """
+
+    SUCCESS = "success"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+
+
+class DraftFailureCode(Enum):
+    """Specialist drafting failure channel (ARCHITECTURE_SPEC_v1_1 §20.20).
+
+    Exactly the six §20.20 members. Stable machine-contract values: no
+    aliases, no generic UNKNOWN and no RETRY_EXHAUSTED.
+    """
+
+    VALIDATION_REQUIRED = "validation_required"
+    DRAFT_BLOCKED = "draft_blocked"
+    WORKFLOW_UNAVAILABLE = "workflow_unavailable"
+    LLM_ERROR = "llm_error"
+    MALFORMED_RESPONSE = "malformed_response"
+    POST_VALIDATION_FAILED = "post_validation_failed"
+
+
+# --- Phase 2 Step 9.1 dataclasses (ARCHITECTURE_SPEC_v1_1 §20.20) -------------
+
+@dataclass
+class DraftSectionSpec:
+    """One architecture-owned drafting section identity (§20.20).
+
+    Stable one-based machine ID plus the exact workflow output_structure
+    title. Pure data contract — no template or prompt content.
+    """
+
+    section_id: str
+    title: str
+
+
+@dataclass
+class WorkflowDraftingProfile:
+    """Static per-workflow drafting mapping (ARCHITECTURE_SPEC_v1_1 §20.19,
+    §20.21, §20.22).
+
+    Maps one deep proceeding type to ordered drafting section specs and a
+    closed prompt key. Pure data contract — no prompt text, no filenames,
+    no LLM access.
+    """
+
+    proceeding_type: ProceedingType
+    sections: Tuple[DraftSectionSpec, ...]
+    prompt_key: str
+
+
+@dataclass
+class DraftSection:
+    """One rendered specialist draft section (ARCHITECTURE_SPEC_v1_1 §20.20).
+
+    template_text holds the LLM body_template; rendered_text holds the
+    Python-owned token-resolved final text.
+    """
+
+    section_id: str
+    title: str
+    template_text: str
+    rendered_text: str
+
+
+@dataclass
+class DraftPostValidationResult:
+    """Deterministic post-draft validation output (ARCHITECTURE_SPEC_v1_1
+    §20.20, §20.30).
+
+    Structural / reference / lexical safety validation only — never general
+    semantic legal-prose understanding (§20.27).
+    """
+
+    overall_status: ValidationStatus
+    checks: List[ValidationItem]
+
+
+@dataclass
+class SpecialistDraftResult:
+    """Closed specialist drafting result (ARCHITECTURE_SPEC_v1_1 §20.20).
+
+    Exactly nine fields, every field caller-supplied: no implicit defaults
+    and no default_factory. Optional fields must be explicitly passed as
+    None when absent. All metadata surfaces are Python-owned (§20.38);
+    deliberately no filing_approved / legally_valid / liability_confirmed
+    fields.
+    """
+
+    status: DraftGenerationStatus
+    draft_eligibility: DraftEligibility
+    sections: List[DraftSection]
+    unresolved_requirements: List[RequirementResult]
+    evidence_checklist: List[EvidenceChecklistItem]
+    review_requirements: List[ReviewRequirement]
+    post_validation: Optional[DraftPostValidationResult]
+    failure_code: Optional[DraftFailureCode]
+    error_message: Optional[str]
