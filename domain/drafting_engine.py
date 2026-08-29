@@ -1,7 +1,8 @@
-"""Controlled specialist-drafting context builder and deterministic prompt
-assembly (ARCHITECTURE_SPEC_v1_1 §21 — Phase 2 Step 9.2).
+"""Controlled specialist drafting: deterministic context/prompt assembly
+plus the Step-9.3 generation/parser state machine
+(ARCHITECTURE_SPEC_v1_1 §21 and §22 — Phase 2 Steps 9.2 and 9.3).
 
-This module implements ONLY the Step-9.2 machine contract:
+Step-9.2 surface (private, unchanged):
 
 - the deterministic Step-9 gate preconditions (§20.3, §21.28);
 - the closed controlled-context JSON shape in the exact architecture key
@@ -10,14 +11,28 @@ This module implements ONLY the Step-9.2 machine contract:
 - closed static prompt asset loading (§21.17–§21.22);
 - deterministic prompt assembly (§21.23).
 
-ZERO LLM calls, zero response parsing, zero post-draft validation, zero
-application integration. The single LLM call belongs to Step 9.3 (§20.4)
-and is not implemented here.
+Step-9.3 surface (§22, authoritative):
 
-All module-level names are deliberately underscore-private (§21.27): the
-architecture-owned public drafting API generate_specialist_draft(...)
-begins in Step 9.3. Private helper names are implementation-local and are
-NOT external machine contracts.
+- the public generate_specialist_draft(...) API (§22.1);
+- the exact pre-call failure precedence and blocked-result shapes
+  (§22.2–§22.5);
+- fresh Python-owned metadata copying (§22.6);
+- exactly one LLM call through modules.llm_client.call_gemini (§22.7);
+- provider exception / "Error:"-string / non-string handling
+  (§22.8–§22.10);
+- the strict response JSON parser and interim DraftSection construction
+  (§22.12–§22.17);
+- the closed SpecialistDraftResult consistency contract
+  (§22.18–§22.25).
+
+Step 9.3 does NOT implement post-draft validation, token resolution or
+final factual rendering; every successful section carries rendered_text
+= "" and post_validation is always None (§22.19, §22.23). Application
+integration remains prohibited (§22.29, §21.30).
+
+All module-level names except generate_specialist_draft are
+underscore-private (§21.27). Private helper names are implementation-local
+and are NOT external machine contracts.
 """
 
 import json
@@ -29,17 +44,22 @@ from domain.models import (
     ArithmeticStatus,
     DeadlineResult,
     DraftEligibility,
+    DraftFailureCode,
+    DraftGenerationStatus,
     DraftPermission,
+    DraftSection,
     FactExtractionResult,
     NoticeClassification,
     PreflightResult,
     ProceedingType,
     RequirementStatus,
+    SpecialistDraftResult,
     SupportLevel,
     ValidationEngineResult,
     ValidationStatus,
     WorkflowDraftingProfile,
 )
+from modules.llm_client import call_gemini
 from workflows.gst import get_workflow
 from workflows.gst.drafting_profiles import get_drafting_profile
 
@@ -447,4 +467,263 @@ def _build_specialist_prompt(
         return None
     return _assemble_prompt(
         assets[0], assets[1], _serialize_context_json(context)
+    )
+
+
+# --- Phase 2 Step 9.3: generation / parser result-state (§22) -----------------
+
+# §22.24: architecture-owned exact error-message catalog. No alternate
+# wording, no raw exception/provider/parser text.
+_ERROR_VALIDATION_REQUIRED = (
+    "Validation result is required before specialist drafting."
+)
+_ERROR_DRAFT_BLOCKED = (
+    "Specialist drafting is blocked by validation or classification state."
+)
+_ERROR_WORKFLOW_UNAVAILABLE = (
+    "Specialist drafting workflow or prompt assets are unavailable."
+)
+_ERROR_LLM = "Specialist drafting provider call failed."
+_ERROR_MALFORMED = (
+    "Specialist drafting response did not match the required schema."
+)
+
+
+def _copy_result_metadata(
+    validation_result: ValidationEngineResult,
+):
+    """§22.6: fresh Python-owned metadata lists. The contained dataclass
+    objects may be shared; the returned LIST objects never alias the
+    ValidationEngineResult lists. Unresolved = MISSING/UNKNOWN/
+    REQUIRES_VERIFICATION only, in validation-result order (§20.15).
+    """
+    unresolved_requirements = [
+        requirement
+        for requirement in validation_result.requirements
+        if requirement.status in _UNRESOLVED_REQUIREMENT_STATUSES
+    ]
+    return (
+        unresolved_requirements,
+        list(validation_result.evidence_checklist),
+        list(validation_result.review_requirements),
+    )
+
+
+def _specialist_result(
+    validation_result: ValidationEngineResult,
+    status: DraftGenerationStatus,
+    failure_code=None,
+    error_message=None,
+    sections=None,
+) -> SpecialistDraftResult:
+    """§22.4–§22.6, §22.18, §22.20: closed result construction for every
+    validation_result-present path. post_validation is always None in
+    Step 9.3 (§22.23)."""
+    unresolved, evidence, reviews = _copy_result_metadata(validation_result)
+    return SpecialistDraftResult(
+        status=status,
+        draft_eligibility=validation_result.draft_eligibility,
+        sections=[] if sections is None else sections,
+        unresolved_requirements=unresolved,
+        evidence_checklist=evidence,
+        review_requirements=reviews,
+        post_validation=None,
+        failure_code=failure_code,
+        error_message=error_message,
+    )
+
+
+def _parse_strict_sections(
+    response_trimmed: str,
+    profile_sections,
+) -> Optional[List[DraftSection]]:
+    """§22.12–§22.17: strict response parser.
+
+    Parses only response_trimmed via json.loads — no fence stripping, no
+    substring extraction, no repair, no coercion, no retry. Enforces the
+    exact root/section schema, the exact section count, and the exact
+    case-sensitive profile IDs in profile order. Every body_template is
+    stripped once and must be non-empty; internal content is preserved
+    exactly. Returns a fresh List[DraftSection] with rendered_text == ""
+    on complete success, or None on ANY violation (§22.21: no partial
+    success).
+    """
+    try:
+        parsed = json.loads(response_trimmed)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if set(parsed.keys()) != {"sections"}:
+        return None
+    raw_sections = parsed["sections"]
+    if not isinstance(raw_sections, list):
+        return None
+    if len(raw_sections) != len(profile_sections):
+        return None
+    sections = []
+    for index, raw_section in enumerate(raw_sections):
+        if not isinstance(raw_section, dict):
+            return None
+        if set(raw_section.keys()) != {"section_id", "body_template"}:
+            return None
+        returned_id = raw_section["section_id"]
+        body_template = raw_section["body_template"]
+        if not isinstance(returned_id, str) or not isinstance(
+            body_template, str
+        ):
+            return None
+        profile_section = profile_sections[index]
+        if returned_id != profile_section.section_id:
+            return None
+        normalized_body = body_template.strip()
+        if normalized_body == "":
+            return None
+        sections.append(
+            DraftSection(
+                section_id=profile_section.section_id,
+                title=profile_section.title,
+                template_text=normalized_body,
+                rendered_text="",
+            )
+        )
+    return sections
+
+
+def generate_specialist_draft(
+    classification: NoticeClassification,
+    extraction_result: FactExtractionResult,
+    preflight_result: PreflightResult,
+    arithmetic_results: List[ArithmeticResult],
+    validation_result: ValidationEngineResult,
+    deadline_result: Optional[DeadlineResult] = None,
+) -> SpecialistDraftResult:
+    """Public Step-9 API (§20.1, §22.1): exactly one controlled specialist
+    drafting LLM call plus the strict response parser (§22).
+
+    Pre-call failure precedence is deterministic (§22.3):
+    1. validation_result is None → VALIDATION_REQUIRED (§22.2);
+    2. classification/support/eligibility prohibits drafting or any check
+       is FAIL → DRAFT_BLOCKED (§22.4);
+    3. workflow/profile/prompt availability inconsistency →
+       WORKFLOW_UNAVAILABLE (§22.5);
+    4. otherwise call modules.llm_client.call_gemini exactly once (§22.7)
+       and parse the single response strictly (§22.12–§22.17).
+
+    SUCCESS is interim only: post_validation is None and every section
+    has rendered_text == "" (§22.19). No token resolution, no post-draft
+    validation, no app integration. Inputs are never mutated (§22.26).
+    """
+    if validation_result is None:
+        return SpecialistDraftResult(
+            status=DraftGenerationStatus.BLOCKED,
+            draft_eligibility=DraftEligibility.BLOCKED,
+            sections=[],
+            unresolved_requirements=[],
+            evidence_checklist=[],
+            review_requirements=[],
+            post_validation=None,
+            failure_code=DraftFailureCode.VALIDATION_REQUIRED,
+            error_message=_ERROR_VALIDATION_REQUIRED,
+        )
+
+    if (
+        classification.support_level is not SupportLevel.DEEP_WORKFLOW
+        or classification.proceeding_type is ProceedingType.UNKNOWN
+        or validation_result.draft_eligibility
+        not in (DraftEligibility.REVIEW_REQUIRED, DraftEligibility.ALLOWED)
+        or any(
+            item.status is ValidationStatus.FAIL
+            for item in validation_result.checks
+        )
+    ):
+        return _specialist_result(
+            validation_result,
+            DraftGenerationStatus.BLOCKED,
+            DraftFailureCode.DRAFT_BLOCKED,
+            _ERROR_DRAFT_BLOCKED,
+        )
+
+    workflow = get_workflow(classification.proceeding_type)
+    drafting_profile = get_drafting_profile(classification.proceeding_type)
+    if (
+        workflow is None
+        or drafting_profile is None
+        or workflow.proceeding_type is not classification.proceeding_type
+        or drafting_profile.proceeding_type
+        is not classification.proceeding_type
+    ):
+        return _specialist_result(
+            validation_result,
+            DraftGenerationStatus.BLOCKED,
+            DraftFailureCode.WORKFLOW_UNAVAILABLE,
+            _ERROR_WORKFLOW_UNAVAILABLE,
+        )
+
+    prompt = _build_specialist_prompt(
+        classification,
+        extraction_result,
+        preflight_result,
+        arithmetic_results,
+        validation_result,
+        deadline_result,
+    )
+    if prompt is None:
+        return _specialist_result(
+            validation_result,
+            DraftGenerationStatus.BLOCKED,
+            DraftFailureCode.WORKFLOW_UNAVAILABLE,
+            _ERROR_WORKFLOW_UNAVAILABLE,
+        )
+
+    try:
+        response = call_gemini(prompt)
+    except Exception:
+        return _specialist_result(
+            validation_result,
+            DraftGenerationStatus.FAILED,
+            DraftFailureCode.LLM_ERROR,
+            _ERROR_LLM,
+        )
+
+    if not isinstance(response, str):
+        return _specialist_result(
+            validation_result,
+            DraftGenerationStatus.FAILED,
+            DraftFailureCode.LLM_ERROR,
+            _ERROR_LLM,
+        )
+
+    response_trimmed = response.strip()
+    if response_trimmed.startswith("Error:"):
+        return _specialist_result(
+            validation_result,
+            DraftGenerationStatus.FAILED,
+            DraftFailureCode.LLM_ERROR,
+            _ERROR_LLM,
+        )
+
+    if response_trimmed == "":
+        return _specialist_result(
+            validation_result,
+            DraftGenerationStatus.FAILED,
+            DraftFailureCode.MALFORMED_RESPONSE,
+            _ERROR_MALFORMED,
+        )
+
+    sections = _parse_strict_sections(
+        response_trimmed, drafting_profile.sections
+    )
+    if sections is None:
+        return _specialist_result(
+            validation_result,
+            DraftGenerationStatus.FAILED,
+            DraftFailureCode.MALFORMED_RESPONSE,
+            _ERROR_MALFORMED,
+        )
+
+    return _specialist_result(
+        validation_result,
+        DraftGenerationStatus.SUCCESS,
+        sections=sections,
     )

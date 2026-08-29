@@ -1,7 +1,10 @@
 """Unit tests for the Step-9.2 controlled drafting-context builder and
-deterministic prompt assembly (ARCHITECTURE_SPEC_v1_1 §21).
+deterministic prompt assembly, and the Step-9.3 generation/parser state
+machine (ARCHITECTURE_SPEC_v1_1 §21, §22).
 
-Fully offline and deterministic. No LLM calls, no network, no fixtures.
+Fully offline and deterministic. The Step-9.3 LLM boundary is always
+mocked via engine.call_gemini: no live LLM calls, no network, no
+fixtures.
 
 Verifies:
 
@@ -31,6 +34,7 @@ Runnable with Python's standard library unittest only:
 No pytest, no external dependencies.
 """
 
+import copy
 import inspect
 import json
 import pathlib
@@ -54,7 +58,10 @@ from domain.models import (
     DeadlineResult,
     DeadlineStatus,
     DraftEligibility,
+    DraftFailureCode,
+    DraftGenerationStatus,
     DraftPermission,
+    DraftSection,
     EvidenceChecklistItem,
     EvidenceStatus,
     FactExtractionResult,
@@ -72,6 +79,7 @@ from domain.models import (
     RequirementStatus,
     ReviewLevel,
     ReviewRequirement,
+    SpecialistDraftResult,
     SupportLevel,
     ValidationEngineResult,
     ValidationItem,
@@ -80,6 +88,7 @@ from domain.models import (
 from workflows.gst import GST_WORKFLOW_REGISTRY
 from workflows.gst.drafting_profiles import (
     DRAFTING_PROFILE_REGISTRY,
+    WorkflowDraftingProfile,
     get_drafting_profile,
 )
 
@@ -472,42 +481,110 @@ def context_json_from_prompt(prompt):
     return json.loads(json_text)
 
 
+# --- Step-9.3 helpers -----------------------------------------------------------
+
+ITC_SECTION_IDS = ["sec73_itc.s1", "sec73_itc.s2", "sec73_itc.s3"]
+
+DEFAULT_RESPONSE_BODIES = [
+    "Working paper text with token [[FACT:F-001]].",
+    "Reconciliation table with token [[ARITH:1]].",
+    "Reviewable draft with [[DEADLINE]] and [[HEARING]].",
+]
+
+
+def make_response_json(sections=None):
+    """Deterministic schema-valid §20.23 response for the ITC profile."""
+    if sections is None:
+        sections = [
+            {"section_id": sid, "body_template": body}
+            for sid, body in zip(ITC_SECTION_IDS, DEFAULT_RESPONSE_BODIES)
+        ]
+    return json.dumps({"sections": sections})
+
+
+def run_draft(response=None, **overrides):
+    """Call generate_specialist_draft with engine.call_gemini patched to
+    return `response`. Returns (result, mocked_call)."""
+    if response is None:
+        response = make_response_json()
+    defaults = dict(
+        classification=make_classification(),
+        extraction_result=make_extraction(),
+        preflight_result=make_preflight(),
+        arithmetic_results=[],
+        validation_result=make_validation_result(),
+        deadline_result=None,
+    )
+    defaults.update(overrides)
+    with mock.patch.object(
+        engine, "call_gemini", return_value=response
+    ) as mocked:
+        result = engine.generate_specialist_draft(**defaults)
+    return result, mocked
+
+
+def make_rich_validation(
+    draft_eligibility=DraftEligibility.REVIEW_REQUIRED,
+    checks=None,
+):
+    requirements = [
+        make_requirement(
+            requirement_id="req.s", status=RequirementStatus.SATISFIED
+        ),
+        make_requirement(
+            requirement_id="req.m", status=RequirementStatus.MISSING
+        ),
+        make_requirement(
+            requirement_id="req.u", status=RequirementStatus.UNKNOWN
+        ),
+        make_requirement(
+            requirement_id="req.d", status=RequirementStatus.DERIVED
+        ),
+        make_requirement(
+            requirement_id="req.v",
+            status=RequirementStatus.REQUIRES_VERIFICATION,
+        ),
+    ]
+    evidence_checklist = [
+        make_evidence(evidence_id="ev.e1"),
+        make_evidence(evidence_id="ev.e2"),
+    ]
+    review_requirements = [
+        make_review(review_id="rev.r1"),
+        make_review(review_id="rev.r2"),
+    ]
+    return make_validation_result(
+        draft_eligibility=draft_eligibility,
+        checks=checks,
+        requirements=requirements,
+        evidence_checklist=evidence_checklist,
+        review_requirements=review_requirements,
+    )
+
+
+def engine_source():
+    """Raw engine module source text for surface assertions."""
+    return pathlib.Path(engine.__file__).read_text(encoding="utf-8")
+
+
 # --- 1. module surface (items 1–10) -------------------------------------------
 
 
 class ModuleSurfaceTests(unittest.TestCase):
-    """Only private helpers; no LLM/provider/network/engine imports."""
+    """One public callable (generate_specialist_draft); the approved LLM
+    boundary only; no provider SDK/network/engine imports."""
 
     SOURCE = pathlib.Path(engine.__file__).read_text(encoding="utf-8")
 
-    ALLOWED_IMPORT_ROOTS = ("json", "pathlib", "typing", "domain", "workflows")
-    FORBIDDEN_TOKENS = (
-        "llm_client",
-        "gemini",
-        "genai",
-        "google",
-        "requests",
-        "urllib",
-        "socket",
-        "streamlit",
-        "sqlite",
-        "http",
-        "validation_engine",
-        "fact_engine",
-        "preflight_engine",
-        "arithmetic_engine",
-        "deadline_engine",
-        "proceeding_classifier",
-        "taxonomy_registry",
-        "notice_explainer",
-        "app.py",
+    ALLOWED_IMPORT_ROOTS = (
+        "json", "pathlib", "typing", "domain", "modules", "workflows",
     )
 
     def test_module_imports(self):
         self.assertTrue(callable(engine._build_specialist_prompt))
         self.assertTrue(callable(engine._build_controlled_context))
 
-    def test_no_public_callable_exists(self):
+    def test_only_public_callable_is_generate_specialist_draft(self):
         public = [
             name
             for name, obj in vars(engine).items()
@@ -515,17 +592,20 @@ class ModuleSurfaceTests(unittest.TestCase):
             and callable(obj)
             and getattr(obj, "__module__", None) == engine.__name__
         ]
-        self.assertEqual(public, [])
+        self.assertEqual(public, ["generate_specialist_draft"])
 
-    def test_no_generate_specialist_draft_yet(self):
-        self.assertFalse(hasattr(engine, "generate_specialist_draft"))
+    def test_generate_specialist_draft_defined(self):
+        self.assertTrue(callable(engine.generate_specialist_draft))
 
-    def test_only_private_helper_callables(self):
+    def test_all_defs_private_except_public_api(self):
         for line in self.SOURCE.splitlines():
             match = re.match(r"^def (\w+)", line)
             if match:
+                name = match.group(1)
                 self.assertTrue(
-                    match.group(1).startswith("_"), match.group(1)
+                    name.startswith("_")
+                    or name == "generate_specialist_draft",
+                    name,
                 )
 
     def test_only_private_module_assignments(self):
@@ -536,14 +616,15 @@ class ModuleSurfaceTests(unittest.TestCase):
                     match.group(1).startswith("_"), match.group(1)
                 )
 
-    def test_no_llm_client_import(self):
-        self.assertNotIn("llm_client", self.SOURCE)
+    def test_approved_llm_client_boundary(self):
+        self.assertIn(
+            "from modules.llm_client import call_gemini", self.SOURCE
+        )
 
-    def test_no_gemini_or_google(self):
+    def test_no_provider_sdk_tokens(self):
         lowered = self.SOURCE.lower()
-        self.assertNotIn("gemini", lowered)
-        self.assertNotIn("genai", lowered)
-        self.assertNotIn("google", lowered)
+        for token in ("genai", "vertexai", "generativelanguage", "google"):
+            self.assertNotIn(token, lowered, token)
 
     def test_no_network_imports(self):
         lowered = self.SOURCE.lower()
@@ -2388,28 +2469,31 @@ class AssemblyTests(unittest.TestCase):
 class StagingTests(unittest.TestCase):
     SOURCE = pathlib.Path(engine.__file__).read_text(encoding="utf-8")
 
-    def test_no_llm_call(self):
-        self.assertNotIn("call_gemini", self.SOURCE)
+    def test_approved_call_gemini_boundary_only(self):
+        self.assertIn("call_gemini", self.SOURCE)
+        self.assertNotIn("_router", self.SOURCE)
+        self.assertNotIn("ProviderError", self.SOURCE)
+        self.assertNotIn("PoolExhaustedError", self.SOURCE)
 
-    def test_no_llm_response_parser(self):
-        self.assertNotIn("json.loads", self.SOURCE)
+    def test_strict_json_loads_parser_present(self):
+        self.assertIn("json.loads(", self.SOURCE)
+
+    def test_no_alternate_json_loader(self):
+        # "json.load(" must not appear; "json.loads(" is the only loader.
         self.assertNotIn("json.load(", self.SOURCE)
 
-    def test_no_json_loads_of_provider_output(self):
-        self.assertNotIn("json.loads", self.SOURCE)
+    def test_interim_draft_section_creation_present(self):
+        self.assertIn("DraftSection(", self.SOURCE)
 
-    def test_no_draft_section_creation(self):
-        self.assertNotIn("DraftSection", self.SOURCE)
-
-    def test_no_specialist_draft_result_creation(self):
-        self.assertNotIn("SpecialistDraftResult", self.SOURCE)
+    def test_specialist_draft_result_creation_present(self):
+        self.assertIn("SpecialistDraftResult(", self.SOURCE)
 
     def test_no_token_resolver(self):
         for token in ("[[FACT", "[[ARITH", "[[DEADLINE]]", "[[HEARING]]"):
             self.assertNotIn(token, self.SOURCE, token)
 
-    def test_no_rendered_text_production(self):
-        self.assertNotIn("rendered_text", self.SOURCE)
+    def test_only_interim_rendered_text_construction(self):
+        self.assertIn('rendered_text=""', self.SOURCE)
 
     def test_no_draft_post_validation_result_production(self):
         self.assertNotIn("DraftPostValidationResult", self.SOURCE)
@@ -2439,6 +2523,1540 @@ class StagingTests(unittest.TestCase):
             / "notice_prompt.txt"
         )
         self.assertTrue(notice_prompt.exists())
+
+
+# --- 21. Step-9.3 public API (items 1–9) -----------------------------------------
+
+
+class PublicApiTests(unittest.TestCase):
+    def _signature(self):
+        return inspect.signature(engine.generate_specialist_draft)
+
+    def test_signature_exact(self):
+        self.assertEqual(
+            list(self._signature().parameters),
+            [
+                "classification",
+                "extraction_result",
+                "preflight_result",
+                "arithmetic_results",
+                "validation_result",
+                "deadline_result",
+            ],
+        )
+
+    def test_deadline_result_defaults_to_none(self):
+        self.assertIsNone(
+            self._signature().parameters["deadline_result"].default
+        )
+
+    def test_all_other_parameters_required(self):
+        for name, parameter in self._signature().parameters.items():
+            if name != "deadline_result":
+                self.assertIs(
+                    parameter.default, inspect.Parameter.empty, name
+                )
+
+    def test_no_raw_text_parameter(self):
+        self.assertNotIn("raw_text", self._signature().parameters)
+
+    def test_no_workflow_parameter(self):
+        self.assertNotIn("workflow", self._signature().parameters)
+
+    def test_no_prompt_parameter(self):
+        self.assertNotIn("prompt", self._signature().parameters)
+
+    def test_no_current_date_parameter(self):
+        self.assertNotIn("current_date", self._signature().parameters)
+
+    def test_returns_specialist_draft_result(self):
+        result, _ = run_draft()
+        self.assertIsInstance(result, SpecialistDraftResult)
+
+    def test_no_overload_single_definition(self):
+        self.assertEqual(
+            engine_source().count("def generate_specialist_draft"), 1
+        )
+
+
+# --- 22. validation-None defense (items 10–17) ----------------------------------
+
+
+class ValidationNoneTests(unittest.TestCase):
+    VALIDATION_MESSAGE = (
+        "Validation result is required before specialist drafting."
+    )
+
+    def test_none_validation_blocked_status(self):
+        result, _ = run_draft(validation_result=None)
+        self.assertIs(result.status, DraftGenerationStatus.BLOCKED)
+
+    def test_none_validation_eligibility_blocked(self):
+        result, _ = run_draft(validation_result=None)
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+    def test_none_validation_all_lists_empty(self):
+        result, _ = run_draft(validation_result=None)
+        self.assertEqual(result.sections, [])
+        self.assertEqual(result.unresolved_requirements, [])
+        self.assertEqual(result.evidence_checklist, [])
+        self.assertEqual(result.review_requirements, [])
+
+    def test_none_validation_post_validation_none(self):
+        result, _ = run_draft(validation_result=None)
+        self.assertIsNone(result.post_validation)
+
+    def test_none_validation_failure_code(self):
+        result, _ = run_draft(validation_result=None)
+        self.assertIs(
+            result.failure_code, DraftFailureCode.VALIDATION_REQUIRED
+        )
+
+    def test_none_validation_error_message_exact(self):
+        result, _ = run_draft(validation_result=None)
+        self.assertEqual(result.error_message, self.VALIDATION_MESSAGE)
+
+    def test_none_validation_zero_llm_calls(self):
+        result, mocked = run_draft(validation_result=None)
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_none_validation_wins_over_everything_else(self):
+        result, mocked = run_draft(
+            validation_result=None,
+            classification=make_classification(
+                proceeding_type=ProceedingType.UNKNOWN,
+                support_level=SupportLevel.TRIAGE_ONLY,
+            ),
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.VALIDATION_REQUIRED
+        )
+        self.assertEqual(mocked.call_count, 0)
+
+
+# --- 23. pre-call failure precedence (items 18–22) ------------------------------
+
+
+class FailurePrecedenceTests(unittest.TestCase):
+    def test_validation_none_beats_blocked_conditions(self):
+        result, mocked = run_draft(
+            validation_result=None,
+            classification=make_classification(
+                proceeding_type=ProceedingType.UNKNOWN,
+                support_level=SupportLevel.TRIAGE_ONLY,
+            ),
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.VALIDATION_REQUIRED
+        )
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_blocked_beats_missing_workflow(self):
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            with mock.patch.object(
+                engine, "get_drafting_profile", return_value=None
+            ):
+                result, mocked = run_draft(
+                    classification=make_classification(
+                        support_level=SupportLevel.TRIAGE_ONLY
+                    )
+                )
+        self.assertIs(result.failure_code, DraftFailureCode.DRAFT_BLOCKED)
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_blocked_beats_prompt_refusal(self):
+        with mock.patch.object(
+            engine, "_build_specialist_prompt"
+        ) as builder:
+            result, mocked = run_draft(
+                classification=make_classification(
+                    support_level=SupportLevel.TRIAGE_ONLY
+                )
+            )
+        builder.assert_not_called()
+        self.assertIs(result.failure_code, DraftFailureCode.DRAFT_BLOCKED)
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_workflow_unavailable_beats_provider(self):
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            result, mocked = run_draft()
+        self.assertIs(
+            result.failure_code, DraftFailureCode.WORKFLOW_UNAVAILABLE
+        )
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_permitted_inputs_reach_exactly_one_call(self):
+        result, mocked = run_draft()
+        self.assertEqual(mocked.call_count, 1)
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+
+# --- 24. DRAFT_BLOCKED behavior (items 23–31) -----------------------------------
+
+
+class DraftBlockedTests(unittest.TestCase):
+    BLOCKED_MESSAGE = (
+        "Specialist drafting is blocked by validation or "
+        "classification state."
+    )
+
+    def test_triage_only_support_blocked(self):
+        result, mocked = run_draft(
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            )
+        )
+        self.assertIs(result.status, DraftGenerationStatus.BLOCKED)
+        self.assertIs(result.failure_code, DraftFailureCode.DRAFT_BLOCKED)
+        self.assertEqual(result.error_message, self.BLOCKED_MESSAGE)
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_unknown_support_blocked(self):
+        result, _ = run_draft(
+            classification=make_classification(
+                support_level=SupportLevel.UNKNOWN
+            )
+        )
+        self.assertIs(result.failure_code, DraftFailureCode.DRAFT_BLOCKED)
+
+    def test_unknown_proceeding_blocked(self):
+        result, _ = run_draft(
+            classification=make_classification(
+                proceeding_type=ProceedingType.UNKNOWN
+            )
+        )
+        self.assertIs(result.failure_code, DraftFailureCode.DRAFT_BLOCKED)
+
+    def test_blocked_eligibility_blocked(self):
+        result, _ = run_draft(
+            validation_result=make_validation_result(
+                draft_eligibility=DraftEligibility.BLOCKED
+            )
+        )
+        self.assertIs(result.failure_code, DraftFailureCode.DRAFT_BLOCKED)
+
+    def test_fail_check_blocked(self):
+        result, _ = run_draft(
+            validation_result=make_validation_result(
+                checks=[make_item("generic.fail", ValidationStatus.FAIL)]
+            )
+        )
+        self.assertIs(result.failure_code, DraftFailureCode.DRAFT_BLOCKED)
+
+    def test_review_required_no_fail_reaches_call(self):
+        result, mocked = run_draft(
+            validation_result=make_validation_result(
+                draft_eligibility=DraftEligibility.REVIEW_REQUIRED
+            )
+        )
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self.assertEqual(mocked.call_count, 1)
+
+    def test_allowed_eligibility_reaches_call(self):
+        result, _ = run_draft(
+            validation_result=make_validation_result(
+                draft_eligibility=DraftEligibility.ALLOWED
+            )
+        )
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_warning_check_does_not_block(self):
+        result, _ = run_draft(
+            validation_result=make_validation_result(
+                checks=[
+                    make_item("generic.warn", ValidationStatus.WARNING)
+                ]
+            )
+        )
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_blocked_result_carries_validation_metadata(self):
+        validation = make_rich_validation()
+        result, _ = run_draft(
+            validation_result=validation,
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            ),
+        )
+        self.assertIs(
+            result.draft_eligibility, validation.draft_eligibility
+        )
+        self.assertEqual(
+            [r.requirement_id for r in result.unresolved_requirements],
+            ["req.m", "req.u", "req.v"],
+        )
+        self.assertEqual(
+            result.evidence_checklist, validation.evidence_checklist
+        )
+        self.assertEqual(
+            result.review_requirements, validation.review_requirements
+        )
+
+
+# --- 25. WORKFLOW_UNAVAILABLE behavior (items 32–43) ----------------------------
+
+
+class WorkflowUnavailableTests(unittest.TestCase):
+    UNAVAILABLE_MESSAGE = (
+        "Specialist drafting workflow or prompt assets are unavailable."
+    )
+
+    def test_missing_workflow(self):
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            result, mocked = run_draft()
+        self.assertIs(result.status, DraftGenerationStatus.BLOCKED)
+        self.assertIs(
+            result.failure_code, DraftFailureCode.WORKFLOW_UNAVAILABLE
+        )
+        self.assertEqual(result.error_message, self.UNAVAILABLE_MESSAGE)
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_missing_drafting_profile(self):
+        with mock.patch.object(
+            engine, "get_drafting_profile", return_value=None
+        ):
+            result, mocked = run_draft()
+        self.assertIs(
+            result.failure_code, DraftFailureCode.WORKFLOW_UNAVAILABLE
+        )
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_workflow_proceeding_type_mismatch(self):
+        foreign = GST_WORKFLOW_REGISTRY[ProceedingType.GST_SEC74_FRAUD]
+        with mock.patch.object(
+            engine, "get_workflow", return_value=foreign
+        ):
+            result, _ = run_draft()
+        self.assertIs(
+            result.failure_code, DraftFailureCode.WORKFLOW_UNAVAILABLE
+        )
+
+    def test_profile_proceeding_type_mismatch(self):
+        foreign = get_drafting_profile(ProceedingType.GST_SEC73_GENERAL)
+        with mock.patch.object(
+            engine, "get_drafting_profile", return_value=foreign
+        ):
+            result, _ = run_draft()
+        self.assertIs(
+            result.failure_code, DraftFailureCode.WORKFLOW_UNAVAILABLE
+        )
+
+    def test_prompt_builder_refusal_maps_to_workflow_unavailable(self):
+        with mock.patch.object(
+            engine, "_build_specialist_prompt", return_value=None
+        ):
+            result, mocked = run_draft()
+        self.assertIs(
+            result.failure_code, DraftFailureCode.WORKFLOW_UNAVAILABLE
+        )
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_missing_prompt_asset(self):
+        with tempfile.NamedTemporaryFile(
+            "w", encoding="utf-8", delete=False
+        ) as handle:
+            empty_path = handle.name
+        try:
+            with mock.patch.object(
+                engine, "_BASE_PROMPT_PATH", pathlib.Path(empty_path)
+            ):
+                result, mocked = run_draft()
+        finally:
+            pathlib.Path(empty_path).unlink(missing_ok=True)
+        self.assertIs(
+            result.failure_code, DraftFailureCode.WORKFLOW_UNAVAILABLE
+        )
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_unknown_prompt_key(self):
+        real = get_drafting_profile(ProceedingType.GST_SEC73_ITC)
+        unknown_key_profile = WorkflowDraftingProfile(
+            proceeding_type=real.proceeding_type,
+            sections=real.sections,
+            prompt_key="sec999_unknown",
+        )
+        with mock.patch.object(
+            engine,
+            "get_drafting_profile",
+            return_value=unknown_key_profile,
+        ):
+            result, mocked = run_draft()
+        self.assertIs(
+            result.failure_code, DraftFailureCode.WORKFLOW_UNAVAILABLE
+        )
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_workflow_unavailable_message_exact(self):
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            result, _ = run_draft()
+        self.assertEqual(result.error_message, self.UNAVAILABLE_MESSAGE)
+
+    def test_workflow_unavailable_failure_code_exact(self):
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            result, _ = run_draft()
+        self.assertIs(
+            result.failure_code, DraftFailureCode.WORKFLOW_UNAVAILABLE
+        )
+
+    def test_workflow_unavailable_zero_llm_calls(self):
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            _, mocked = run_draft()
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_workflow_unavailable_status_blocked(self):
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            result, _ = run_draft()
+        self.assertIs(result.status, DraftGenerationStatus.BLOCKED)
+
+    def test_workflow_unavailable_metadata_copied(self):
+        validation = make_rich_validation()
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            result, _ = run_draft(validation_result=validation)
+        self.assertIs(
+            result.draft_eligibility, validation.draft_eligibility
+        )
+        self.assertEqual(
+            [r.requirement_id for r in result.unresolved_requirements],
+            ["req.m", "req.u", "req.v"],
+        )
+        self.assertEqual(
+            result.evidence_checklist, validation.evidence_checklist
+        )
+
+
+# --- 26. metadata copying (items 44–58) -----------------------------------------
+
+
+class MetadataCopyTests(unittest.TestCase):
+    UNRESOLVED = (
+        RequirementStatus.MISSING,
+        RequirementStatus.UNKNOWN,
+        RequirementStatus.REQUIRES_VERIFICATION,
+    )
+
+    def _run_rich(self, **overrides):
+        validation = make_rich_validation()
+        result, _ = run_draft(validation_result=validation, **overrides)
+        return validation, result
+
+    def test_success_unresolved_is_exactly_missing_unknown_verify(self):
+        validation, result = self._run_rich()
+        self.assertEqual(
+            [r.requirement_id for r in result.unresolved_requirements],
+            ["req.m", "req.u", "req.v"],
+        )
+        self.assertEqual(
+            result.unresolved_requirements,
+            [
+                r
+                for r in validation.requirements
+                if r.status in self.UNRESOLVED
+            ],
+        )
+
+    def test_success_unresolved_source_order_preserved(self):
+        _, result = self._run_rich()
+        self.assertEqual(
+            [r.requirement_id for r in result.unresolved_requirements],
+            ["req.m", "req.u", "req.v"],
+        )
+
+    def test_success_evidence_copied_equal(self):
+        validation, result = self._run_rich()
+        self.assertEqual(
+            [e.evidence_id for e in result.evidence_checklist],
+            ["ev.e1", "ev.e2"],
+        )
+        self.assertEqual(
+            result.evidence_checklist, validation.evidence_checklist
+        )
+
+    def test_success_reviews_copied_equal(self):
+        validation, result = self._run_rich()
+        self.assertEqual(
+            result.review_requirements, validation.review_requirements
+        )
+
+    def test_success_metadata_lists_are_fresh(self):
+        validation, result = self._run_rich()
+        self.assertIsNot(
+            result.unresolved_requirements, validation.requirements
+        )
+        self.assertIsNot(
+            result.evidence_checklist, validation.evidence_checklist
+        )
+        self.assertIsNot(
+            result.review_requirements, validation.review_requirements
+        )
+
+    def test_success_contained_objects_may_be_shared(self):
+        validation, result = self._run_rich()
+        self.assertIs(
+            result.evidence_checklist[0],
+            validation.evidence_checklist[0],
+        )
+
+    def test_blocked_result_copies_metadata(self):
+        validation, result = self._run_rich(
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            )
+        )
+        self.assertEqual(
+            [r.requirement_id for r in result.unresolved_requirements],
+            ["req.m", "req.u", "req.v"],
+        )
+        self.assertEqual(
+            result.evidence_checklist, validation.evidence_checklist
+        )
+
+    def test_failed_result_copies_metadata(self):
+        validation = make_rich_validation()
+        with mock.patch.object(
+            engine, "call_gemini", side_effect=RuntimeError("boom")
+        ):
+            result = engine.generate_specialist_draft(
+                **make_permitted_inputs(validation_result=validation)
+            )
+        self.assertEqual(
+            [r.requirement_id for r in result.unresolved_requirements],
+            ["req.m", "req.u", "req.v"],
+        )
+        self.assertEqual(
+            result.evidence_checklist, validation.evidence_checklist
+        )
+
+    def test_satisfied_requirement_excluded(self):
+        _, result = self._run_rich()
+        ids = [r.requirement_id for r in result.unresolved_requirements]
+        self.assertNotIn("req.s", ids)
+
+    def test_derived_requirement_excluded(self):
+        _, result = self._run_rich()
+        ids = [r.requirement_id for r in result.unresolved_requirements]
+        self.assertNotIn("req.d", ids)
+
+    def test_unresolved_list_is_not_the_requirements_list(self):
+        validation, result = self._run_rich()
+        self.assertIsNot(
+            result.unresolved_requirements, validation.requirements
+        )
+
+    def test_success_sections_list_is_fresh_between_calls(self):
+        first, _ = run_draft(validation_result=make_rich_validation())
+        second, _ = run_draft(validation_result=make_rich_validation())
+        self.assertIsNot(first.sections, second.sections)
+
+    def test_copied_lists_preserve_validation_order(self):
+        evidence = [
+            make_evidence(evidence_id="ev.z1"),
+            make_evidence(evidence_id="ev.a2"),
+        ]
+        validation = make_validation_result(
+            evidence_checklist=evidence,
+            requirements=[make_requirement(requirement_id="req.z")],
+        )
+        result, _ = run_draft(validation_result=validation)
+        self.assertEqual(
+            [e.evidence_id for e in result.evidence_checklist],
+            ["ev.z1", "ev.a2"],
+        )
+
+    def test_draft_eligibility_copied_from_validation(self):
+        review_validation, review_result = self._run_rich()
+        self.assertIs(
+            review_result.draft_eligibility,
+            review_validation.draft_eligibility,
+        )
+        allowed_validation = make_rich_validation(
+            draft_eligibility=DraftEligibility.ALLOWED
+        )
+        allowed_result, _ = run_draft(
+            validation_result=allowed_validation
+        )
+        self.assertIs(
+            allowed_result.draft_eligibility,
+            allowed_validation.draft_eligibility,
+        )
+
+    def test_validation_none_result_lists_are_literal_empty(self):
+        result, _ = run_draft(validation_result=None)
+        self.assertEqual(result.sections, [])
+        self.assertEqual(result.unresolved_requirements, [])
+        self.assertEqual(result.evidence_checklist, [])
+        self.assertEqual(result.review_requirements, [])
+
+
+# --- 27. exactly-one-call behavior (items 59–64) --------------------------------
+
+
+class OneCallTests(unittest.TestCase):
+    def test_success_path_makes_exactly_one_call(self):
+        result, mocked = run_draft()
+        self.assertEqual(mocked.call_count, 1)
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_call_receives_exact_build_prompt_output(self):
+        inputs = make_permitted_inputs()
+        expected_prompt = engine._build_specialist_prompt(**inputs)
+        with mock.patch.object(
+            engine, "call_gemini", return_value=make_response_json()
+        ) as mocked:
+            engine.generate_specialist_draft(**inputs)
+        self.assertEqual(mocked.call_count, 1)
+        self.assertIsInstance(mocked.call_args.args[0], str)
+        self.assertEqual(mocked.call_args.args[0], expected_prompt)
+
+    def test_call_receives_a_string(self):
+        _, mocked = run_draft()
+        self.assertIsInstance(mocked.call_args.args[0], str)
+
+    def test_no_call_on_draft_blocked(self):
+        _, mocked = run_draft(
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            )
+        )
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_no_call_on_validation_none(self):
+        _, mocked = run_draft(validation_result=None)
+        self.assertEqual(mocked.call_count, 0)
+
+    def test_single_response_parsed_once(self):
+        result, mocked = run_draft()
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(len(result.sections), 3)
+
+
+# --- 28. provider failure handling (items 65–79) --------------------------------
+
+
+class ProviderFailureTests(unittest.TestCase):
+    LLM_MESSAGE = "Specialist drafting provider call failed."
+
+    def _run_exception(self, exception):
+        with mock.patch.object(
+            engine, "call_gemini", side_effect=exception
+        ) as mocked:
+            result = engine.generate_specialist_draft(
+                **make_permitted_inputs()
+            )
+        return result, mocked
+
+    def test_provider_exception_llm_error(self):
+        result, _ = self._run_exception(RuntimeError("boom"))
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+        self.assertIs(result.failure_code, DraftFailureCode.LLM_ERROR)
+        self.assertEqual(result.error_message, self.LLM_MESSAGE)
+
+    def test_provider_exception_no_retry(self):
+        _, mocked = self._run_exception(RuntimeError("boom"))
+        self.assertEqual(mocked.call_count, 1)
+
+    def test_provider_exception_text_not_leaked(self):
+        result, _ = self._run_exception(RuntimeError("boom-secret"))
+        self.assertEqual(result.error_message, self.LLM_MESSAGE)
+        self.assertNotIn("boom-secret", result.error_message)
+
+    def test_provider_exception_metadata_copied(self):
+        validation = make_rich_validation()
+        with mock.patch.object(
+            engine, "call_gemini", side_effect=RuntimeError("boom")
+        ):
+            result = engine.generate_specialist_draft(
+                **make_permitted_inputs(validation_result=validation)
+            )
+        self.assertEqual(
+            result.evidence_checklist, validation.evidence_checklist
+        )
+
+    def test_provider_exception_sections_empty(self):
+        result, _ = self._run_exception(RuntimeError("boom"))
+        self.assertEqual(result.sections, [])
+
+    def test_provider_exception_post_validation_none(self):
+        result, _ = self._run_exception(RuntimeError("boom"))
+        self.assertIsNone(result.post_validation)
+
+    def test_error_prefix_string_llm_error(self):
+        result, _ = run_draft(response="Error: provider exploded")
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+        self.assertIs(result.failure_code, DraftFailureCode.LLM_ERROR)
+        self.assertEqual(result.error_message, self.LLM_MESSAGE)
+
+    def test_error_prefix_after_strip_llm_error(self):
+        result, _ = run_draft(
+            response="  \n Error: provider exploded \n"
+        )
+        self.assertIs(result.failure_code, DraftFailureCode.LLM_ERROR)
+
+    def test_lowercase_error_prefix_not_matched(self):
+        # Case-sensitive: lowercase "error:" is NOT the provider-error
+        # prefix, so the response proceeds to the strict JSON parser.
+        result, _ = run_draft(response="error: provider exploded")
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_non_string_response_llm_error(self):
+        result, _ = run_draft(response={"sections": []})
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+        self.assertIs(result.failure_code, DraftFailureCode.LLM_ERROR)
+        self.assertEqual(result.error_message, self.LLM_MESSAGE)
+
+    def test_non_string_response_never_stringified(self):
+        result, _ = run_draft(response=12345)
+        self.assertEqual(result.error_message, self.LLM_MESSAGE)
+        self.assertNotIn("12345", result.error_message)
+
+    def test_non_string_response_skips_parser(self):
+        with mock.patch("json.loads") as loads:
+            result, _ = run_draft(response={"sections": []})
+        loads.assert_not_called()
+        self.assertIs(result.failure_code, DraftFailureCode.LLM_ERROR)
+
+    def test_int_response_llm_error(self):
+        result, _ = run_draft(response=7)
+        self.assertIs(result.failure_code, DraftFailureCode.LLM_ERROR)
+
+    def test_list_response_llm_error(self):
+        result, _ = run_draft(response=["sections"])
+        self.assertIs(result.failure_code, DraftFailureCode.LLM_ERROR)
+
+    def test_none_response_llm_error(self):
+        with mock.patch.object(
+            engine, "call_gemini", return_value=None
+        ):
+            result = engine.generate_specialist_draft(
+                **make_permitted_inputs()
+            )
+        self.assertIs(result.failure_code, DraftFailureCode.LLM_ERROR)
+
+
+# --- 29. empty / invalid JSON responses (items 80–88) ---------------------------
+
+
+class EmptyInvalidJsonTests(unittest.TestCase):
+    MALFORMED_MESSAGE = (
+        "Specialist drafting response did not match the required schema."
+    )
+
+    def test_whitespace_only_malformed(self):
+        result, _ = run_draft(response="   \n\t  ")
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+        self.assertEqual(result.error_message, self.MALFORMED_MESSAGE)
+
+    def test_empty_string_malformed(self):
+        result, _ = run_draft(response="")
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_whitespace_malformed_sections_empty(self):
+        result, _ = run_draft(response="   ")
+        self.assertEqual(result.sections, [])
+
+    def test_prose_rejected(self):
+        result, _ = run_draft(response="not json at all")
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_markdown_fenced_json_rejected(self):
+        result, _ = run_draft(
+            response="```json\n" + make_response_json() + "\n```"
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_prose_wrapped_json_rejected(self):
+        result, _ = run_draft(
+            response="Here is your draft: " + make_response_json()
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_python_dict_repr_rejected(self):
+        result, _ = run_draft(
+            response="{'sections': [{'section_id': 'x', "
+            "'body_template': 'y'}]}"
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_truncated_json_rejected(self):
+        result, _ = run_draft(response='{"sections": [')
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_malformed_message_exact(self):
+        result, _ = run_draft(response="{bad json")
+        self.assertEqual(result.error_message, self.MALFORMED_MESSAGE)
+
+
+# --- 30. root schema (items 89–95) ----------------------------------------------
+
+
+class RootSchemaTests(unittest.TestCase):
+    def _malformed(self, response):
+        result, _ = run_draft(response=response)
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+        return result
+
+    def test_root_must_be_dict(self):
+        self._malformed('"just a string"')
+
+    def test_root_list_rejected(self):
+        self._malformed("[]")
+
+    def test_root_number_rejected(self):
+        self._malformed("42")
+
+    def test_exactly_one_root_key(self):
+        self._malformed('{"sections": [], "meta": {}}')
+
+    def test_missing_sections_key(self):
+        self._malformed("{}")
+
+    def test_extra_root_key_rejected(self):
+        self._malformed('{"notes": 1, "sections": []}')
+
+    def test_sections_must_be_list(self):
+        self._malformed('{"sections": {}}')
+
+    def test_sections_string_rejected(self):
+        self._malformed('{"sections": "x"}')
+
+
+# --- 31. section schema (items 96–101) ------------------------------------------
+
+
+class SectionSchemaTests(unittest.TestCase):
+    def _section_json(self, section):
+        return make_response_json(
+            sections=[
+                {
+                    "section_id": "sec73_itc.s1",
+                    "body_template": "One.",
+                },
+                {
+                    "section_id": "sec73_itc.s2",
+                    "body_template": "Two.",
+                },
+                section,
+            ]
+        )
+
+    def test_section_must_be_dict(self):
+        result, _ = run_draft(
+            response=self._section_json(["not", "a", "dict"])
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_exactly_two_section_keys(self):
+        result, _ = run_draft(
+            response=self._section_json(
+                {
+                    "section_id": "sec73_itc.s3",
+                    "body_template": "Three.",
+                    "extra": True,
+                }
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_missing_section_id_key(self):
+        result, _ = run_draft(
+            response=self._section_json({"body_template": "Three."})
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_missing_body_template_key(self):
+        result, _ = run_draft(
+            response=self._section_json(
+                {"section_id": "sec73_itc.s3"}
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_non_string_section_id(self):
+        result, _ = run_draft(
+            response=self._section_json(
+                {"section_id": 3, "body_template": "Three."}
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_non_string_body_template(self):
+        result, _ = run_draft(
+            response=self._section_json(
+                {"section_id": "sec73_itc.s3", "body_template": ["text"]}
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+
+# --- 32. section count / ID / order (items 102–109) -----------------------------
+
+
+class CountIdOrderTests(unittest.TestCase):
+    def test_too_few_sections_malformed(self):
+        result, _ = run_draft(
+            response=make_response_json(
+                sections=[
+                    {
+                        "section_id": "sec73_itc.s1",
+                        "body_template": "One.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s2",
+                        "body_template": "Two.",
+                    },
+                ]
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_too_many_sections_malformed(self):
+        sections = [
+            {"section_id": sid, "body_template": "Text."}
+            for sid in ITC_SECTION_IDS
+        ]
+        sections.append(
+            {"section_id": "sec73_itc.s4", "body_template": "Extra."}
+        )
+        result, _ = run_draft(
+            response=make_response_json(sections=sections)
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_wrong_section_id_malformed(self):
+        result, _ = run_draft(
+            response=make_response_json(
+                sections=[
+                    {
+                        "section_id": "sec73_itc.s2",
+                        "body_template": "A.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s1",
+                        "body_template": "B.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s3",
+                        "body_template": "C.",
+                    },
+                ]
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_case_mismatch_malformed(self):
+        result, _ = run_draft(
+            response=make_response_json(
+                sections=[
+                    {
+                        "section_id": "SEC73_ITC.S1",
+                        "body_template": "A.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s2",
+                        "body_template": "B.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s3",
+                        "body_template": "C.",
+                    },
+                ]
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_reordered_sections_rejected(self):
+        result, _ = run_draft(
+            response=make_response_json(
+                sections=[
+                    {
+                        "section_id": "sec73_itc.s2",
+                        "body_template": "B.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s3",
+                        "body_template": "C.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s1",
+                        "body_template": "A.",
+                    },
+                ]
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_duplicate_section_ids_rejected(self):
+        result, _ = run_draft(
+            response=make_response_json(
+                sections=[
+                    {
+                        "section_id": "sec73_itc.s1",
+                        "body_template": "A.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s1",
+                        "body_template": "B.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s3",
+                        "body_template": "C.",
+                    },
+                ]
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_profile_order_success(self):
+        result, _ = run_draft()
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self.assertEqual(
+            [s.section_id for s in result.sections], ITC_SECTION_IDS
+        )
+
+    def test_section_id_comes_from_profile(self):
+        result, _ = run_draft()
+        profile = get_drafting_profile(ProceedingType.GST_SEC73_ITC)
+        self.assertEqual(
+            [s.section_id for s in result.sections],
+            [spec.section_id for spec in profile.sections],
+        )
+
+
+# --- 33. body normalization (items 110–115) -------------------------------------
+
+
+class BodyNormalizationTests(unittest.TestCase):
+    def _bodies(self, bodies):
+        return make_response_json(
+            sections=[
+                {"section_id": sid, "body_template": body}
+                for sid, body in zip(ITC_SECTION_IDS, bodies)
+            ]
+        )
+
+    def test_leading_trailing_whitespace_stripped(self):
+        result, _ = run_draft(
+            response=self._bodies(["  One.  ", "  Two.  ", "  Three.  "])
+        )
+        self.assertEqual(
+            [s.template_text for s in result.sections],
+            ["One.", "Two.", "Three."],
+        )
+
+    def test_internal_whitespace_preserved(self):
+        result, _ = run_draft(
+            response=self._bodies(
+                ["Line  one.", "Line\ttwo.", "Line  three."]
+            )
+        )
+        self.assertEqual(
+            [s.template_text for s in result.sections],
+            ["Line  one.", "Line\ttwo.", "Line  three."],
+        )
+
+    def test_newlines_inside_preserved(self):
+        result, _ = run_draft(
+            response=self._bodies(
+                ["One\nline.", "Two\nlines.", "Three\nlines."]
+            )
+        )
+        self.assertEqual(
+            result.sections[0].template_text, "One\nline."
+        )
+
+    def test_whitespace_only_body_malformed(self):
+        result, _ = run_draft(
+            response=self._bodies(["One.", "   ", "Three."])
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_empty_body_malformed(self):
+        result, _ = run_draft(
+            response=self._bodies(["One.", "", "Three."])
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+
+    def test_strip_applied_once_no_normalization_inside(self):
+        result, _ = run_draft(
+            response=self._bodies(["\t\n One \t\n", "Two.", "Three."])
+        )
+        self.assertEqual(result.sections[0].template_text, "One")
+
+
+# --- 34. parse-success result (items 116–128) -----------------------------------
+
+
+class SuccessResultTests(unittest.TestCase):
+    ITC_TITLES = [
+        "Working paper",
+        "ITC reconciliation table",
+        "Reviewable DRC-06 draft",
+    ]
+
+    def test_success_status(self):
+        result, _ = run_draft()
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_success_failure_code_none(self):
+        result, _ = run_draft()
+        self.assertIsNone(result.failure_code)
+
+    def test_success_error_message_none(self):
+        result, _ = run_draft()
+        self.assertIsNone(result.error_message)
+
+    def test_success_eligibility_review_required_copied(self):
+        result, _ = run_draft(
+            validation_result=make_validation_result(
+                draft_eligibility=DraftEligibility.REVIEW_REQUIRED
+            )
+        )
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_success_eligibility_allowed_copied(self):
+        result, _ = run_draft(
+            validation_result=make_validation_result(
+                draft_eligibility=DraftEligibility.ALLOWED
+            )
+        )
+        self.assertIs(result.draft_eligibility, DraftEligibility.ALLOWED)
+
+    def test_success_section_count_matches_profile(self):
+        result, _ = run_draft()
+        self.assertEqual(len(result.sections), len(ITC_SECTION_IDS))
+
+    def test_success_section_ids_from_profile(self):
+        result, _ = run_draft()
+        self.assertEqual(
+            [s.section_id for s in result.sections], ITC_SECTION_IDS
+        )
+
+    def test_success_titles_from_profile(self):
+        result, _ = run_draft()
+        self.assertEqual(
+            [s.title for s in result.sections], self.ITC_TITLES
+        )
+
+    def test_success_template_text_normalized(self):
+        result, _ = run_draft()
+        self.assertEqual(
+            [s.template_text for s in result.sections],
+            DEFAULT_RESPONSE_BODIES,
+        )
+
+    def test_success_rendered_text_empty(self):
+        result, _ = run_draft()
+        for section in result.sections:
+            self.assertEqual(section.rendered_text, "")
+
+    def test_success_post_validation_none(self):
+        result, _ = run_draft()
+        self.assertIsNone(result.post_validation)
+
+    def test_success_metadata_copied(self):
+        validation = make_rich_validation()
+        result, _ = run_draft(validation_result=validation)
+        self.assertEqual(
+            result.evidence_checklist, validation.evidence_checklist
+        )
+        self.assertEqual(
+            result.review_requirements, validation.review_requirements
+        )
+
+    def test_success_sections_list_is_fresh(self):
+        first, _ = run_draft()
+        second, _ = run_draft()
+        self.assertIsNot(first.sections, second.sections)
+
+    def test_result_has_exactly_nine_fields(self):
+        self.assertEqual(
+            list(SpecialistDraftResult.__dataclass_fields__.keys()),
+            [
+                "status",
+                "draft_eligibility",
+                "sections",
+                "unresolved_requirements",
+                "evidence_checklist",
+                "review_requirements",
+                "post_validation",
+                "failure_code",
+                "error_message",
+            ],
+        )
+
+
+# --- 35. no partial success (items 129–131) -------------------------------------
+
+
+class NoPartialSuccessTests(unittest.TestCase):
+    def _one_bad_section(self, bad_section):
+        return make_response_json(
+            sections=[
+                {
+                    "section_id": "sec73_itc.s1",
+                    "body_template": "One.",
+                },
+                {
+                    "section_id": "sec73_itc.s2",
+                    "body_template": "Two.",
+                },
+                bad_section,
+            ]
+        )
+
+    def test_one_bad_section_fails_whole_result(self):
+        result, _ = run_draft(
+            response=self._one_bad_section(
+                {"section_id": "wrong.id", "body_template": "Three."}
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+
+    def test_one_bad_section_yields_no_sections(self):
+        result, _ = run_draft(
+            response=self._one_bad_section(
+                {"section_id": "wrong.id", "body_template": "Three."}
+            )
+        )
+        self.assertEqual(result.sections, [])
+
+    def test_non_dict_last_section_fails_whole_result(self):
+        result, _ = run_draft(
+            response=self._one_bad_section(["not", "a", "dict"])
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+        self.assertEqual(result.sections, [])
+
+
+# --- 36. Step-9.3 vs Step-9.4 boundary (items 132–140) --------------------------
+
+
+class StepBoundaryTests(unittest.TestCase):
+    def _run_unsafe_bodies(self, bodies):
+        return run_draft(
+            response=make_response_json(
+                sections=[
+                    {"section_id": sid, "body_template": body}
+                    for sid, body in zip(ITC_SECTION_IDS, bodies)
+                ]
+            )
+        )
+
+    def test_unknown_token_still_success(self):
+        result, _ = self._run_unsafe_bodies(
+            ["Has [[BAD:TOKEN]].", "Two.", "Three."]
+        )
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_unresolved_fact_token_still_success(self):
+        result, _ = self._run_unsafe_bodies(
+            ["Refers [[FACT:F-999]].", "Two.", "Three."]
+        )
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_invalid_arithmetic_index_still_success(self):
+        result, _ = self._run_unsafe_bodies(
+            ["Uses [[ARITH:999]].", "Two.", "Three."]
+        )
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_attached_word_still_success(self):
+        result, _ = self._run_unsafe_bodies(
+            ["Please find the annexure attached.", "Two.", "Three."]
+        )
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_urls_and_citations_still_success(self):
+        result, _ = self._run_unsafe_bodies(
+            [
+                "See https://example.com/page and (2025) 1 SCC 100.",
+                "Two.",
+                "Three.",
+            ]
+        )
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_rendered_text_never_populated(self):
+        result, _ = self._run_unsafe_bodies(
+            ["[[BAD:TOKEN]]", "Two.", "Three."]
+        )
+        for section in result.sections:
+            self.assertEqual(section.rendered_text, "")
+
+    def test_post_validation_never_populated(self):
+        result, _ = run_draft()
+        self.assertIsNone(result.post_validation)
+
+    def test_no_draft_post_validation_result_in_engine(self):
+        self.assertNotIn("DraftPostValidationResult", engine_source())
+
+    def test_no_step_9_4_check_ids_in_engine(self):
+        source = engine_source()
+        for token in (
+            "draft.response",
+            "draft.sections",
+            "draft.tokens",
+            "draft.prose",
+        ):
+            self.assertNotIn(token, source, token)
+
+
+# --- 37. status / failure-code consistency (items 141–144) ----------------------
+
+
+class StatusConsistencyTests(unittest.TestCase):
+    def test_success_implies_no_failure_code_or_error(self):
+        result, _ = run_draft()
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self.assertIsNone(result.failure_code)
+        self.assertIsNone(result.error_message)
+
+    def test_blocked_implies_blocked_failure_codes_only(self):
+        blocked_codes = {
+            DraftFailureCode.VALIDATION_REQUIRED,
+            DraftFailureCode.DRAFT_BLOCKED,
+            DraftFailureCode.WORKFLOW_UNAVAILABLE,
+        }
+        scenarios = [
+            run_draft(validation_result=None),
+            run_draft(
+                classification=make_classification(
+                    support_level=SupportLevel.TRIAGE_ONLY
+                )
+            ),
+            run_draft(
+                validation_result=make_validation_result(
+                    checks=[
+                        make_item(
+                            "generic.fail", ValidationStatus.FAIL
+                        )
+                    ]
+                )
+            ),
+        ]
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            scenarios.append(run_draft())
+        for result, _ in scenarios:
+            self.assertIs(result.status, DraftGenerationStatus.BLOCKED)
+            self.assertIn(result.failure_code, blocked_codes)
+
+    def test_failed_implies_failed_failure_codes_only(self):
+        failed_codes = {
+            DraftFailureCode.LLM_ERROR,
+            DraftFailureCode.MALFORMED_RESPONSE,
+        }
+        for response in (
+            "Error: provider exploded",
+            "   ",
+            "{bad json",
+            make_response_json(
+                sections=[
+                    {
+                        "section_id": "sec73_itc.s1",
+                        "body_template": "A.",
+                    },
+                    {
+                        "section_id": "sec73_itc.s2",
+                        "body_template": "B.",
+                    },
+                    {"section_id": "wrong", "body_template": "C."},
+                ]
+            ),
+            {"sections": []},
+        ):
+            result, _ = run_draft(response=response)
+            self.assertIs(result.status, DraftGenerationStatus.FAILED)
+            self.assertIn(result.failure_code, failed_codes)
+
+    def test_post_validation_failed_never_produced(self):
+        self.assertNotIn("POST_VALIDATION_FAILED", engine_source())
+        scenarios = [
+            run_draft(),
+            run_draft(validation_result=None),
+            run_draft(
+                classification=make_classification(
+                    support_level=SupportLevel.TRIAGE_ONLY
+                )
+            ),
+            run_draft(response="Error: boom"),
+            run_draft(response="{bad json"),
+        ]
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            scenarios.append(run_draft())
+        for result, _ in scenarios:
+            self.assertIsNot(
+                result.failure_code,
+                DraftFailureCode.POST_VALIDATION_FAILED,
+            )
+
+
+# --- 38. purity / scope (items 145–160) -----------------------------------------
+
+
+class PurityScopeTests(unittest.TestCase):
+    def test_no_provider_sdk_imports(self):
+        source = engine_source().lower()
+        for token in (
+            "genai",
+            "vertexai",
+            "generativelanguage",
+            "google",
+        ):
+            self.assertNotIn(token, source, token)
+
+    def test_no_network_imports(self):
+        source = engine_source().lower()
+        for token in ("requests", "urllib", "socket", "http"):
+            self.assertNotIn(token, source, token)
+
+    def test_no_app_integration(self):
+        self.assertNotIn("app.py", engine_source())
+
+    def test_no_notice_explainer_integration(self):
+        self.assertNotIn("notice_explainer", engine_source())
+
+    def test_no_notice_prompt_reference(self):
+        self.assertNotIn("notice_prompt", engine_source())
+
+    def test_no_regex_implementation(self):
+        source = engine_source()
+        self.assertNotIn("import re", source)
+        for token in ("re.compile", "re.search", "re.match", "regex"):
+            self.assertNotIn(token, source, token)
+
+    def test_no_leakage_scanners(self):
+        self.assertNotIn("leakage", engine_source().lower())
+
+    def test_all_inputs_never_mutated(self):
+        inputs = {
+            "classification": make_classification(),
+            "extraction_result": make_extraction(
+                facts=[make_fact(fact_id="F-001")]
+            ),
+            "preflight_result": make_preflight(),
+            "arithmetic_results": [
+                make_arithmetic(source_fact_ids=["F-001"])
+            ],
+            "validation_result": make_rich_validation(),
+            "deadline_result": make_deadline(),
+        }
+        snapshots = {
+            key: copy.deepcopy(value) for key, value in inputs.items()
+        }
+        run_draft(**inputs)
+        for key, value in inputs.items():
+            self.assertEqual(value, snapshots[key], key)
+
+    def test_classification_never_mutated(self):
+        classification = make_classification()
+        snapshot = copy.deepcopy(classification)
+        run_draft(classification=classification)
+        self.assertEqual(classification, snapshot)
+
+    def test_extraction_never_mutated(self):
+        extraction = make_extraction(facts=[make_fact(fact_id="F-001")])
+        snapshot = copy.deepcopy(extraction)
+        run_draft(extraction_result=extraction)
+        self.assertEqual(extraction, snapshot)
+
+    def test_preflight_never_mutated(self):
+        preflight = make_preflight()
+        snapshot = copy.deepcopy(preflight)
+        run_draft(preflight_result=preflight)
+        self.assertEqual(preflight, snapshot)
+
+    def test_arithmetic_results_never_mutated(self):
+        arithmetic = [make_arithmetic(source_fact_ids=["F-001"])]
+        snapshot = copy.deepcopy(arithmetic)
+        run_draft(arithmetic_results=arithmetic)
+        self.assertEqual(arithmetic, snapshot)
+
+    def test_validation_result_never_mutated(self):
+        validation = make_rich_validation()
+        snapshot = copy.deepcopy(validation)
+        run_draft(validation_result=validation)
+        self.assertEqual(validation, snapshot)
+
+    def test_deadline_result_never_mutated(self):
+        deadline = make_deadline(notes=("note a", "note b"))
+        snapshot = copy.deepcopy(deadline)
+        run_draft(deadline_result=deadline)
+        self.assertEqual(deadline, snapshot)
+
+    def test_result_lists_never_alias_validation(self):
+        validation = make_rich_validation()
+        result, _ = run_draft(validation_result=validation)
+        self.assertIsNot(
+            result.unresolved_requirements, validation.requirements
+        )
+        self.assertIsNot(
+            result.evidence_checklist, validation.evidence_checklist
+        )
+        self.assertIsNot(
+            result.review_requirements, validation.review_requirements
+        )
+
+    def test_no_step_9_4_symbols_in_engine(self):
+        source = engine_source()
+        for token in (
+            "resolve_token",
+            "token_resolver",
+            "DraftPostValidationResult",
+        ):
+            self.assertNotIn(token, source, token)
 
 
 if __name__ == "__main__":
