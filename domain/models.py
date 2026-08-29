@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 # --- 3.1 Enums ------------------------------------------------------------
@@ -530,3 +530,189 @@ class ArithmeticResult:
     currency: str = "INR"
 
     allowed_in_draft: DraftPermission = DraftPermission.CONDITIONAL
+
+
+# --- Phase 2 Step 8.1 enums (ARCHITECTURE_SPEC_v1_1 §19.9, §19.10, §19.17,
+#     §19.20, §19.22, §19.33) ------------------------------------------------
+
+class RequirementStatus(Enum):
+    """Workflow-requirement resolution state (ARCHITECTURE_SPEC_v1_1 §19.9).
+
+    Exactly the five §19.9 members. No NOT_APPLICABLE in Phase 2.
+    """
+
+    SATISFIED = "satisfied"
+    DERIVED = "derived"
+    REQUIRES_VERIFICATION = "requires_verification"
+    UNKNOWN = "unknown"
+    MISSING = "missing"
+
+
+class RequirementKind(Enum):
+    """Workflow-requirement kind (ARCHITECTURE_SPEC_v1_1 §19.10)."""
+
+    FACT = "fact"
+    DERIVED = "derived"
+
+
+class EvidenceStatus(Enum):
+    """Evidence-checklist item state (ARCHITECTURE_SPEC_v1_1 §19.17).
+
+    The current Step-8 "emit UNKNOWN only" behavior is deliberately NOT
+    encoded here — it belongs to Step 8.4.
+    """
+
+    UNKNOWN = "unknown"
+    PRESENT = "present"
+    MISSING = "missing"
+    REQUIRES_VERIFICATION = "requires_verification"
+
+
+class ReviewLevel(Enum):
+    """Mandatory human review level (ARCHITECTURE_SPEC_v1_1 §19.20)."""
+
+    CA_REVIEW = "ca_review"
+    SENIOR_CA_OR_ADVOCATE = "senior_ca_or_advocate"
+    URGENT_CA_REVIEW = "urgent_ca_review"
+
+
+class DraftEligibility(Enum):
+    """Specialist-drafting gate (ARCHITECTURE_SPEC_v1_1 §19.22).
+
+    A drafting gate only — none of these members means filing approved,
+    legally valid, or CA review unnecessary. Interpretation (aggregation)
+    belongs to later steps.
+    """
+
+    ALLOWED = "allowed"
+    REVIEW_REQUIRED = "review_required"
+    BLOCKED = "blocked"
+
+
+class SpecialRuleHandling(Enum):
+    """How a workflow special rule is handled (ARCHITECTURE_SPEC_v1_1 §19.33).
+
+    A special rule may map to one or more handling types; every
+    safety-critical special rule has at least one mapping.
+    """
+
+    DETERMINISTIC_CHECK = "deterministic_check"
+    REVIEW_GATE = "review_gate"
+    UPSTREAM_INVARIANT = "upstream_invariant"
+    FUTURE_LEGAL_RULE = "future_legal_rule"
+
+
+# --- Phase 2 Step 8.1 dataclasses (ARCHITECTURE_SPEC_v1_1 §19.11, §19.12,
+#     §19.18, §19.21, §19.23, §19.24, §19.34) --------------------------------
+
+@dataclass
+class WorkflowRequirementSpec:
+    """One workflow completeness requirement (ARCHITECTURE_SPEC_v1_1 §19.11).
+
+    A FACT requirement selects facts by `fact_type` and/or `fact_role`; a
+    DERIVED requirement selects arithmetic by `calculation_type`. No
+    claim-text matching. `requirement_text` MUST equal the corresponding
+    workflow `required_facts` string verbatim.
+    """
+
+    requirement_id: str
+    requirement_text: str
+    kind: RequirementKind
+
+    fact_type: Optional[FactType] = None
+    fact_role: Optional[FactRole] = None
+    calculation_type: Optional[ArithmeticCalculationType] = None
+
+    accepted_fact_statuses: Tuple[FactStatus, ...] = (FactStatus.CONFIRMED,)
+    absent_on_success: RequirementStatus = RequirementStatus.MISSING
+
+
+@dataclass
+class RequirementResult:
+    """Result of resolving one requirement (ARCHITECTURE_SPEC_v1_1 §19.12).
+
+    No free-form LLM explanation field.
+    """
+
+    requirement_id: str
+    requirement_text: str
+    status: RequirementStatus
+    related_fact_ids: List[str]
+    calculation_type: Optional[ArithmeticCalculationType] = None
+
+
+@dataclass
+class EvidenceChecklistItem:
+    """One workflow evidence checklist entry (ARCHITECTURE_SPEC_v1_1 §19.18).
+
+    `requirement_text` must equal the workflow `evidence_requirements`
+    string verbatim. During current Phase 2 Step 8: status = UNKNOWN for
+    all.
+    """
+
+    evidence_id: str
+    requirement_text: str
+    status: EvidenceStatus
+
+
+@dataclass
+class ReviewRequirement:
+    """One mandatory human review requirement (ARCHITECTURE_SPEC_v1_1 §19.21).
+
+    No filing decision field.
+    """
+
+    review_id: str
+    level: ReviewLevel
+    reason: str
+    mandatory: bool = True
+
+
+@dataclass
+class ValidationItem:
+    """One deterministic Step-8 validation check (ARCHITECTURE_SPEC_v1_1
+    §19.23).
+
+    Status is ValidationStatus (PASS / WARNING / FAIL) — product/workflow
+    safety state, never a legal conclusion. Messages are deterministic
+    static templates; no LLM text generation.
+    """
+
+    check_id: str
+    status: ValidationStatus
+    message: str
+    related_fact_ids: List[str]
+    related_calculation_types: List[ArithmeticCalculationType]
+
+
+@dataclass
+class ValidationEngineResult:
+    """Aggregated Step-8 validation output (ARCHITECTURE_SPEC_v1_1 §19.24).
+
+    Exactly seven fields. Deliberately NO PotentialDefence and NO
+    legal-validity fields.
+    """
+
+    overall_status: ValidationStatus
+    draft_eligibility: DraftEligibility
+    case_severity: Optional[IssueSeverity]
+
+    checks: List[ValidationItem]
+    requirements: List[RequirementResult]
+    evidence_checklist: List[EvidenceChecklistItem]
+    review_requirements: List[ReviewRequirement]
+
+
+@dataclass
+class WorkflowValidationProfile:
+    """Static per-workflow validation mapping (ARCHITECTURE_SPEC_v1_1 §19.34).
+
+    `special_rule_handling` / `review_rules` indices are zero-based indices
+    into the workflow's exact `special_rules` list. Every special-rule
+    index must be mapped. Pure data contract — no execution logic.
+    """
+
+    proceeding_type: ProceedingType
+    requirement_specs: List[WorkflowRequirementSpec]
+    special_rule_handling: Dict[int, Tuple[SpecialRuleHandling, ...]]
+    review_rules: Dict[int, ReviewLevel]
