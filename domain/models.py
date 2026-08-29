@@ -218,7 +218,51 @@ class FactType(Enum):
     REQUESTED_DOCUMENT = "requested_document"
     REFERENCED_ANNEXURE = "referenced_annexure"
 
+    # §19.1: additive member authorized by Phase 2 Step 8A (Step 6.4).
+    DOCUMENT_DETAIL = "document_detail"
+
     OTHER_NOTICE_FACT = "other_notice_fact"
+
+
+# --- Phase 2 Step 6.4 enum (ARCHITECTURE_SPEC_v1_1 §19.2) -------------------
+
+class FactRole(Enum):
+    """Closed semantic role vocabulary (ARCHITECTURE_SPEC_v1_1 §19.2).
+
+    Exactly 22 members. A role describes the machine-readable semantic use
+    of a fact; it does NOT determine legal liability and it does NOT
+    choose FactStatus (§19.6). Values follow the repo convention:
+    lowercase member names. NONE is the default for facts whose role is
+    not workflow-relevant.
+    """
+
+    NONE = "none"
+
+    GSTR3B_ITC_CLAIMED_AMOUNT = "gstr3b_itc_claimed_amount"
+    GSTR2B_ITC_REFLECTED_AMOUNT = "gstr2b_itc_reflected_amount"
+    INTEREST_PROPOSED_AMOUNT = "interest_proposed_amount"
+
+    GSTR1_LIABILITY_DECLARED_AMOUNT = "gstr1_liability_declared_amount"
+    GSTR3B_LIABILITY_DISCHARGED_AMOUNT = "gstr3b_liability_discharged_amount"
+
+    RCM_CATEGORY_ALLEGED = "rcm_category_alleged"
+    RCM_VALUE_ALLEGED_AMOUNT = "rcm_value_alleged_amount"
+    RCM_TAX_ALLEGED_AMOUNT = "rcm_tax_alleged_amount"
+
+    FRAUD_BASIS_ALLEGED = "fraud_basis_alleged"
+    DEPARTMENT_ALLEGED_AMOUNT = "department_alleged_amount"
+    FRAUD_PENALTY_PROPOSED_ALLEGED_AMOUNT = "fraud_penalty_proposed_alleged_amount"
+    LIMITATION_BASIS = "limitation_basis"
+
+    GOODS_DESCRIPTION = "goods_description"
+    VEHICLE_NUMBER = "vehicle_number"
+    DETENTION_OR_SEIZURE_DATE = "detention_or_seizure_date"
+    SECTION129_NOTICE_OR_SERVICE_DATE = "section129_notice_or_service_date"
+    SEC129_PENALTY_PROPOSED_AMOUNT = "sec129_penalty_proposed_amount"
+    GOODS_VALUE_OR_TAX_PAYABLE = "goods_value_or_tax_payable"
+    OWNER_CAME_FORWARD_STATUS = "owner_came_forward_status"
+    EXPLICIT_PROCEDURAL_DATE = "explicit_procedural_date"
+    ORDER_DATE_OR_ENFORCEMENT_STATUS = "order_date_or_enforcement_status"
 
 
 # --- Phase 2 Step 6.3 enum (ARCHITECTURE_SPEC_v1_1 §18.1) -------------------
@@ -248,9 +292,13 @@ class ExtractedFact:
     source_text: Optional[str] = None  # Exact text from notice
     source_page: Optional[int] = None
     allowed_in_draft: DraftPermission = DraftPermission.CONDITIONAL
-    # §17.2: additive Step 6.1 field, placed last with a default so all
-    # pre-Step-6.1 construction forms remain backward compatible.
+    # §17.2: additive Step 6.1 field, placed after the original six fields
+    # with a default so all pre-Step-6.1 construction forms remain
+    # backward compatible.
     fact_type: FactType = FactType.OTHER_NOTICE_FACT
+    # §19.3: additive Step 6.4 field, placed last with a default so all
+    # prior construction forms remain backward compatible.
+    fact_role: FactRole = FactRole.NONE
 
 
 @dataclass

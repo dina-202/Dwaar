@@ -14,8 +14,10 @@ Verifies the v1.1-approved §18 contracts added in Step 7.1:
     ArithmeticResult-is-NOT-an-ExtractedFact rule and its defaults
     (currency "INR", allowed_in_draft CONDITIONAL);
   - Decimal representation for arithmetic operands/results;
-  - backward compatibility: FactExtractionResult and ExtractedFact keep
-    their previous exact contracts, legacy constructors still work, and
+  - backward compatibility: FactExtractionResult keeps its previous exact
+    contract; ExtractedFact keeps the seven earlier fields in order with
+    fact_role appended last (§19.3), legacy constructors still work (a
+    construction omitting fact_role defaults to FactRole.NONE), and
     domain/models.py remains standard-library-only (now including
     decimal).
 
@@ -50,6 +52,7 @@ from domain.models import (
     ExtractedFact,
     FactExtractionResult,
     FactExtractionStatus,
+    FactRole,
     FactStatus,
     FactType,
     PreflightResult,
@@ -469,7 +472,8 @@ class PurityAndBackwardCompatibilityTests(unittest.TestCase):
         self.assertEqual(result.rejected_item_count, 0)
 
     def test_extracted_fact_contract_unchanged(self):
-        # §17.2: six original fields plus the additive fact_type, in order.
+        # §17.2 + §19.3: six original fields plus the additive fact_type
+        # and fact_role, in order, with fact_role last (§19.3, Step 8A).
         self.assertEqual(
             [f.name for f in fields(ExtractedFact)],
             [
@@ -480,18 +484,23 @@ class PurityAndBackwardCompatibilityTests(unittest.TestCase):
                 "source_page",
                 "allowed_in_draft",
                 "fact_type",
+                "fact_role",
             ],
         )
         fact = ExtractedFact("F-001", "claim", FactStatus.CONFIRMED)
         self.assertIs(fact.fact_type, FactType.OTHER_NOTICE_FACT)
+        self.assertIs(fact.fact_role, FactRole.NONE)
 
     def test_legacy_constructors_still_work(self):
-        # Pre-Step-6.1 positional/keyword forms remain compatible (§17.2).
+        # Pre-Step-6.1 positional/keyword forms remain compatible (§17.2);
+        # constructions that omit fact_role default to FactRole.NONE
+        # (§19.3).
         fact = ExtractedFact("F-003", "GSTIN stated", FactStatus.CONFIRMED)
         self.assertIsNone(fact.source_text)
         self.assertIsNone(fact.source_page)
         self.assertIs(fact.allowed_in_draft, DraftPermission.CONDITIONAL)
         self.assertIs(fact.fact_type, FactType.OTHER_NOTICE_FACT)
+        self.assertIs(fact.fact_role, FactRole.NONE)
 
 
 if __name__ == "__main__":
