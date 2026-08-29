@@ -284,7 +284,7 @@ class FactExtractionResultContractTests(unittest.TestCase):
 class StdlibPurityTests(unittest.TestCase):
     """domain/models.py remains standard-library-only (§17.24, AGENTS.md)."""
 
-    ALLOWED_IMPORT_ROOTS = {"enum", "dataclasses", "typing", "datetime"}
+    ALLOWED_IMPORT_ROOTS = {"enum", "dataclasses", "typing", "datetime", "decimal"}
 
     def test_models_module_imports_only_stdlib(self):
         import domain.models as models_module

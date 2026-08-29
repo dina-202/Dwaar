@@ -10,6 +10,7 @@ Architecture Phase 2 — Step 1 artifact. Pure data contracts only.
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import List, Optional
 
@@ -372,3 +373,112 @@ class FactExtractionResult:
     facts: List[ExtractedFact]
     status: FactExtractionStatus
     rejected_item_count: int = 0
+
+
+# --- Phase 2 Step 7.1 enums (ARCHITECTURE_SPEC_v1_1 §18.9, §18.17) ----------
+
+class DeadlineConflictStatus(Enum):
+    """Comparison between a stated due date and the calculated deadline
+    (ARCHITECTURE_SPEC_v1_1 §18.9).
+
+    Date comparison only — there is deliberately no VALID / INVALID member:
+    this enum never decides legal validity or correctness.
+    """
+
+    MATCH = "match"
+    CONFLICT = "conflict"
+    CANNOT_COMPARE = "cannot_compare"
+
+
+class ArithmeticCalculationType(Enum):
+    """Approved deterministic arithmetic calculations (ARCHITECTURE_SPEC_v1_1
+    §18.17 / §18.23).
+
+    The Phase 2 whitelist is exactly these two reconciliation differences.
+    Statutory penalty, RCM and interest calculations are deliberately
+    absent until a future verified legal-rule subsystem.
+    """
+
+    ITC_DIFFERENCE = "itc_difference"
+    OUTPUT_TAX_DIFFERENCE = "output_tax_difference"
+
+
+# --- Phase 2 Step 7.1 dataclasses (ARCHITECTURE_SPEC_v1_1 §18.13, §18.18–18.21)
+
+@dataclass
+class PreflightResult:
+    """Deterministic preflight output (ARCHITECTURE_SPEC_v1_1 §18.13).
+
+    Exactly twelve fields. Deliberately NO legal-validity fields: this
+    dataclass never contains notice_valid, notice_invalid,
+    jurisdiction_valid or officer_competent.
+    """
+
+    fact_extraction_status: FactExtractionStatus
+
+    communication_identifier_status: CommunicationIdentifierStatus
+    portal_verification_required: bool
+
+    authority_details_status: AuthorityDetailsStatus
+    authority_verification_required: bool
+
+    stated_due_date_fact_ids: List[str]
+    parsed_stated_due_dates: List[date]
+    unparsed_stated_due_date_fact_ids: List[str]
+
+    deadline_conflict_status: DeadlineConflictStatus
+
+    hearing_fact_ids: List[str]
+    requested_document_fact_ids: List[str]
+    referenced_annexure_fact_ids: List[str]
+
+
+@dataclass
+class ArithmeticOperand:
+    """One side of an arithmetic request (ARCHITECTURE_SPEC_v1_1 §18.18).
+
+    `value_text` must be an exact substring of the referenced fact's
+    source_text — the arithmetic layer validates that provenance, it does
+    not guess which token to use. No parsed Decimal, no semantic role, no
+    currency field here.
+    """
+
+    source_fact_id: str
+    value_text: str
+
+
+@dataclass
+class ArithmeticRequest:
+    """Explicit arithmetic request (ARCHITECTURE_SPEC_v1_1 §18.19).
+
+    Operand ordering is authoritative: ITC_DIFFERENCE is GSTR-3B (left) −
+    GSTR-2B (right); OUTPUT_TAX_DIFFERENCE is GSTR-1 (left) − GSTR-3B
+    (right). The engine computes left − right; it never infers roles.
+    """
+
+    calculation_type: ArithmeticCalculationType
+    left_operand: ArithmeticOperand
+    right_operand: ArithmeticOperand
+
+
+@dataclass
+class ArithmeticResult:
+    """Deterministic arithmetic output (ARCHITECTURE_SPEC_v1_1 §18.21).
+
+    Semantically inferred/derived, but NOT an ExtractedFact: no fact_id,
+    no FactStatus, no source_text/source_page. Draft use is CONDITIONAL by
+    default; the later Validation Engine controls its drafting use.
+    """
+
+    calculation_type: ArithmeticCalculationType
+    status: ArithmeticStatus
+
+    source_fact_ids: List[str]
+    operand_values: List[Decimal]
+
+    result: Optional[Decimal]
+    formula: str
+
+    currency: str = "INR"
+
+    allowed_in_draft: DraftPermission = DraftPermission.CONDITIONAL
