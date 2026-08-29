@@ -1,0 +1,31 @@
+Workflow: GST Section 73 general liability proceedings
+(GST_SEC73_GENERAL).
+
+This workflow supports drafting for a general Section 73 demand
+proceeding. Draft the following approved sections only, in this exact
+order:
+
+- sec73_general.s1 — Working paper
+- sec73_general.s2 — Month-wise GSTR-1 versus GSTR-3B reconciliation
+- sec73_general.s3 — Reviewable DRC-06 draft
+
+Guidance for the approved sections:
+
+- Working paper: organizing notes on the month-wise reconciliation
+  material and open items for the CA.
+- Month-wise GSTR-1 versus GSTR-3B reconciliation: the month-wise
+  reconciliation comparison for the CA's review, driven by the supplied
+  arithmetic context.
+- Reviewable DRC-06 draft: a reviewable response outline in DRC-06
+  context that a CA must review before any filing.
+
+Workflow safety rules:
+
+- A liability-difference calculation is deterministic reconciliation
+  output, not final legal liability, not admitted liability and not a
+  statutory penalty.
+- Unresolved liability or evidence matters stay unresolved; do not
+  assert their resolution.
+- Use arithmetic values only through the supplied arithmetic context
+  and its authorized tokens.
+- Use factual notice values only through authorized FACT tokens.

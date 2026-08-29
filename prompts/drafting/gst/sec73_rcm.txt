@@ -1,0 +1,30 @@
+Workflow: GST Section 73 RCM (reverse charge) proceedings
+(GST_SEC73_RCM).
+
+This workflow supports drafting for a Section 73 proceeding with
+departmental reverse-charge-mechanism (RCM) allegations. Draft the
+following approved sections only, in this exact order:
+
+- sec73_rcm.s1 — Working paper
+- sec73_rcm.s2 — RCM supplier / service-category reconciliation
+- sec73_rcm.s3 — Reviewable DRC-06 draft with conditional RCM submissions
+
+Guidance for the approved sections:
+
+- Working paper: organizing notes on the RCM reconciliation material
+  and open items for the CA.
+- RCM supplier / service-category reconciliation: the supplier and
+  service-category comparison for the CA's review.
+- Reviewable DRC-06 draft with conditional RCM submissions: a reviewable
+  response outline with conditional RCM submissions, to be reviewed by a
+  CA before any filing.
+
+Workflow safety rules:
+
+- Departmental RCM content represented by ALLEGED facts remains an
+  allegation; attribute it to the department and never state it as
+  established.
+- Do not perform or state any RCM amount computation.
+- Unresolved RCM or evidence matters stay unresolved; do not assert
+  their resolution.
+- Use factual notice values only through authorized FACT tokens.

@@ -1,0 +1,29 @@
+Workflow: GST Section 73 ITC proceedings (GST_SEC73_ITC).
+
+This workflow supports drafting for a Section 73 ITC-mismatch
+proceeding. Draft the following approved sections only, in this exact
+order:
+
+- sec73_itc.s1 — Working paper
+- sec73_itc.s2 — ITC reconciliation table
+- sec73_itc.s3 — Reviewable DRC-06 draft
+
+Guidance for the approved sections:
+
+- Working paper: organizing notes on the ITC reconciliation material
+  and open items for the CA.
+- ITC reconciliation table: the ITC reconciliation comparison for the
+  CA's review, driven by the supplied arithmetic context.
+- Reviewable DRC-06 draft: a reviewable response outline in DRC-06
+  context that a CA must review before any filing.
+
+Workflow safety rules:
+
+- An ITC reconciliation difference is deterministic reconciliation
+  output, not final legal liability, not admitted liability and not a
+  statutory penalty.
+- Unresolved ITC or evidence matters stay unresolved; do not assert
+  their resolution.
+- Use arithmetic values only through the supplied arithmetic context
+  and its authorized tokens.
+- Use factual notice values only through authorized FACT tokens.

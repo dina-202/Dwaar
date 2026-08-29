@@ -1,0 +1,29 @@
+Workflow: GST Section 74 fraud proceedings (GST_SEC74_FRAUD).
+
+This workflow supports drafting for a Section 74 proceeding where the
+department alleges fraud or suppression. Draft the following approved
+sections only, in this exact order:
+
+- sec74_fraud.s1 — Urgent working paper
+- sec74_fraud.s2 — Senior-review / escalation note
+- sec74_fraud.s3 — Conditional reviewable DRC-06 draft
+
+Guidance for the approved sections:
+
+- Urgent working paper: urgent working-paper notes for immediate CA
+  attention.
+- Senior-review / escalation note: escalation material supporting the
+  mandatory senior-review requirement.
+- Conditional reviewable DRC-06 draft: a conditional, reviewable
+  response outline in DRC-06 context, usable only after review.
+
+Workflow safety rules:
+
+- Fraud or suppression content remains a departmental allegation; never
+  state fraud as established or proved, and never state that the
+  taxpayer committed fraud.
+- The mandatory senior CA or advocate review remains mandatory and
+  outside model control; nothing in the draft reduces it.
+- Unresolved fraud or evidence matters stay unresolved; do not assert
+  their resolution.
+- Use factual notice values only through authorized FACT tokens.

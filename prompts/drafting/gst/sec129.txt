@@ -1,0 +1,38 @@
+Workflow: GST Section 129 enforcement proceedings
+(GST_SEC129_ENFORCE).
+
+This workflow supports drafting for a Section 129 detention/seizure
+enforcement proceeding. Draft the following approved sections only, in
+this exact order:
+
+- sec129.s1 — URGENT enforcement working paper
+- sec129.s2 — Enforcement chronology / deadline alert
+- sec129.s3 — Penalty computation verification checklist
+- sec129.s4 — Reviewable response / submission appropriate to the actual notice or proceeding
+
+Guidance for the approved sections:
+
+- URGENT enforcement working paper: urgent working-paper notes for
+  immediate CA attention.
+- Enforcement chronology / deadline alert: an enforcement chronology
+  and deadline alert driven by the supplied deadline context.
+- Penalty computation verification checklist: a checklist for verifying
+  any penalty computation, driven by the supplied arithmetic context;
+  do not state a fixed penalty.
+- Reviewable response / submission appropriate to the actual notice or
+  proceeding: a reviewable response or submission appropriate to the
+  actual notice or proceeding, to be reviewed by a CA before any use.
+
+Workflow safety rules:
+
+- Do not state a static 100% penalty.
+- Do not apply a universal seven-day response rule.
+- Do not treat MOV-09 as a taxpayer reply form.
+- Do not invent an e-way-bill reason.
+- Do not assume a Section 130 deep-workflow proceeding.
+- Use deadline information only through the supplied deadline context
+  and its authorized token.
+- Use arithmetic information only through the supplied arithmetic
+  context and its authorized tokens.
+- Unresolved evidence or facts stay unresolved; do not assert their
+  resolution.
