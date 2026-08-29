@@ -1,27 +1,38 @@
-"""Generic deterministic Step-8.3 Validation Engine
+"""Generic deterministic Step-8.4 Validation Engine
 (docs/architecture/ARCHITECTURE_SPEC_v1_1 §19, §19.56–§19.117).
 
 Implements the support gate, extraction health, fact safety
 invariants, preflight checks, deadline/hearing checks, arithmetic
 structural/outcome checks, deterministic workflow requirement
-resolution (Step 8.3, §19.88–§19.117), workflow special-rule
-handling, ReviewRequirement generation/dedup, overall status
-aggregation, case severity and DraftEligibility.
+resolution (Step 8.3, §19.88–§19.117), deterministic evidence
+checklist generation (Step 8.4, §19.17–§19.19, §19.43), workflow
+special-rule handling, ReviewRequirement generation/dedup, overall
+status aggregation, case severity and DraftEligibility.
 
 For an eligible, structurally usable DEEP_WORKFLOW/profile,
 `requirements` carries one RequirementResult per profile
-`requirement_specs` entry in exact profile order; for TRIAGE_ONLY /
-UNKNOWN / unusable deep workflows it stays empty (§19.110).
-`evidence_checklist` is ALWAYS empty — Step 8.4 owns evidence
-checklist generation (§19.110, §19.113). The empty list is a staged
-implementation state, never proof of completeness.
+`requirement_specs` entry in exact profile order, and
+`evidence_checklist` carries one EvidenceChecklistItem per workflow
+`evidence_requirements` entry in exact workflow order with stable
+one-based "<prefix>.eN" IDs; for TRIAGE_ONLY / UNKNOWN / unusable deep
+workflows both stay empty (§19.110, §19.111). Extraction SUCCESS is
+not required to render the static workflow checklist. Every current
+Phase-2 evidence item is EvidenceStatus.UNKNOWN (§19.17): Phase 2 has
+no uploaded-document metadata, so PRESENT / MISSING /
+REQUIRES_VERIFICATION are never emitted and requested-document /
+referenced-annexure pass-through indices never change any evidence
+status. Evidence items are their own structured output surface — they
+never become ValidationItems and never enter the §19.25 overall-status
+aggregation; DraftEligibility is the only aggregate that reads them
+(§19.26, §19.43).
 
 Pure deterministic Python (§19.8, §19.115): no LLM calls, no network
-access, no deadline/arithmetic recomputation, no runtime source-file
-reading and no semantic interpretation of workflow strings. Workflow
-and profile lookup are deterministic registry reads driven only by
-`classification.proceeding_type` (§19.7). DERIVED requirements reuse
-the already-emitted Step-8.2 structural arithmetic checks (§19.99).
+access, no deadline/arithmetic recomputation, no document/upload
+matching, no filesystem reading and no semantic interpretation of
+workflow strings. Workflow and profile lookup are deterministic
+registry reads driven only by `classification.proceeding_type`
+(§19.7). DERIVED requirements reuse the already-emitted Step-8.2
+structural arithmetic checks (§19.99).
 
 ValidationStatus semantics (§19.23): FAIL/WARNING/PASS are
 product/workflow safety states, never legal conclusions.
@@ -41,6 +52,8 @@ from domain.models import (
     DeadlineStatus,
     DraftEligibility,
     DraftPermission,
+    EvidenceChecklistItem,
+    EvidenceStatus,
     FactExtractionResult,
     FactExtractionStatus,
     FactRole,
@@ -1306,6 +1319,37 @@ def _resolve_requirement(
     return _resolve_fact_requirement(spec, extraction_result)
 
 
+# --- 7b. Evidence checklist generation (§19.17–§19.19, §19.43) ---------------
+
+def _build_evidence_checklist(
+    workflow: WorkflowDefinition,
+    proceeding_type: ProceedingType,
+) -> List[EvidenceChecklistItem]:
+    """§19.18: one EvidenceChecklistItem per workflow
+    `evidence_requirements` entry, in exact workflow order, with stable
+    one-based "<prefix>.eN" IDs and status UNKNOWN. The workflow string
+    is carried verbatim; IDs are positional only, never derived from
+    text. No upload/document matching, no document inference, no
+    filesystem reading: Phase 2 has no uploaded-document metadata, so
+    only EvidenceStatus.UNKNOWN is emitted (§19.17) and
+    requested-document / referenced-annexure facts never change a
+    status. Fresh objects are built on every call; the workflow list is
+    never mutated."""
+    prefix = _PREFIX_BY_PROCEEDING.get(
+        proceeding_type, proceeding_type.value
+    )
+    return [
+        EvidenceChecklistItem(
+            evidence_id=f"{prefix}.e{position}",
+            requirement_text=requirement_text,
+            status=EvidenceStatus.UNKNOWN,
+        )
+        for position, requirement_text in enumerate(
+            workflow.evidence_requirements, start=1
+        )
+    ]
+
+
 # --- 8–11. Aggregation, severity, eligibility --------------------------------
 
 def _aggregate_status(checks: List[ValidationItem]) -> ValidationStatus:
@@ -1351,13 +1395,16 @@ def _draft_eligibility(
     workflow: Optional[WorkflowDefinition],
     profile: Optional[WorkflowValidationProfile],
     requirements: List[RequirementResult],
+    evidence_checklist: List[EvidenceChecklistItem],
 ) -> DraftEligibility:
-    """§19.75/§19.106: Step-8.2 BLOCKED conditions plus the Step-8.3
-    requirement condition. Any MISSING/UNKNOWN/REQUIRES_VERIFICATION
-    requirement resolves a non-BLOCKED case to at least
-    REVIEW_REQUIRED; warnings and review requirements also resolve to
-    REVIEW_REQUIRED. Nothing else can reach ALLOWED without a fully
-    clean synthetic configuration."""
+    """§19.26/§19.75/§19.106: Step-8.2 BLOCKED conditions plus the
+    Step-8.3 requirement condition and the Step-8.4 evidence condition.
+    BLOCKED remains dominant. A non-BLOCKED case resolves to
+    REVIEW_REQUIRED when any emitted WARNING item, any
+    ReviewRequirement, a PARTIAL extraction, any incomplete requirement
+    or any unresolved evidence item exists. An empty evidence checklist
+    is never by itself proof of completeness. Only a fully clean
+    synthetic configuration can reach ALLOWED."""
     if classification.support_level != SupportLevel.DEEP_WORKFLOW:
         return DraftEligibility.BLOCKED
     if classification.proceeding_type == ProceedingType.UNKNOWN:
@@ -1396,9 +1443,20 @@ def _draft_eligibility(
     ):
         return DraftEligibility.BLOCKED
 
-    # §19.106: incomplete workflow requirements force at least
-    # REVIEW_REQUIRED. SATISFIED/DERIVED never force review by
-    # themselves.
+    # §19.26(1): any emitted WARNING.
+    if any(item.status == ValidationStatus.WARNING for item in checks):
+        return DraftEligibility.REVIEW_REQUIRED
+
+    # §19.26(2): any ReviewRequirement.
+    if reviews:
+        return DraftEligibility.REVIEW_REQUIRED
+
+    # §19.26(3): PARTIAL extraction.
+    if extraction_result.status == FactExtractionStatus.PARTIAL:
+        return DraftEligibility.REVIEW_REQUIRED
+
+    # §19.26(4)/§19.106: incomplete workflow requirements.
+    # SATISFIED/DERIVED never force review by themselves.
     if any(
         requirement.status in (
             RequirementStatus.MISSING,
@@ -1409,10 +1467,19 @@ def _draft_eligibility(
     ):
         return DraftEligibility.REVIEW_REQUIRED
 
-    if any(item.status == ValidationStatus.WARNING for item in checks):
+    # §19.26(5)/§19.43: unresolved evidence items. Every current Phase-2
+    # item is UNKNOWN, so valid deep workflows with evidence
+    # requirements resolve to at least REVIEW_REQUIRED.
+    if any(
+        item.status in (
+            EvidenceStatus.UNKNOWN,
+            EvidenceStatus.MISSING,
+            EvidenceStatus.REQUIRES_VERIFICATION,
+        )
+        for item in evidence_checklist
+    ):
         return DraftEligibility.REVIEW_REQUIRED
-    if reviews:
-        return DraftEligibility.REVIEW_REQUIRED
+
     return DraftEligibility.ALLOWED
 
 
@@ -1425,14 +1492,18 @@ def run_validation(
     arithmetic_results: List[ArithmeticResult],
     deadline_result: Optional[DeadlineResult] = None,
 ) -> ValidationEngineResult:
-    """§19.7/§19.112: generic deterministic Step-8.3 validation.
+    """§19.7/§19.112: generic deterministic Step-8.4 validation.
 
     Facts are accessed only through `extraction_result.facts`; the
     workflow and validation profile are obtained deterministically from
     `classification.proceeding_type`. For an eligible usable deep
     workflow the result carries one RequirementResult per profile
-    `requirement_specs` entry in exact profile order (§19.110);
-    `evidence_checklist` stays `[]` until Step 8.4 (§19.113).
+    `requirement_specs` entry in exact profile order (§19.110) and one
+    EvidenceChecklistItem per workflow `evidence_requirements` entry in
+    exact workflow order (§19.18); both stay empty for TRIAGE_ONLY /
+    UNKNOWN / unusable deep workflows (§19.111). Evidence items are
+    always EvidenceStatus.UNKNOWN in Phase 2 and never become
+    ValidationItems (§19.17, §19.25).
     """
     checks: List[ValidationItem] = []
     reviews: List[ReviewRequirement] = []
@@ -1474,20 +1545,33 @@ def run_validation(
     # 7. Workflow requirement resolution + requirement items (§19.90,
     # §19.111): only when the support gate additionally confirms the
     # requirement profile matches the workflow contract. No fallback.
-    requirements: List[RequirementResult] = []
     requirement_alignment = _find_item(checks, "support.requirement_alignment")
-    if (
+    requirements_gate = (
         workflow_usable
         and classification.proceeding_type != ProceedingType.UNKNOWN
         and requirement_alignment is not None
         and requirement_alignment.status == ValidationStatus.PASS
-    ):
+    )
+    requirements: List[RequirementResult] = []
+    if requirements_gate:
         for spec in profile.requirement_specs:
             requirement, requirement_item = _resolve_requirement(
                 checks, spec, extraction_result, arithmetic_results
             )
             requirements.append(requirement)
             checks.append(requirement_item)
+
+    # 7b. Evidence checklist generation (§19.18, §19.43): the exact same
+    # deep-workflow structural gate as requirement processing (§19.111).
+    # Extraction SUCCESS is not required — the static workflow checklist
+    # is rendered even for FAILED / NO_INPUT extraction while
+    # DraftEligibility stays BLOCKED through the existing extraction
+    # gate.
+    evidence_checklist = (
+        _build_evidence_checklist(workflow, classification.proceeding_type)
+        if requirements_gate
+        else []
+    )
 
     # 8. Workflow special-rule handling (valid deep workflow only),
     # consuming the resolved requirements for the two derived rules.
@@ -1509,10 +1593,11 @@ def run_validation(
             workflow,
             profile,
             requirements,
+            evidence_checklist,
         ),
         case_severity=_case_severity(classification, workflow, deadline_result),
         checks=checks,
         requirements=requirements,
-        evidence_checklist=[],
+        evidence_checklist=evidence_checklist,
         review_requirements=reviews,
     )

@@ -1,13 +1,13 @@
-"""Unit tests for the generic deterministic Step-8.3 Validation Engine
+"""Unit tests for the generic deterministic Step-8.4 Validation Engine
 (ARCHITECTURE_SPEC_v1_1 §19, §19.56–§19.117).
 
 Fully offline and deterministic. No LLM calls, no network, no fixtures.
 
-Verifies the complete staged Step-8.3 contract:
+Verifies the complete Step-8.4 contract:
 
   - public API / pure-Python boundary (no LLM, no network, no engine
-    recomputation, no source-code introspection, evidence_checklist
-    always empty in Step 8.3);
+    recomputation, no source-code introspection, no upload/document
+    matching, no filesystem evidence inference);
   - support gate and deep-workflow structural checks;
   - extraction health;
   - the ten fact safety invariants including the §19.5 FactRole
@@ -20,12 +20,17 @@ Verifies the complete staged Step-8.3 contract:
     DERIVED selectors, statuses, absence-safety, structural-check
     reuse, ambiguity handling, stable machine IDs, and the two
     derived-difference special-rule replacements;
+  - deterministic evidence checklist generation (Step 8.4): one
+    UNKNOWN EvidenceChecklistItem per workflow evidence_requirements
+    entry in exact workflow order with stable one-based "<prefix>.eN"
+    IDs; evidence never becomes a ValidationItem and never enters
+    overall status;
   - workflow special-rule handling (review gates, future legal rules,
     upstream invariants, the two fraud deterministic mirrors and the
     Section-129 deadline-source boundary);
-  - ReviewRequirement dedup, overall status aggregation, interim
-    DraftEligibility including the §19.106 requirement condition, case
-    severity, and input immutability.
+  - ReviewRequirement dedup, overall status aggregation, the final
+    §19.26 DraftEligibility including the requirement and evidence
+    conditions, case severity, and input immutability.
 
 Runnable with Python's standard library unittest only:
     python -m unittest tests/test_validation_engine.py -v
@@ -55,6 +60,8 @@ from domain.models import (
     DeadlineStatus,
     DraftEligibility,
     DraftPermission,
+    EvidenceChecklistItem,
+    EvidenceStatus,
     ExtractedFact,
     FactExtractionResult,
     FactExtractionStatus,
@@ -272,11 +279,15 @@ def make_mock_workflow(
     special_rules=None,
     required_facts=None,
     default_severity=IssueSeverity.MEDIUM,
+    evidence_requirements=None,
 ):
     return WorkflowDefinition(
         proceeding_type=proceeding_type,
         required_facts=[] if required_facts is None else list(required_facts),
-        evidence_requirements=[],
+        evidence_requirements=(
+            [] if evidence_requirements is None
+            else list(evidence_requirements)
+        ),
         issue_types=[],
         default_severity=default_severity,
         output_structure=[],
@@ -440,6 +451,92 @@ def requirement_item_ids(checks):
     ]
 
 
+# --- Step 8.4 evidence-checklist helpers -------------------------------------
+
+EVIDENCE_COUNTS = {
+    ProceedingType.GST_SEC73_ITC: 5,
+    ProceedingType.GST_SEC73_GENERAL: 3,
+    ProceedingType.GST_SEC73_RCM: 4,
+    ProceedingType.GST_SEC74_FRAUD: 5,
+    ProceedingType.GST_SEC129_ENFORCE: 5,
+}
+
+
+def make_evidence_set(
+    evidence_texts,
+    proceeding_type=ProceedingType.GST_SEC73_ITC,
+    specs=None,
+):
+    """A synthetic workflow/profile carrying the given
+    evidence_requirements with no required facts and no special rules,
+    so requirement_alignment and special_rule_coverage pass."""
+    workflow = make_mock_workflow(
+        proceeding_type=proceeding_type,
+        required_facts=[],
+        evidence_requirements=list(evidence_texts),
+    )
+    profile = WorkflowValidationProfile(
+        proceeding_type=proceeding_type,
+        requirement_specs=[] if specs is None else list(specs),
+        special_rule_handling={},
+        review_rules={},
+    )
+    return workflow, profile
+
+
+def run_evidence_custom(
+    evidence_texts,
+    proceeding_type=ProceedingType.GST_SEC73_ITC,
+    specs=None,
+    extraction=None,
+    preflight=None,
+    arithmetic=None,
+    deadline=None,
+):
+    """run_validation over a synthetic workflow whose
+    evidence_requirements are the given texts, with a clean preflight,
+    so evidence-checklist behavior can be observed in isolation."""
+    workflow, profile = make_evidence_set(
+        evidence_texts, proceeding_type, specs
+    )
+    classification = make_classification(proceeding_type=proceeding_type)
+    with mock.patch.object(engine, "get_workflow", return_value=workflow), \
+         mock.patch.object(
+             engine, "get_validation_profile", return_value=profile
+         ):
+        return engine.run_validation(
+            classification,
+            extraction if extraction is not None else make_extraction(),
+            preflight if preflight is not None else make_preflight(
+                portal=False, authority=False
+            ),
+            arithmetic if arithmetic is not None else [],
+            deadline,
+        )
+
+
+def make_preflight_with_indices(
+    requested_document_fact_ids=(),
+    referenced_annexure_fact_ids=(),
+):
+    """A clean preflight whose pass-through document/annexure indices
+    point at the given fact IDs."""
+    return PreflightResult(
+        fact_extraction_status=FactExtractionStatus.SUCCESS,
+        communication_identifier_status=CommunicationIdentifierStatus.RFN_PRESENT,
+        portal_verification_required=False,
+        authority_details_status=AuthorityDetailsStatus.PRESENT,
+        authority_verification_required=False,
+        stated_due_date_fact_ids=[],
+        parsed_stated_due_dates=[],
+        unparsed_stated_due_date_fact_ids=[],
+        deadline_conflict_status=DeadlineConflictStatus.CANNOT_COMPARE,
+        hearing_fact_ids=[],
+        requested_document_fact_ids=list(requested_document_fact_ids),
+        referenced_annexure_fact_ids=list(referenced_annexure_fact_ids),
+    )
+
+
 # --- A. API / purity --------------------------------------------------------
 
 class ApiPurityTests(unittest.TestCase):
@@ -529,9 +626,21 @@ class ApiPurityTests(unittest.TestCase):
         )
         self.assertEqual(triage.requirements, [])
 
-    def test_evidence_checklist_always_empty_in_step_8_3(self):
+    def test_evidence_checklist_populated_for_valid_deep_workflow(self):
+        # Step 8.4 replaces the staged empty checklist: a usable deep
+        # workflow renders one UNKNOWN item per evidence requirement.
         result = run_defaults()
-        self.assertEqual(result.evidence_checklist, [])
+        self.assertEqual(
+            [item.evidence_id for item in result.evidence_checklist],
+            [
+                "sec73_itc.e1", "sec73_itc.e2", "sec73_itc.e3",
+                "sec73_itc.e4", "sec73_itc.e5",
+            ],
+        )
+        self.assertTrue(all(
+            item.status == EvidenceStatus.UNKNOWN
+            for item in result.evidence_checklist
+        ))
 
     def test_deadline_argument_optional_without_fifth_argument(self):
         # §19.7: deadline_result is Optional; four-argument calls succeed.
@@ -2390,13 +2499,16 @@ class DraftEligibilityTests(unittest.TestCase):
             result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
         )
 
-    def test_staged_evidence_does_not_produce_allowed(self):
-        # §19.113: evidence_checklist stays empty in Step 8.3, and the
-        # unresolved Step-8.3 requirements keep the default run out of
-        # ALLOWED.
+    def test_unresolved_evidence_does_not_produce_allowed(self):
+        # §19.26/§19.43: the Step-8.4 UNKNOWN evidence items keep the
+        # default deep run out of ALLOWED.
         result = run_defaults()
         self.assertEqual(len(result.requirements), 5)
-        self.assertEqual(result.evidence_checklist, [])
+        self.assertEqual(len(result.evidence_checklist), 5)
+        self.assertTrue(all(
+            item.status == EvidenceStatus.UNKNOWN
+            for item in result.evidence_checklist
+        ))
         self.assertIsNot(result.draft_eligibility, DraftEligibility.ALLOWED)
 
 
@@ -2536,9 +2648,13 @@ class ImmutabilityStagingTests(unittest.TestCase):
         )
         self.assertEqual(triage.requirements, [])
 
-    def test_evidence_checklist_remains_empty(self):
+    def test_evidence_checklist_populated_for_deep_workflow(self):
         result = run_defaults()
-        self.assertEqual(result.evidence_checklist, [])
+        self.assertEqual(len(result.evidence_checklist), 5)
+        self.assertTrue(all(
+            item.status == EvidenceStatus.UNKNOWN
+            for item in result.evidence_checklist
+        ))
 
     def test_no_integration_import_from_app_or_notice_explainer(self):
         lowered = engine_source_text().lower()
@@ -4174,24 +4290,37 @@ class ProfileWideRequirementTests(unittest.TestCase):
 # --- Step 8.3 Y. Staging and purity ------------------------------------------
 
 class StagingPurityTests(unittest.TestCase):
-    """Step 8.3 keeps evidence staged and the engine pure and immutable."""
+    """Step 8.4 evidence output and the engine purity/immutability contract."""
 
-    def test_evidence_checklist_remains_empty_everywhere(self):
+    def test_evidence_checklist_populated_only_for_usable_deep_workflows(self):
         for proceeding_type in ALL_DEEP_PROCEEDINGS:
             result = run_defaults(
                 classification=make_classification(
                     proceeding_type=proceeding_type
                 )
             )
+            workflow = get_workflow(proceeding_type)
             self.assertEqual(
-                result.evidence_checklist, [], proceeding_type.name
+                len(result.evidence_checklist),
+                len(workflow.evidence_requirements),
+                proceeding_type.name,
             )
+            self.assertTrue(all(
+                item.status == EvidenceStatus.UNKNOWN
+                for item in result.evidence_checklist
+            ))
         triage = run_defaults(
             classification=make_classification(
                 support_level=SupportLevel.TRIAGE_ONLY
             )
         )
         self.assertEqual(triage.evidence_checklist, [])
+        unknown = run_defaults(
+            classification=make_classification(
+                support_level=SupportLevel.UNKNOWN
+            )
+        )
+        self.assertEqual(unknown.evidence_checklist, [])
 
     def test_no_evidence_gap_generation(self):
         self.assertNotIn("EvidenceGap", engine_source_text())
@@ -4278,6 +4407,1124 @@ class StagingPurityTests(unittest.TestCase):
         snapshot = copy.deepcopy(profile.requirement_specs)
         run_defaults()
         self.assertEqual(profile.requirement_specs, snapshot)
+
+
+# --- Step 8.4 A. Evidence generation gate (§19.111) ---------------------------
+
+class EvidenceGateTests(unittest.TestCase):
+    """Evidence checklist generation uses the exact Step-8.3 deep
+    structural gate; extraction failure never hides the static
+    checklist."""
+
+    def _run(self, proceeding_type):
+        return run_defaults(
+            classification=make_classification(
+                proceeding_type=proceeding_type
+            )
+        )
+
+    def test_itc_deep_produces_checklist(self):
+        result = self._run(ProceedingType.GST_SEC73_ITC)
+        self.assertEqual(len(result.evidence_checklist), 5)
+
+    def test_general_deep_produces_checklist(self):
+        result = self._run(ProceedingType.GST_SEC73_GENERAL)
+        self.assertEqual(len(result.evidence_checklist), 3)
+
+    def test_rcm_deep_produces_checklist(self):
+        result = self._run(ProceedingType.GST_SEC73_RCM)
+        self.assertEqual(len(result.evidence_checklist), 4)
+
+    def test_fraud_deep_produces_checklist(self):
+        result = self._run(ProceedingType.GST_SEC74_FRAUD)
+        self.assertEqual(len(result.evidence_checklist), 5)
+
+    def test_sec129_deep_produces_checklist(self):
+        result = self._run(ProceedingType.GST_SEC129_ENFORCE)
+        self.assertEqual(len(result.evidence_checklist), 5)
+
+    def test_triage_produces_empty_checklist(self):
+        result = run_defaults(
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            )
+        )
+        self.assertEqual(result.evidence_checklist, [])
+
+    def test_unknown_support_produces_empty_checklist(self):
+        result = run_defaults(
+            classification=make_classification(
+                support_level=SupportLevel.UNKNOWN
+            )
+        )
+        self.assertEqual(result.evidence_checklist, [])
+
+    def test_unknown_proceeding_produces_empty_checklist(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.UNKNOWN
+            )
+        )
+        self.assertEqual(result.evidence_checklist, [])
+
+    def test_missing_workflow_produces_empty_checklist(self):
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            result = run_defaults()
+        self.assertEqual(result.evidence_checklist, [])
+
+    def test_missing_profile_produces_empty_checklist(self):
+        with mock.patch.object(
+            engine, "get_validation_profile", return_value=None
+        ):
+            result = run_defaults()
+        self.assertEqual(result.evidence_checklist, [])
+
+    def test_workflow_misalignment_produces_empty_checklist(self):
+        wrong = make_mock_workflow(
+            proceeding_type=ProceedingType.GST_SEC73_GENERAL
+        )
+        with mock.patch.object(engine, "get_workflow", return_value=wrong):
+            result = run_defaults()
+        self.assertEqual(result.evidence_checklist, [])
+
+    def test_profile_misalignment_produces_empty_checklist(self):
+        wrong = make_mock_profile(
+            proceeding_type=ProceedingType.GST_SEC73_GENERAL
+        )
+        with mock.patch.object(
+            engine, "get_validation_profile", return_value=wrong
+        ):
+            result = run_defaults()
+        self.assertEqual(result.evidence_checklist, [])
+
+    def test_requirement_alignment_fail_produces_empty_checklist(self):
+        wrong = make_mock_profile(requirement_texts=["Different text."])
+        with mock.patch.object(
+            engine, "get_validation_profile", return_value=wrong
+        ):
+            result = run_defaults()
+        self.assertEqual(result.evidence_checklist, [])
+
+    def test_failed_extraction_still_renders_checklist_but_blocked(self):
+        result = run_defaults(
+            extraction=make_extraction(status=FactExtractionStatus.FAILED)
+        )
+        self.assertEqual(len(result.evidence_checklist), 5)
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+    def test_no_input_extraction_still_renders_checklist_but_blocked(self):
+        result = run_defaults(
+            extraction=make_extraction(status=FactExtractionStatus.NO_INPUT)
+        )
+        self.assertEqual(len(result.evidence_checklist), 5)
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+
+# --- Step 8.4 B. Exact checklist contract (§19.18) ----------------------------
+
+class EvidenceChecklistContractTests(unittest.TestCase):
+    """One UNKNOWN item per workflow evidence_requirements entry, exact
+    workflow order, verbatim text, positional one-based IDs."""
+
+    def _run(self, proceeding_type):
+        return run_defaults(
+            classification=make_classification(
+                proceeding_type=proceeding_type
+            )
+        )
+
+    def test_one_item_per_evidence_requirement(self):
+        for proceeding_type, expected_count in EVIDENCE_COUNTS.items():
+            result = self._run(proceeding_type)
+            workflow = get_workflow(proceeding_type)
+            self.assertEqual(
+                len(result.evidence_checklist),
+                len(workflow.evidence_requirements),
+                proceeding_type.name,
+            )
+            self.assertEqual(
+                len(result.evidence_checklist),
+                expected_count,
+                proceeding_type.name,
+            )
+
+    def test_exact_workflow_order(self):
+        for proceeding_type in EVIDENCE_COUNTS:
+            result = self._run(proceeding_type)
+            workflow = get_workflow(proceeding_type)
+            self.assertEqual(
+                [
+                    item.requirement_text
+                    for item in result.evidence_checklist
+                ],
+                list(workflow.evidence_requirements),
+                proceeding_type.name,
+            )
+
+    def test_requirement_text_is_verbatim_workflow_string(self):
+        for proceeding_type in EVIDENCE_COUNTS:
+            result = self._run(proceeding_type)
+            workflow = get_workflow(proceeding_type)
+            for item, text in zip(
+                result.evidence_checklist, workflow.evidence_requirements
+            ):
+                self.assertIs(item.requirement_text, text)
+                self.assertEqual(item.requirement_text, text)
+
+    def test_status_is_unknown_for_every_item(self):
+        for proceeding_type in EVIDENCE_COUNTS:
+            result = self._run(proceeding_type)
+            self.assertTrue(all(
+                item.status == EvidenceStatus.UNKNOWN
+                for item in result.evidence_checklist
+            ), proceeding_type.name)
+
+    def test_ids_are_one_based_positions(self):
+        for proceeding_type in EVIDENCE_COUNTS:
+            result = self._run(proceeding_type)
+            for position, item in enumerate(
+                result.evidence_checklist, start=1
+            ):
+                self.assertTrue(
+                    item.evidence_id.endswith(f".e{position}"),
+                    item.evidence_id,
+                )
+
+    def test_itc_ids_use_sec73_itc_prefix(self):
+        result = self._run(ProceedingType.GST_SEC73_ITC)
+        self.assertEqual(
+            [item.evidence_id for item in result.evidence_checklist],
+            [
+                "sec73_itc.e1", "sec73_itc.e2", "sec73_itc.e3",
+                "sec73_itc.e4", "sec73_itc.e5",
+            ],
+        )
+
+    def test_general_ids_use_sec73_general_prefix(self):
+        result = self._run(ProceedingType.GST_SEC73_GENERAL)
+        self.assertEqual(
+            [item.evidence_id for item in result.evidence_checklist],
+            ["sec73_general.e1", "sec73_general.e2", "sec73_general.e3"],
+        )
+
+    def test_rcm_ids_use_sec73_rcm_prefix(self):
+        result = self._run(ProceedingType.GST_SEC73_RCM)
+        self.assertEqual(
+            [item.evidence_id for item in result.evidence_checklist],
+            [
+                "sec73_rcm.e1", "sec73_rcm.e2", "sec73_rcm.e3",
+                "sec73_rcm.e4",
+            ],
+        )
+
+    def test_fraud_ids_use_sec74_fraud_prefix(self):
+        result = self._run(ProceedingType.GST_SEC74_FRAUD)
+        self.assertEqual(
+            [item.evidence_id for item in result.evidence_checklist],
+            [
+                "sec74_fraud.e1", "sec74_fraud.e2", "sec74_fraud.e3",
+                "sec74_fraud.e4", "sec74_fraud.e5",
+            ],
+        )
+
+    def test_sec129_ids_use_sec129_prefix(self):
+        result = self._run(ProceedingType.GST_SEC129_ENFORCE)
+        self.assertEqual(
+            [item.evidence_id for item in result.evidence_checklist],
+            [
+                "sec129.e1", "sec129.e2", "sec129.e3", "sec129.e4",
+                "sec129.e5",
+            ],
+        )
+
+    def test_ids_unique_within_workflow(self):
+        for proceeding_type in EVIDENCE_COUNTS:
+            result = self._run(proceeding_type)
+            ids = [item.evidence_id for item in result.evidence_checklist]
+            self.assertEqual(len(ids), len(set(ids)), proceeding_type.name)
+
+    def test_evidence_text_never_appears_in_id(self):
+        for proceeding_type in EVIDENCE_COUNTS:
+            result = self._run(proceeding_type)
+            for item in result.evidence_checklist:
+                self.assertNotIn(item.requirement_text, item.evidence_id)
+
+    def test_repeated_evidence_text_gets_distinct_position_ids(self):
+        result = run_evidence_custom(
+            ["Same document requested", "Same document requested"]
+        )
+        self.assertEqual(
+            [item.evidence_id for item in result.evidence_checklist],
+            ["sec73_itc.e1", "sec73_itc.e2"],
+        )
+        self.assertEqual(
+            result.evidence_checklist[0].requirement_text,
+            result.evidence_checklist[1].requirement_text,
+        )
+
+    def test_every_run_creates_fresh_list_and_items(self):
+        first = run_defaults()
+        second = run_defaults()
+        self.assertIsNot(first.evidence_checklist, second.evidence_checklist)
+        self.assertIsNot(
+            first.evidence_checklist[0], second.evidence_checklist[0]
+        )
+
+    def test_workflow_evidence_list_not_mutated(self):
+        workflow = get_workflow(ProceedingType.GST_SEC73_ITC)
+        snapshot = copy.deepcopy(workflow.evidence_requirements)
+        run_defaults()
+        self.assertEqual(workflow.evidence_requirements, snapshot)
+
+
+# --- Step 8.4 C. UNKNOWN-only Phase-2 semantics (§19.17, §19.43) -------------
+
+class EvidenceUnknownOnlyTests(unittest.TestCase):
+    """Only EvidenceStatus.UNKNOWN is emitted; notice contents and
+    preflight pass-through indices never change an evidence status."""
+
+    def _deep_statuses(self, **kwargs):
+        return [
+            item.status for item in run_defaults(**kwargs).evidence_checklist
+        ]
+
+    def test_no_present_emitted(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            self.assertTrue(all(
+                item.status != EvidenceStatus.PRESENT
+                for item in result.evidence_checklist
+            ), proceeding_type.name)
+
+    def test_no_missing_emitted(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            self.assertTrue(all(
+                item.status != EvidenceStatus.MISSING
+                for item in result.evidence_checklist
+            ), proceeding_type.name)
+
+    def test_no_requires_verification_emitted(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            self.assertTrue(all(
+                item.status != EvidenceStatus.REQUIRES_VERIFICATION
+                for item in result.evidence_checklist
+            ), proceeding_type.name)
+
+    def test_requested_document_indices_do_not_produce_present(self):
+        statuses = self._deep_statuses(
+            preflight=make_preflight_with_indices(
+                requested_document_fact_ids=["F-DOC"]
+            )
+        )
+        self.assertEqual(statuses, [EvidenceStatus.UNKNOWN] * 5)
+
+    def test_referenced_annexure_indices_do_not_produce_present(self):
+        statuses = self._deep_statuses(
+            preflight=make_preflight_with_indices(
+                referenced_annexure_fact_ids=["F-ANN"]
+            )
+        )
+        self.assertEqual(statuses, [EvidenceStatus.UNKNOWN] * 5)
+
+    def test_requested_document_facts_do_not_produce_present(self):
+        fact = make_fact(
+            "F-DOC", "Invoice", FactStatus.CONFIRMED, "s",
+            DraftPermission.YES, FactType.DOCUMENT_DETAIL,
+            FactRole.GOODS_DESCRIPTION,
+        )
+        result = run_defaults(
+            extraction=make_extraction(facts=[fact]),
+            preflight=make_preflight_with_indices(
+                requested_document_fact_ids=["F-DOC"]
+            ),
+        )
+        self.assertTrue(all(
+            item.status == EvidenceStatus.UNKNOWN
+            for item in result.evidence_checklist
+        ))
+
+    def test_referenced_annexure_facts_do_not_produce_present(self):
+        fact = make_fact(
+            "F-ANN", "Annexure", FactStatus.CONFIRMED, "s",
+            DraftPermission.YES, FactType.DOCUMENT_DETAIL,
+            FactRole.GOODS_DESCRIPTION,
+        )
+        result = run_defaults(
+            extraction=make_extraction(facts=[fact]),
+            preflight=make_preflight_with_indices(
+                referenced_annexure_fact_ids=["F-ANN"]
+            ),
+        )
+        self.assertTrue(all(
+            item.status == EvidenceStatus.UNKNOWN
+            for item in result.evidence_checklist
+        ))
+
+    def test_absence_of_requested_document_facts_not_missing(self):
+        statuses = self._deep_statuses(
+            preflight=make_preflight_with_indices()
+        )
+        self.assertEqual(statuses, [EvidenceStatus.UNKNOWN] * 5)
+
+    def test_absence_of_annexure_facts_not_missing(self):
+        statuses = self._deep_statuses(
+            preflight=make_preflight_with_indices()
+        )
+        self.assertEqual(statuses, [EvidenceStatus.UNKNOWN] * 5)
+
+    def test_source_text_matching_evidence_wording_not_present(self):
+        fact = make_fact(
+            "F-001",
+            "GSTR-2B for all months in the relevant period",
+            FactStatus.REQUIRES_VERIFICATION,
+            "GSTR-2B for all months in the relevant period",
+            DraftPermission.NO,
+            FactType.OTHER_NOTICE_FACT,
+            FactRole.NONE,
+        )
+        result = run_defaults(extraction=make_extraction(facts=[fact]))
+        self.assertTrue(all(
+            item.status == EvidenceStatus.UNKNOWN
+            for item in result.evidence_checklist
+        ))
+
+    def test_fact_role_does_not_determine_evidence_status(self):
+        facts = itc_operand_facts() + [
+            make_fact(
+                "F-001", "Interest", FactStatus.CONFIRMED, "i",
+                DraftPermission.YES, FactType.STATED_AMOUNT,
+                FactRole.INTEREST_PROPOSED_AMOUNT,
+            ),
+            make_fact(
+                "F-002", "Period", FactStatus.CONFIRMED, "p",
+                DraftPermission.YES, FactType.TAX_PERIOD, FactRole.NONE,
+            ),
+        ]
+        result = run_defaults(extraction=make_extraction(facts=facts))
+        self.assertTrue(all(
+            item.status == EvidenceStatus.UNKNOWN
+            for item in result.evidence_checklist
+        ))
+
+
+# --- Step 8.4 D. No EvidenceGap / upload matching ----------------------------
+
+class EvidenceNoGapTests(unittest.TestCase):
+    """EvidenceChecklistItem is the only evidence output surface; the
+    engine performs no upload/document inference of any kind."""
+
+    def test_no_evidence_gap_objects(self):
+        self.assertNotIn("EvidenceGap", engine_source_text())
+
+    def test_no_potential_defence_objects(self):
+        self.assertNotIn("PotentialDefence", engine_source_text())
+
+    def test_no_evidence_validation_items(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            evidence_checks = [
+                item for item in result.checks
+                if item.check_id.startswith("evidence.")
+            ]
+            self.assertEqual(
+                evidence_checks, [], proceeding_type.name
+            )
+
+    def test_no_upload_matching(self):
+        lowered = engine_source_text().lower()
+        for token in ("upload_dir", "document_path", "mime", "attachment"):
+            self.assertNotIn(token, lowered, token)
+
+    def test_no_filename_matching(self):
+        self.assertNotIn("filename", engine_source_text().lower())
+
+    def test_no_fuzzy_or_semantic_matching(self):
+        lowered = engine_source_text().lower()
+        self.assertNotIn("fuzzy", lowered)
+        self.assertNotIn("difflib", lowered)
+        self.assertNotIn("sequencematcher", lowered)
+
+    def test_no_filesystem_scan(self):
+        lowered = engine_source_text().lower()
+        self.assertNotIn("pathlib", lowered)
+        self.assertNotIn("os.walk", lowered)
+        self.assertNotIn("glob", lowered)
+
+    def test_no_ocr_or_pdf_imports(self):
+        lowered = engine_source_text().lower()
+        for token in ("ocr", "pypdf", "fitz"):
+            self.assertNotIn(token, lowered, token)
+
+    def test_no_network_or_llm(self):
+        lowered = engine_source_text().lower()
+        for token in (
+            "llm_client", "gemini", "genai", "google", "requests",
+            "urllib", "socket", "http",
+        ):
+            self.assertNotIn(token, lowered, token)
+
+
+# --- Step 8.4 E. Evidence-driven DraftEligibility (§19.26, §19.43) -----------
+
+class EvidenceEligibilityTests(unittest.TestCase):
+    """BLOCKED stays dominant; UNKNOWN evidence resolves a non-blocked
+    case to REVIEW_REQUIRED; ALLOWED stays reachable synthetically."""
+
+    def test_evidence_unknown_forces_review_required(self):
+        result = run_evidence_custom(["Invoice copy"])
+        self.assertTrue(result.evidence_checklist)
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_evidence_unknown_does_not_block(self):
+        result = run_evidence_custom(["Invoice copy"])
+        self.assertIsNot(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+    def test_support_gate_block_stays_blocked(self):
+        result = run_defaults(
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            )
+        )
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+    def test_failed_extraction_stays_blocked(self):
+        result = run_defaults(
+            extraction=make_extraction(status=FactExtractionStatus.FAILED)
+        )
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+    def test_no_input_stays_blocked(self):
+        result = run_defaults(
+            extraction=make_extraction(status=FactExtractionStatus.NO_INPUT)
+        )
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+    def test_fact_invariant_fail_stays_blocked(self):
+        offender = make_fact(
+            "F-001", "3B ITC", FactStatus.CONFIRMED, "s",
+            DraftPermission.NO, FactType.STATED_AMOUNT,
+            FactRole.GSTR3B_ITC_CLAIMED_AMOUNT,
+        )
+        result = run_defaults(extraction=make_extraction(facts=[offender]))
+        self.assertEqual(len(result.evidence_checklist), 5)
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+    def test_structural_arithmetic_fail_stays_blocked(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["B", "A"])],
+        )
+        self.assertEqual(len(result.evidence_checklist), 5)
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+    def test_unresolved_requirement_forces_review_required(self):
+        result = run_custom([make_spec()])
+        requirement = get_requirement(result, "mock.r0")
+        self.assertIs(requirement.status, RequirementStatus.MISSING)
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_review_requirement_forces_review_required(self):
+        workflow = make_mock_workflow(
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            required_facts=[],
+            special_rules=["Mandatory CA review applies."],
+        )
+        profile = WorkflowValidationProfile(
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            requirement_specs=[],
+            special_rule_handling={
+                0: (SpecialRuleHandling.REVIEW_GATE,),
+            },
+            review_rules={0: ReviewLevel.CA_REVIEW},
+        )
+        with mock.patch.object(engine, "get_workflow", return_value=workflow), \
+             mock.patch.object(
+                 engine, "get_validation_profile", return_value=profile
+             ):
+            result = engine.run_validation(
+                make_classification(),
+                make_extraction(),
+                make_preflight(portal=False, authority=False),
+                [],
+            )
+        self.assertTrue(result.review_requirements)
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_warning_item_forces_review_required(self):
+        result = run_evidence_custom([], preflight=make_preflight())
+        self.assertFalse(result.review_requirements)
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_satisfied_requirements_do_not_independently_force_review(self):
+        fact = make_fact(
+            "F-001", "Date", FactStatus.CONFIRMED, "s",
+            DraftPermission.YES, FactType.NOTICE_DATE, FactRole.NONE,
+        )
+        result = run_custom(
+            [make_spec()], extraction=make_extraction(facts=[fact])
+        )
+        self.assertIs(
+            get_requirement(result, "mock.r0").status,
+            RequirementStatus.SATISFIED,
+        )
+        self.assertIs(result.draft_eligibility, DraftEligibility.ALLOWED)
+
+    def test_derived_requirements_do_not_independently_force_review(self):
+        spec = make_spec(
+            requirement_id="mock.d1",
+            requirement_text="Derived value",
+            kind=RequirementKind.DERIVED,
+            calculation_type=ArithmeticCalculationType.ITC_DIFFERENCE,
+        )
+        result = run_custom(
+            [spec],
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["A", "B"])],
+        )
+        self.assertIs(
+            get_requirement(result, "mock.d1").status,
+            RequirementStatus.DERIVED,
+        )
+        self.assertIs(result.draft_eligibility, DraftEligibility.ALLOWED)
+
+    def test_empty_evidence_list_alone_is_not_completeness(self):
+        # §19.26: [] never proves completeness — other conditions still
+        # resolve REVIEW_REQUIRED.
+        result = run_evidence_custom(
+            [], extraction=make_extraction(status=FactExtractionStatus.PARTIAL)
+        )
+        self.assertEqual(result.evidence_checklist, [])
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_synthetic_clean_configuration_reaches_allowed(self):
+        result = run_evidence_custom([])
+        self.assertEqual(result.evidence_checklist, [])
+        self.assertIs(result.overall_status, ValidationStatus.PASS)
+        self.assertIs(result.draft_eligibility, DraftEligibility.ALLOWED)
+
+    def test_real_deep_workflows_normally_review_required(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            self.assertTrue(result.evidence_checklist)
+            self.assertIs(
+                result.draft_eligibility,
+                DraftEligibility.REVIEW_REQUIRED,
+                proceeding_type.name,
+            )
+
+    def test_evidence_state_does_not_alter_case_severity(self):
+        with_evidence = run_defaults()
+        self.assertIs(with_evidence.case_severity, IssueSeverity.MEDIUM)
+        sec129 = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        self.assertIs(sec129.case_severity, IssueSeverity.HIGH)
+        synthetic = run_evidence_custom(["Invoice copy"])
+        self.assertIs(synthetic.case_severity, IssueSeverity.MEDIUM)
+
+
+# --- Step 8.4 F. Overall-status separation (§19.25) --------------------------
+
+class EvidenceOverallStatusTests(unittest.TestCase):
+    """Evidence never becomes a ValidationItem and never enters overall
+    status; FAIL > WARNING > PASS dominance is unchanged."""
+
+    def test_evidence_unknown_creates_no_validation_item(self):
+        result = run_evidence_custom(["Invoice copy"])
+        self.assertTrue(result.evidence_checklist)
+        self.assertFalse(any(
+            item.check_id.startswith("evidence.")
+            for item in result.checks
+        ))
+
+    def test_evidence_unknown_not_aggregated_into_overall_status(self):
+        result = run_evidence_custom(["Invoice copy"])
+        self.assertIs(result.overall_status, ValidationStatus.PASS)
+
+    def test_pass_overall_with_review_required_from_evidence_alone(self):
+        result = run_evidence_custom(["Invoice copy"])
+        self.assertIs(result.overall_status, ValidationStatus.PASS)
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_fail_dominance_unchanged(self):
+        offender = make_fact(
+            "F-001", "3B ITC", FactStatus.CONFIRMED, "s",
+            DraftPermission.NO, FactType.STATED_AMOUNT,
+            FactRole.GSTR3B_ITC_CLAIMED_AMOUNT,
+        )
+        result = run_defaults(extraction=make_extraction(facts=[offender]))
+        self.assertIs(result.overall_status, ValidationStatus.FAIL)
+
+    def test_warning_dominance_unchanged(self):
+        result = run_evidence_custom([], preflight=make_preflight())
+        self.assertIs(result.overall_status, ValidationStatus.WARNING)
+
+
+# --- Step 8.4 G. Step-8.3 requirement regression -----------------------------
+
+class Step84RequirementRegressionTests(unittest.TestCase):
+    """Step 8.4 changes nothing about Step-8.3 requirement resolution."""
+
+    def _run(self, proceeding_type):
+        return run_defaults(
+            classification=make_classification(
+                proceeding_type=proceeding_type
+            )
+        )
+
+    def test_requirements_still_populated(self):
+        result = self._run(ProceedingType.GST_SEC73_ITC)
+        self.assertEqual(len(result.requirements), 5)
+
+    def test_itc_requirement_count_unchanged(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC73_ITC).requirements), 5
+        )
+
+    def test_general_requirement_count_unchanged(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC73_GENERAL).requirements), 5
+        )
+
+    def test_rcm_requirement_count_unchanged(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC73_RCM).requirements), 5
+        )
+
+    def test_fraud_requirement_count_unchanged(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC74_FRAUD).requirements), 5
+        )
+
+    def test_sec129_requirement_count_unchanged(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC129_ENFORCE).requirements), 9
+        )
+
+    def test_all_29_requirement_ids_unchanged(self):
+        for proceeding_type in DEEP_PROFILE_COUNTS:
+            profile = get_validation_profile(proceeding_type)
+            result = self._run(proceeding_type)
+            self.assertEqual(
+                requirement_item_ids(result.checks),
+                [
+                    f"requirement.{spec.requirement_id}"
+                    for spec in profile.requirement_specs
+                ],
+                proceeding_type.name,
+            )
+
+    def test_non_success_absence_safety_unchanged(self):
+        result = run_defaults(
+            extraction=make_extraction(status=FactExtractionStatus.PARTIAL)
+        )
+        requirement = get_requirement(result, "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertIsNot(requirement.status, RequirementStatus.MISSING)
+
+    def test_mismatch_still_may_resolve_derived(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    status=ArithmeticStatus.MISMATCH,
+                    source_fact_ids=["A", "B"],
+                    result=Decimal("5"),
+                )
+            ],
+        )
+        self.assertIs(
+            get_requirement(result, "sec73_itc.r3").status,
+            RequirementStatus.DERIVED,
+        )
+
+    def test_multiple_matches_still_unknown(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(source_fact_ids=["A", "B"]),
+                make_arithmetic(source_fact_ids=["A", "B"]),
+            ],
+        )
+        self.assertIs(
+            get_requirement(result, "sec73_itc.r3").status,
+            RequirementStatus.UNKNOWN,
+        )
+
+    def test_itc_deterministic_rule_unchanged(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["A", "B"])],
+        )
+        item = get_item(result.checks, ITC_RULE_ID)
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Deterministic ITC-difference workflow requirement is derived from approved arithmetic output.",
+        )
+
+    def test_general_deterministic_rule_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_GENERAL
+            ),
+            extraction=make_extraction(facts=output_tax_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    calculation_type=ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE,
+                    source_fact_ids=["A", "B"],
+                )
+            ],
+        )
+        item = get_item(result.checks, GENERAL_RULE_ID)
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Deterministic output-tax-difference workflow requirement is derived from approved arithmetic output.",
+        )
+
+    def test_temporary_step_8_2_message_absent(self):
+        self.assertNotIn("deferred until Step 8.3", engine_source_text())
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            result = self._run(proceeding_type)
+            for item in result.checks:
+                self.assertNotIn(
+                    "deferred until Step 8.3", item.message, item.check_id
+                )
+
+
+# --- Step 8.4 H. Special-rule / review regression ----------------------------
+
+class Step84SpecialRuleReviewRegressionTests(unittest.TestCase):
+    """Only evidence changed in Step 8.4; special rules and reviews keep
+    their Step-8.2/8.3 semantics."""
+
+    def test_fraud_rule_0_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC74_FRAUD
+            ),
+            extraction=make_extraction(facts=fraud_clean_facts()),
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec74_fraud.special_rule.0.deterministic_check",
+        )
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Fraud/suppression allegations remain departmental allegations.",
+        )
+
+    def test_fraud_rule_2_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC74_FRAUD
+            ),
+            extraction=make_extraction(facts=fraud_clean_facts()),
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec74_fraud.special_rule.2.deterministic_check",
+        )
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Fraud-workflow fact provenance is present.",
+        )
+
+    def test_sec129_rule_6_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec129.special_rule.6.deterministic_check",
+        )
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Section-129 deadline handling uses only supplied preflight/deadline results; validation adds no statutory deadline calculation.",
+        )
+
+    def test_future_legal_rule_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_RCM
+            )
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec73_rcm.special_rule.1.future_legal_rule",
+        )
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "This workflow rule requires future verified legal-rule support and CA review.",
+        )
+
+    def test_upstream_invariant_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec129.special_rule.2.upstream_invariant",
+        )
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "This safety boundary is enforced by an authoritative upstream component and is not re-run by validation.",
+        )
+
+    def test_review_gate_ids_unchanged(self):
+        itc = run_defaults()
+        for index in (0, 2, 3):
+            self.assertIn(
+                f"workflow.sec73_itc.special_rule.{index}.review_gate",
+                check_ids(itc.checks),
+            )
+        rcm = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_RCM
+            )
+        )
+        self.assertIn(
+            "workflow.sec73_rcm.special_rule.1.review_gate",
+            check_ids(rcm.checks),
+        )
+        fraud = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC74_FRAUD
+            )
+        )
+        for index in (1, 3):
+            self.assertIn(
+                f"workflow.sec74_fraud.special_rule.{index}.review_gate",
+                check_ids(fraud.checks),
+            )
+        sec129 = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        for index in (0, 1, 4):
+            self.assertIn(
+                f"workflow.sec129.special_rule.{index}.review_gate",
+                check_ids(sec129.checks),
+            )
+
+    def test_review_reason_verbatim(self):
+        result = run_defaults()
+        workflow = get_workflow(ProceedingType.GST_SEC73_ITC)
+        for review in result.review_requirements:
+            if review.review_id.startswith("workflow."):
+                # review_id: workflow.<prefix>.special_rule.<index>.review
+                index = int(review.review_id.split(".")[3])
+                self.assertEqual(
+                    review.reason, workflow.special_rules[index]
+                )
+
+    def test_review_dedup_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC74_FRAUD
+            ),
+            extraction=make_extraction(facts=fraud_clean_facts()),
+        )
+        keys = [
+            (review.level, review.reason)
+            for review in result.review_requirements
+        ]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertTrue(keys)
+
+    def test_urgent_deadline_review_unchanged(self):
+        result = run_defaults(
+            deadline=make_deadline(deadline_status=DeadlineStatus.CRITICAL)
+        )
+        urgent = [
+            review for review in result.review_requirements
+            if review.review_id == "deadline.urgent_review"
+        ]
+        self.assertEqual(len(urgent), 1)
+        self.assertIs(urgent[0].level, ReviewLevel.URGENT_CA_REVIEW)
+        self.assertEqual(
+            urgent[0].reason,
+            "Deadline status is CRITICAL; urgent CA review is required.",
+        )
+
+
+# --- Step 8.4 I. API / purity / immutability ---------------------------------
+
+class Step84PurityTests(unittest.TestCase):
+    """The Step-8.4 engine keeps the public surface, the pure-Python
+    boundary and the no-mutation contract."""
+
+    def test_public_signature_unchanged(self):
+        signature = inspect.signature(engine.run_validation)
+        self.assertEqual(
+            list(signature.parameters),
+            [
+                "classification",
+                "extraction_result",
+                "preflight_result",
+                "arithmetic_results",
+                "deadline_result",
+            ],
+        )
+        self.assertEqual(
+            signature.parameters["deadline_result"].default, None
+        )
+
+    def test_only_public_callable_run_validation(self):
+        public_callables = [
+            name
+            for name, obj in vars(engine).items()
+            if not name.startswith("_")
+            and callable(obj)
+            and getattr(obj, "__module__", None) == engine.__name__
+        ]
+        self.assertEqual(public_callables, ["run_validation"])
+
+    def test_no_forbidden_imports(self):
+        lowered = engine_source_text().lower()
+        for token in (
+            "llm_client", "gemini", "genai", "google", "requests",
+            "urllib", "socket", "http", "sqlite", "streamlit",
+            "deadline_engine", "arithmetic_engine", "fact_engine",
+            "preflight_engine", "proceeding_classifier",
+            "taxonomy_registry", "notice_explainer", "import app",
+        ):
+            self.assertNotIn(token, lowered, token)
+
+    def test_no_llm_or_network(self):
+        lowered = engine_source_text().lower()
+        for token in (
+            "llm_client", "gemini", "genai", "google", "requests",
+            "urllib", "socket", "http",
+        ):
+            self.assertNotIn(token, lowered, token)
+
+    def test_no_filesystem_evidence_inference(self):
+        lowered = engine_source_text().lower()
+        for token in ("pathlib", "os.", "open(", "glob", "filename"):
+            self.assertNotIn(token, lowered, token)
+
+    def test_inputs_not_mutated(self):
+        facts = itc_operand_facts() + [
+            make_fact(
+                "F-001", "Period", FactStatus.CONFIRMED, "p",
+                DraftPermission.YES, FactType.TAX_PERIOD, FactRole.NONE,
+            ),
+        ]
+        arithmetic = [
+            make_arithmetic(
+                status=ArithmeticStatus.MISMATCH,
+                source_fact_ids=["A", "B"],
+                result=Decimal("5"),
+            )
+        ]
+        facts_snapshot = copy.deepcopy(facts)
+        arithmetic_snapshot = copy.deepcopy(arithmetic)
+        run_defaults(
+            extraction=make_extraction(facts=facts),
+            arithmetic=arithmetic,
+        )
+        self.assertEqual(facts, facts_snapshot)
+        self.assertEqual(arithmetic, arithmetic_snapshot)
+
+    def test_workflow_not_mutated(self):
+        workflow = get_workflow(ProceedingType.GST_SEC73_ITC)
+        snapshot = copy.deepcopy(workflow)
+        run_defaults()
+        self.assertEqual(workflow, snapshot)
+
+    def test_profile_not_mutated(self):
+        profile = get_validation_profile(ProceedingType.GST_SEC73_ITC)
+        snapshot = copy.deepcopy(profile)
+        run_defaults()
+        self.assertEqual(profile, snapshot)
+
+    def test_requirement_specs_not_mutated(self):
+        profile = get_validation_profile(ProceedingType.GST_SEC73_ITC)
+        snapshot = copy.deepcopy(profile.requirement_specs)
+        run_defaults()
+        self.assertEqual(profile.requirement_specs, snapshot)
+
+    def test_evidence_requirements_not_mutated(self):
+        workflow = get_workflow(ProceedingType.GST_SEC73_ITC)
+        snapshot = copy.deepcopy(workflow.evidence_requirements)
+        run_defaults()
+        self.assertEqual(workflow.evidence_requirements, snapshot)
+
+    def test_fresh_result_lists_each_call(self):
+        first = run_defaults()
+        second = run_defaults()
+        self.assertIsNot(first.evidence_checklist, second.evidence_checklist)
+        self.assertIsNot(first.requirements, second.requirements)
+        self.assertIsNot(first.checks, second.checks)
+        self.assertIsNot(
+            first.review_requirements, second.review_requirements
+        )
+
+    def test_evidence_checklist_is_final_step_8_output(self):
+        # §19.24/§19.110: the checklist is now the real Step-8.4 output,
+        # not the staged empty list, for every valid deep workflow.
+        for proceeding_type in EVIDENCE_COUNTS:
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            self.assertTrue(
+                result.evidence_checklist, proceeding_type.name
+            )
+            self.assertTrue(all(
+                isinstance(item, EvidenceChecklistItem)
+                and item.status == EvidenceStatus.UNKNOWN
+                for item in result.evidence_checklist
+            ))
 
 
 def engine_source_text():
