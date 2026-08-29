@@ -1,23 +1,27 @@
-"""Generic deterministic Step-8.2 Validation Engine
-(docs/architecture/ARCHITECTURE_SPEC_v1_1 §19, §19.56–§19.87).
+"""Generic deterministic Step-8.3 Validation Engine
+(docs/architecture/ARCHITECTURE_SPEC_v1_1 §19, §19.56–§19.117).
 
-Staged Step-8.2 implementation (§19.73): this module implements the
-support gate, extraction health, fact safety invariants, preflight
-checks, deadline/hearing checks, arithmetic structural/outcome checks,
-workflow special-rule handling, ReviewRequirement generation/dedup,
-overall status aggregation, case severity and interim
-DraftEligibility.
+Implements the support gate, extraction health, fact safety
+invariants, preflight checks, deadline/hearing checks, arithmetic
+structural/outcome checks, deterministic workflow requirement
+resolution (Step 8.3, §19.88–§19.117), workflow special-rule
+handling, ReviewRequirement generation/dedup, overall status
+aggregation, case severity and DraftEligibility.
 
-`requirements` and `evidence_checklist` are ALWAYS empty during Step
-8.2 — Step 8.3 owns requirement resolution and Step 8.4 owns evidence
-checklist generation (§19.73). The empty lists are a staged
+For an eligible, structurally usable DEEP_WORKFLOW/profile,
+`requirements` carries one RequirementResult per profile
+`requirement_specs` entry in exact profile order; for TRIAGE_ONLY /
+UNKNOWN / unusable deep workflows it stays empty (§19.110).
+`evidence_checklist` is ALWAYS empty — Step 8.4 owns evidence
+checklist generation (§19.110, §19.113). The empty list is a staged
 implementation state, never proof of completeness.
 
-Pure deterministic Python (§19.8): no LLM calls, no network access, no
-deadline/arithmetic recomputation, no runtime source-file reading and
-no semantic interpretation of workflow strings. Workflow and profile
-lookup are deterministic registry reads driven only by
-`classification.proceeding_type` (§19.7).
+Pure deterministic Python (§19.8, §19.115): no LLM calls, no network
+access, no deadline/arithmetic recomputation, no runtime source-file
+reading and no semantic interpretation of workflow strings. Workflow
+and profile lookup are deterministic registry reads driven only by
+`classification.proceeding_type` (§19.7). DERIVED requirements reuse
+the already-emitted Step-8.2 structural arithmetic checks (§19.99).
 
 ValidationStatus semantics (§19.23): FAIL/WARNING/PASS are
 product/workflow safety states, never legal conclusions.
@@ -47,6 +51,9 @@ from domain.models import (
     NoticeClassification,
     PreflightResult,
     ProceedingType,
+    RequirementKind,
+    RequirementResult,
+    RequirementStatus,
     ReviewLevel,
     ReviewRequirement,
     SpecialRuleHandling,
@@ -54,6 +61,7 @@ from domain.models import (
     ValidationEngineResult,
     ValidationItem,
     ValidationStatus,
+    WorkflowRequirementSpec,
     WorkflowValidationProfile,
 )
 from workflows.gst import get_workflow
@@ -813,35 +821,101 @@ def _arithmetic_checks(
         ))
 
 
-# --- 7. Workflow special-rule handling (§19.40, §19.66–§19.71, §19.81–§19.85)
+# --- 7. Workflow special-rule handling (§19.40, §19.66–§19.71, §19.81–§19.85,
+#      §19.107–§19.109)
+
+def _derived_difference_rule(
+    checks: List[ValidationItem],
+    check_id: str,
+    requirement: Optional[RequirementResult],
+    arithmetic_results: List[ArithmeticResult],
+    calculation_type: ArithmeticCalculationType,
+    pass_message: str,
+    fail_message: str,
+    warn_message: str,
+) -> None:
+    """§19.107/§19.108: consume the resolved difference
+    RequirementResult for one derived workflow rule. Matching and
+    structural validity reuse the already-emitted Step-8.2 checks;
+    arithmetic is never recomputed."""
+    matching = [
+        (n, result)
+        for n, result in enumerate(arithmetic_results, start=1)
+        if result.calculation_type == calculation_type
+    ]
+
+    if requirement is not None and requirement.status == RequirementStatus.DERIVED:
+        checks.append(_item(
+            check_id,
+            ValidationStatus.PASS,
+            pass_message,
+            fact_ids=requirement.related_fact_ids,
+            calculation_types=[calculation_type],
+        ))
+        return
+
+    if any(_arithmetic_structural_fail(checks, n) for n, _ in matching):
+        checks.append(_item(
+            check_id,
+            ValidationStatus.FAIL,
+            fail_message,
+            fact_ids=_aggregate_source_ids(
+                [result for _, result in matching]
+            ),
+            calculation_types=[calculation_type],
+        ))
+        return
+
+    checks.append(_item(
+        check_id,
+        ValidationStatus.WARNING,
+        warn_message,
+        fact_ids=(
+            requirement.related_fact_ids
+            if requirement is not None
+            else []
+        ),
+        calculation_types=[calculation_type],
+    ))
+
 
 def _deterministic_check(
     checks: List[ValidationItem],
     proceeding_type: ProceedingType,
     index: int,
     prefix: str,
+    requirements: Dict[str, RequirementResult],
+    arithmetic_results: List[ArithmeticResult],
 ) -> None:
-    """Step-8.2 execution semantics for the five current
-    DETERMINISTIC_CHECK mappings (§19.81–§19.85)."""
+    """Step-8.3 execution semantics for the five current
+    DETERMINISTIC_CHECK mappings (§19.83–§19.85, §19.107–§19.109)."""
     check_id = f"workflow.{prefix}.special_rule.{index}.deterministic_check"
 
     if (proceeding_type, index) == (ProceedingType.GST_SEC73_ITC, 1):
-        # §19.81: deferred until Step 8.3 requirement resolution.
-        checks.append(_item(
+        # §19.107: consume the resolved sec73_itc.r3 requirement.
+        _derived_difference_rule(
+            checks,
             check_id,
-            ValidationStatus.WARNING,
-            "Derived workflow validation is deferred until Step 8.3 requirement resolution.",
-            calculation_types=[ArithmeticCalculationType.ITC_DIFFERENCE],
-        ))
+            requirement=requirements.get("sec73_itc.r3"),
+            arithmetic_results=arithmetic_results,
+            calculation_type=ArithmeticCalculationType.ITC_DIFFERENCE,
+            pass_message="Deterministic ITC-difference workflow requirement is derived from approved arithmetic output.",
+            fail_message="Deterministic ITC-difference workflow requirement failed arithmetic structural validation.",
+            warn_message="Deterministic ITC-difference workflow requirement could not be resolved from one sufficient arithmetic result.",
+        )
         return
     if (proceeding_type, index) == (ProceedingType.GST_SEC73_GENERAL, 1):
-        # §19.81: deferred until Step 8.3 requirement resolution.
-        checks.append(_item(
+        # §19.108: consume the resolved sec73_general.r3 requirement.
+        _derived_difference_rule(
+            checks,
             check_id,
-            ValidationStatus.WARNING,
-            "Derived workflow validation is deferred until Step 8.3 requirement resolution.",
-            calculation_types=[ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE],
-        ))
+            requirement=requirements.get("sec73_general.r3"),
+            arithmetic_results=arithmetic_results,
+            calculation_type=ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE,
+            pass_message="Deterministic output-tax-difference workflow requirement is derived from approved arithmetic output.",
+            fail_message="Deterministic output-tax-difference workflow requirement failed arithmetic structural validation.",
+            warn_message="Deterministic output-tax-difference workflow requirement could not be resolved from one sufficient arithmetic result.",
+        )
         return
     if (proceeding_type, index) == (ProceedingType.GST_SEC74_FRAUD, 0):
         # §19.83: mirror the already-emitted generic invariant; no re-run.
@@ -909,13 +983,21 @@ def _special_rules(
     reviews: List[ReviewRequirement],
     workflow: WorkflowDefinition,
     profile: WorkflowValidationProfile,
+    requirements: List[RequirementResult],
+    arithmetic_results: List[ArithmeticResult],
 ) -> None:
     """§19.40/§19.66–§19.71: deterministic special-rule processing driven
-    only by the authoritative profile mappings. Workflow text is used
-    verbatim (message/reason), never semantically interpreted."""
+    only by the authoritative profile mappings, with the two derived
+    rules consuming resolved requirements (§19.107/§19.108). Workflow
+    text is used verbatim (message/reason), never semantically
+    interpreted."""
     prefix = _PREFIX_BY_PROCEEDING.get(
         workflow.proceeding_type, workflow.proceeding_type.value
     )
+    requirements_by_id = {
+        requirement.requirement_id: requirement
+        for requirement in requirements
+    }
 
     for index in sorted(profile.special_rule_handling):
         if not 0 <= index < len(workflow.special_rules):
@@ -953,7 +1035,14 @@ def _special_rules(
                     "This safety boundary is enforced by an authoritative upstream component and is not re-run by validation.",
                 ))
             elif handling == SpecialRuleHandling.DETERMINISTIC_CHECK:
-                _deterministic_check(checks, workflow.proceeding_type, index, prefix)
+                _deterministic_check(
+                    checks,
+                    workflow.proceeding_type,
+                    index,
+                    prefix,
+                    requirements_by_id,
+                    arithmetic_results,
+                )
             else:
                 # Unknown handling member: never silently skip.
                 checks.append(_item(
@@ -961,6 +1050,260 @@ def _special_rules(
                     ValidationStatus.FAIL,
                     "Special-rule handling type is unsupported.",
                 ))
+
+
+# --- 7a. Workflow requirement resolution (§19.89–§19.106) --------------------
+
+def _fact_matches_spec(fact, spec: WorkflowRequirementSpec) -> bool:
+    """§19.91: a fact matches only when every supplied selector matches.
+    FactRole.NONE is a real selector value; Python None is the only
+    wildcard. Claim and source_text are never consulted."""
+    if spec.fact_type is not None and fact.fact_type != spec.fact_type:
+        return False
+    if spec.fact_role is not None and fact.fact_role != spec.fact_role:
+        return False
+    return True
+
+
+def _arithmetic_structural_fail(checks: List[ValidationItem], n: int) -> bool:
+    """§19.99: an ArithmeticResult at one-based index n is structurally
+    valid only when ALL five §19.64 structural checks are PASS. The
+    `outcome` item is deliberately not structural."""
+    for suffix in _ARITHMETIC_STRUCTURAL_SUFFIXES:
+        item = _find_item(checks, f"arithmetic.{n}.{suffix}")
+        if item is None or item.status != ValidationStatus.PASS:
+            return True
+    return False
+
+
+def _aggregate_source_ids(results) -> List[str]:
+    """Usable non-empty source IDs across the given ArithmeticResults in
+    input order then stored operand order, deduplicated by first
+    occurrence (§19.104, §19.107/§19.108)."""
+    collected: List[str] = []
+    for result in results:
+        for fact_id in result.source_fact_ids:
+            if not (isinstance(fact_id, str) and fact_id.strip()):
+                continue
+            if fact_id not in collected:
+                collected.append(fact_id)
+    return collected
+
+
+def _resolve_fact_requirement(
+    spec: WorkflowRequirementSpec,
+    extraction_result: FactExtractionResult,
+) -> Tuple[RequirementResult, ValidationItem]:
+    """§19.13/§19.91–§19.97: exact FACT resolution with the fixed
+    precedence (accepted → REQUIRES_VERIFICATION → UNKNOWN → absence).
+    No semantic matching; statuses decide, never claims or source
+    text."""
+    text = spec.requirement_text
+    check_id = "requirement." + spec.requirement_id
+
+    matching = [
+        fact for fact in extraction_result.facts
+        if _fact_matches_spec(fact, spec)
+    ]
+
+    accepted = [
+        fact for fact in matching
+        if fact.status in spec.accepted_fact_statuses
+    ]
+    if accepted:
+        related = _offender_ids(accepted)
+        return (
+            RequirementResult(
+                spec.requirement_id, text, RequirementStatus.SATISFIED,
+                related, None,
+            ),
+            _item(
+                check_id, ValidationStatus.PASS,
+                f"Workflow requirement is satisfied: {text}",
+                fact_ids=related,
+            ),
+        )
+
+    awaiting_verification = [
+        fact for fact in matching
+        if fact.status == FactStatus.REQUIRES_VERIFICATION
+    ]
+    if awaiting_verification:
+        related = _offender_ids(awaiting_verification)
+        return (
+            RequirementResult(
+                spec.requirement_id, text,
+                RequirementStatus.REQUIRES_VERIFICATION, related, None,
+            ),
+            _item(
+                check_id, ValidationStatus.WARNING,
+                f"Workflow requirement requires verification: {text}",
+                fact_ids=related,
+            ),
+        )
+
+    if matching:
+        related = _offender_ids(matching)
+        return (
+            RequirementResult(
+                spec.requirement_id, text, RequirementStatus.UNKNOWN,
+                related, None,
+            ),
+            _item(
+                check_id, ValidationStatus.WARNING,
+                f"Workflow requirement status is unknown: {text}",
+                fact_ids=related,
+            ),
+        )
+
+    if extraction_result.status == FactExtractionStatus.SUCCESS:
+        absent_status = spec.absent_on_success
+        result = RequirementResult(
+            spec.requirement_id, text, absent_status, [], None,
+        )
+        if absent_status == RequirementStatus.REQUIRES_VERIFICATION:
+            item = _item(
+                check_id, ValidationStatus.WARNING,
+                f"Workflow requirement requires verification: {text}",
+            )
+        else:
+            # §19.11 default — and the only other authorized value — is
+            # MISSING.
+            item = _item(
+                check_id, ValidationStatus.WARNING,
+                f"Workflow requirement is missing from a successful extraction: {text}",
+            )
+        return result, item
+
+    # §19.96: absence-safety — a non-successful extraction never makes a
+    # requirement MISSING.
+    return (
+        RequirementResult(
+            spec.requirement_id, text, RequirementStatus.UNKNOWN, [], None,
+        ),
+        _item(
+            check_id, ValidationStatus.WARNING,
+            f"Workflow requirement status is unknown because fact extraction was not fully successful: {text}",
+        ),
+    )
+
+
+def _resolve_derived_requirement(
+    checks: List[ValidationItem],
+    spec: WorkflowRequirementSpec,
+    arithmetic_results: List[ArithmeticResult],
+) -> Tuple[RequirementResult, ValidationItem]:
+    """§19.14/§19.98–§19.104: DERIVED resolution reusing the already
+    emitted Step-8.2 structural arithmetic checks. No recomputation."""
+    text = spec.requirement_text
+    check_id = "requirement." + spec.requirement_id
+    calculation_type = spec.calculation_type
+
+    # §19.98: exact enum equality, arithmetic input order preserved.
+    matching = [
+        (n, result)
+        for n, result in enumerate(arithmetic_results, start=1)
+        if result.calculation_type == calculation_type
+    ]
+
+    if not matching:
+        # §19.103: zero matches.
+        return (
+            RequirementResult(
+                spec.requirement_id, text, RequirementStatus.UNKNOWN,
+                [], calculation_type,
+            ),
+            _item(
+                check_id, ValidationStatus.WARNING,
+                f"Derived workflow requirement has no matching arithmetic result: {text}",
+                calculation_types=[calculation_type],
+            ),
+        )
+
+    if len(matching) > 1:
+        # §19.104: never select one; aggregate and deduplicate source IDs.
+        related = _aggregate_source_ids(
+            [result for _, result in matching]
+        )
+        return (
+            RequirementResult(
+                spec.requirement_id, text, RequirementStatus.UNKNOWN,
+                related, calculation_type,
+            ),
+            _item(
+                check_id, ValidationStatus.WARNING,
+                f"Derived workflow requirement is ambiguous because multiple arithmetic results match: {text}",
+                fact_ids=related,
+                calculation_types=[calculation_type],
+            ),
+        )
+
+    n, arithmetic_result = matching[0]
+    related = _source_id_strings(arithmetic_result.source_fact_ids)
+
+    if _arithmetic_structural_fail(checks, n):
+        # §19.102: the structural FAIL already blocks drafting; the
+        # requirement itself stays a WARNING.
+        return (
+            RequirementResult(
+                spec.requirement_id, text, RequirementStatus.UNKNOWN,
+                related, calculation_type,
+            ),
+            _item(
+                check_id, ValidationStatus.WARNING,
+                f"Derived workflow requirement cannot be trusted because its arithmetic result failed structural validation: {text}",
+                fact_ids=related,
+                calculation_types=[calculation_type],
+            ),
+        )
+
+    if arithmetic_result.status == ArithmeticStatus.INSUFFICIENT_DATA:
+        # §19.101: structurally sound but not enough operands/data.
+        return (
+            RequirementResult(
+                spec.requirement_id, text, RequirementStatus.UNKNOWN,
+                related, calculation_type,
+            ),
+            _item(
+                check_id, ValidationStatus.WARNING,
+                f"Derived workflow requirement has insufficient arithmetic data: {text}",
+                fact_ids=related,
+                calculation_types=[calculation_type],
+            ),
+        )
+
+    # §19.100: PASS or MISMATCH (any other status fails
+    # result_status_consistency and is caught above). MISMATCH is still a
+    # deterministic derivation; the outcome item communicates the
+    # mismatch.
+    return (
+        RequirementResult(
+            spec.requirement_id, text, RequirementStatus.DERIVED,
+            related, calculation_type,
+        ),
+        _item(
+            check_id, ValidationStatus.PASS,
+            f"Workflow requirement is deterministically derived: {text}",
+            fact_ids=related,
+            calculation_types=[calculation_type],
+        ),
+    )
+
+
+def _resolve_requirement(
+    checks: List[ValidationItem],
+    spec: WorkflowRequirementSpec,
+    extraction_result: FactExtractionResult,
+    arithmetic_results: List[ArithmeticResult],
+) -> Tuple[RequirementResult, ValidationItem]:
+    """Resolve one WorkflowRequirementSpec into its RequirementResult and
+    its single §19.89 requirement ValidationItem. Read-only: never
+    mutates the spec, facts, results or checks."""
+    if spec.kind == RequirementKind.DERIVED:
+        return _resolve_derived_requirement(
+            checks, spec, arithmetic_results
+        )
+    return _resolve_fact_requirement(spec, extraction_result)
 
 
 # --- 8–11. Aggregation, severity, eligibility --------------------------------
@@ -1007,10 +1350,14 @@ def _draft_eligibility(
     extraction_result: FactExtractionResult,
     workflow: Optional[WorkflowDefinition],
     profile: Optional[WorkflowValidationProfile],
+    requirements: List[RequirementResult],
 ) -> DraftEligibility:
-    """§19.75: interim Step-8.2 BLOCKED conditions only. Warnings and
-    review requirements resolve to REVIEW_REQUIRED; nothing else can
-    reach ALLOWED without a fully clean synthetic configuration."""
+    """§19.75/§19.106: Step-8.2 BLOCKED conditions plus the Step-8.3
+    requirement condition. Any MISSING/UNKNOWN/REQUIRES_VERIFICATION
+    requirement resolves a non-BLOCKED case to at least
+    REVIEW_REQUIRED; warnings and review requirements also resolve to
+    REVIEW_REQUIRED. Nothing else can reach ALLOWED without a fully
+    clean synthetic configuration."""
     if classification.support_level != SupportLevel.DEEP_WORKFLOW:
         return DraftEligibility.BLOCKED
     if classification.proceeding_type == ProceedingType.UNKNOWN:
@@ -1049,6 +1396,19 @@ def _draft_eligibility(
     ):
         return DraftEligibility.BLOCKED
 
+    # §19.106: incomplete workflow requirements force at least
+    # REVIEW_REQUIRED. SATISFIED/DERIVED never force review by
+    # themselves.
+    if any(
+        requirement.status in (
+            RequirementStatus.MISSING,
+            RequirementStatus.UNKNOWN,
+            RequirementStatus.REQUIRES_VERIFICATION,
+        )
+        for requirement in requirements
+    ):
+        return DraftEligibility.REVIEW_REQUIRED
+
     if any(item.status == ValidationStatus.WARNING for item in checks):
         return DraftEligibility.REVIEW_REQUIRED
     if reviews:
@@ -1065,13 +1425,14 @@ def run_validation(
     arithmetic_results: List[ArithmeticResult],
     deadline_result: Optional[DeadlineResult] = None,
 ) -> ValidationEngineResult:
-    """§19.7/§19.73: generic deterministic Step-8.2 validation.
+    """§19.7/§19.112: generic deterministic Step-8.3 validation.
 
     Facts are accessed only through `extraction_result.facts`; the
     workflow and validation profile are obtained deterministically from
-    `classification.proceeding_type`. During Step 8.2 the result always
-    carries `requirements == []` and `evidence_checklist == []`
-    (§19.73): empty lists are a staged state, never completeness proof.
+    `classification.proceeding_type`. For an eligible usable deep
+    workflow the result carries one RequirementResult per profile
+    `requirement_specs` entry in exact profile order (§19.110);
+    `evidence_checklist` stays `[]` until Step 8.4 (§19.113).
     """
     checks: List[ValidationItem] = []
     reviews: List[ReviewRequirement] = []
@@ -1102,15 +1463,39 @@ def run_validation(
     for n, arithmetic_result in enumerate(arithmetic_results, start=1):
         _arithmetic_checks(checks, n, arithmetic_result, facts)
 
-    # 7. Workflow special-rule handling (valid deep workflow only).
-    if (
+    workflow_usable = (
         classification.support_level == SupportLevel.DEEP_WORKFLOW
         and workflow is not None
         and profile is not None
         and workflow.proceeding_type == classification.proceeding_type
         and profile.proceeding_type == classification.proceeding_type
+    )
+
+    # 7. Workflow requirement resolution + requirement items (§19.90,
+    # §19.111): only when the support gate additionally confirms the
+    # requirement profile matches the workflow contract. No fallback.
+    requirements: List[RequirementResult] = []
+    requirement_alignment = _find_item(checks, "support.requirement_alignment")
+    if (
+        workflow_usable
+        and classification.proceeding_type != ProceedingType.UNKNOWN
+        and requirement_alignment is not None
+        and requirement_alignment.status == ValidationStatus.PASS
     ):
-        _special_rules(checks, reviews, workflow, profile)
+        for spec in profile.requirement_specs:
+            requirement, requirement_item = _resolve_requirement(
+                checks, spec, extraction_result, arithmetic_results
+            )
+            requirements.append(requirement)
+            checks.append(requirement_item)
+
+    # 8. Workflow special-rule handling (valid deep workflow only),
+    # consuming the resolved requirements for the two derived rules.
+    if workflow_usable:
+        _special_rules(
+            checks, reviews, workflow, profile, requirements,
+            arithmetic_results,
+        )
 
     reviews = _dedup_reviews(reviews)
 
@@ -1123,10 +1508,11 @@ def run_validation(
             extraction_result,
             workflow,
             profile,
+            requirements,
         ),
         case_severity=_case_severity(classification, workflow, deadline_result),
         checks=checks,
-        requirements=[],
+        requirements=requirements,
         evidence_checklist=[],
         review_requirements=reviews,
     )

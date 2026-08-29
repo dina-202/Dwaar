@@ -1,13 +1,13 @@
-"""Unit tests for the generic deterministic Step-8.2 Validation Engine
-(ARCHITECTURE_SPEC_v1_1 §19, §19.56–§19.87).
+"""Unit tests for the generic deterministic Step-8.3 Validation Engine
+(ARCHITECTURE_SPEC_v1_1 §19, §19.56–§19.117).
 
 Fully offline and deterministic. No LLM calls, no network, no fixtures.
 
-Verifies the complete staged Step-8.2 contract:
+Verifies the complete staged Step-8.3 contract:
 
   - public API / pure-Python boundary (no LLM, no network, no engine
-    recomputation, no source-code introspection, requirements and
-    evidence_checklist always empty in Step 8.2);
+    recomputation, no source-code introspection, evidence_checklist
+    always empty in Step 8.3);
   - support gate and deep-workflow structural checks;
   - extraction health;
   - the ten fact safety invariants including the §19.5 FactRole
@@ -16,12 +16,16 @@ Verifies the complete staged Step-8.2 contract:
   - deadline/hearing checks and the deadline urgent-review contract;
   - the six-check arithmetic structure, role provenance and
     status/result consistency;
+  - deterministic workflow requirement resolution (Step 8.3): FACT and
+    DERIVED selectors, statuses, absence-safety, structural-check
+    reuse, ambiguity handling, stable machine IDs, and the two
+    derived-difference special-rule replacements;
   - workflow special-rule handling (review gates, future legal rules,
-    upstream invariants, the two temporary derived-rule deferrals, the
-    two fraud deterministic mirrors and the Section-129 deadline-source
-    boundary);
+    upstream invariants, the two fraud deterministic mirrors and the
+    Section-129 deadline-source boundary);
   - ReviewRequirement dedup, overall status aggregation, interim
-    DraftEligibility, case severity, and input immutability.
+    DraftEligibility including the §19.106 requirement condition, case
+    severity, and input immutability.
 
 Runnable with Python's standard library unittest only:
     python -m unittest tests/test_validation_engine.py -v
@@ -65,6 +69,8 @@ from domain.models import (
     PreflightResult,
     ProceedingType,
     RequirementKind,
+    RequirementResult,
+    RequirementStatus,
     ReviewLevel,
     ReviewRequirement,
     SpecialRuleHandling,
@@ -330,6 +336,110 @@ def review_ids(reviews):
     return {review.review_id for review in reviews}
 
 
+# --- Step 8.3 requirement-resolution helpers ---------------------------------
+
+ALL_DEEP_PROCEEDINGS = (
+    ProceedingType.GST_SEC73_ITC,
+    ProceedingType.GST_SEC73_GENERAL,
+    ProceedingType.GST_SEC73_RCM,
+    ProceedingType.GST_SEC74_FRAUD,
+    ProceedingType.GST_SEC129_ENFORCE,
+)
+
+ITC_RULE_ID = "workflow.sec73_itc.special_rule.1.deterministic_check"
+GENERAL_RULE_ID = "workflow.sec73_general.special_rule.1.deterministic_check"
+
+DEEP_PROFILE_COUNTS = {
+    ProceedingType.GST_SEC73_ITC: 5,
+    ProceedingType.GST_SEC73_GENERAL: 5,
+    ProceedingType.GST_SEC73_RCM: 5,
+    ProceedingType.GST_SEC74_FRAUD: 5,
+    ProceedingType.GST_SEC129_ENFORCE: 9,
+}
+
+
+def make_spec(
+    requirement_id="mock.r0",
+    requirement_text="Test requirement",
+    kind=RequirementKind.FACT,
+    fact_type=None,
+    fact_role=None,
+    calculation_type=None,
+    accepted_fact_statuses=(FactStatus.CONFIRMED,),
+    absent_on_success=RequirementStatus.MISSING,
+):
+    return WorkflowRequirementSpec(
+        requirement_id=requirement_id,
+        requirement_text=requirement_text,
+        kind=kind,
+        fact_type=fact_type,
+        fact_role=fact_role,
+        calculation_type=calculation_type,
+        accepted_fact_statuses=accepted_fact_statuses,
+        absent_on_success=absent_on_success,
+    )
+
+
+def make_custom_set(specs, proceeding_type=ProceedingType.GST_SEC73_ITC):
+    """A synthetic workflow/profile pair driven by the given specs, with
+    no special rules, so requirement behavior can be tested in
+    isolation. required_facts mirrors the spec texts verbatim so
+    requirement_alignment passes."""
+    workflow = make_mock_workflow(
+        proceeding_type=proceeding_type,
+        required_facts=[spec.requirement_text for spec in specs],
+    )
+    profile = WorkflowValidationProfile(
+        proceeding_type=proceeding_type,
+        requirement_specs=list(specs),
+        special_rule_handling={},
+        review_rules={},
+    )
+    return workflow, profile
+
+
+def run_custom(
+    specs,
+    proceeding_type=ProceedingType.GST_SEC73_ITC,
+    extraction=None,
+    arithmetic=None,
+    preflight=None,
+    deadline=None,
+):
+    """run_defaults over a synthetic requirement set with a clean
+    preflight (portal=False, authority=False) so requirement-driven
+    outcomes can be observed in isolation."""
+    workflow, profile = make_custom_set(specs, proceeding_type)
+    classification = make_classification(proceeding_type=proceeding_type)
+    with mock.patch.object(engine, "get_workflow", return_value=workflow), \
+         mock.patch.object(
+             engine, "get_validation_profile", return_value=profile
+         ):
+        return engine.run_validation(
+            classification,
+            extraction if extraction is not None else make_extraction(),
+            preflight if preflight is not None else make_preflight(
+                portal=False, authority=False
+            ),
+            arithmetic if arithmetic is not None else [],
+            deadline,
+        )
+
+
+def get_requirement(result, requirement_id):
+    for requirement in result.requirements:
+        if requirement.requirement_id == requirement_id:
+            return requirement
+    return None
+
+
+def requirement_item_ids(checks):
+    return [
+        item.check_id for item in checks
+        if item.check_id.startswith("requirement.")
+    ]
+
+
 # --- A. API / purity --------------------------------------------------------
 
 class ApiPurityTests(unittest.TestCase):
@@ -407,11 +517,19 @@ class ApiPurityTests(unittest.TestCase):
         ]
         self.assertEqual(public_callables, ["run_validation"])
 
-    def test_requirements_always_empty_in_step_8_2(self):
-        result = run_defaults()
-        self.assertEqual(result.requirements, [])
+    def test_requirements_populated_only_for_usable_deep_profiles(self):
+        # §19.110: one RequirementResult per spec for an eligible deep
+        # profile; empty for TRIAGE_ONLY (and other unusable cases).
+        deep = run_defaults()
+        self.assertEqual(len(deep.requirements), 5)
+        triage = run_defaults(
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            )
+        )
+        self.assertEqual(triage.requirements, [])
 
-    def test_evidence_checklist_always_empty_in_step_8_2(self):
+    def test_evidence_checklist_always_empty_in_step_8_3(self):
         result = run_defaults()
         self.assertEqual(result.evidence_checklist, [])
 
@@ -1759,7 +1877,9 @@ class SpecialRuleTests(unittest.TestCase):
             [c for c in deep.checks if c.check_id.startswith("workflow.")]
         )
 
-    def test_itc_deterministic_rule_temporary_warning_exact_text(self):
+    def test_itc_deterministic_rule_resolution_warning_without_arithmetic(self):
+        # §19.107: no arithmetic means no resolved ITC difference, so the
+        # special rule warns with the Step-8.3 message.
         result = run_defaults()
         item = get_item(
             result.checks,
@@ -1769,7 +1889,7 @@ class SpecialRuleTests(unittest.TestCase):
         self.assertIs(item.status, ValidationStatus.WARNING)
         self.assertEqual(
             item.message,
-            "Derived workflow validation is deferred until Step 8.3 requirement resolution.",
+            "Deterministic ITC-difference workflow requirement could not be resolved from one sufficient arithmetic result.",
         )
         self.assertEqual(item.related_fact_ids, [])
 
@@ -1784,7 +1904,8 @@ class SpecialRuleTests(unittest.TestCase):
             [ArithmeticCalculationType.ITC_DIFFERENCE],
         )
 
-    def test_general_temporary_warning(self):
+    def test_general_deterministic_rule_resolution_warning_without_arithmetic(self):
+        # §19.108: no arithmetic means no resolved output-tax difference.
         result = run_defaults(
             classification=make_classification(
                 proceeding_type=ProceedingType.GST_SEC73_GENERAL
@@ -1798,7 +1919,7 @@ class SpecialRuleTests(unittest.TestCase):
         self.assertIs(item.status, ValidationStatus.WARNING)
         self.assertEqual(
             item.message,
-            "Derived workflow validation is deferred until Step 8.3 requirement resolution.",
+            "Deterministic output-tax-difference workflow requirement could not be resolved from one sufficient arithmetic result.",
         )
 
     def test_general_calculation_type_link_exact(self):
@@ -2269,9 +2390,12 @@ class DraftEligibilityTests(unittest.TestCase):
             result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
         )
 
-    def test_empty_requirements_evidence_do_not_produce_allowed(self):
+    def test_staged_evidence_does_not_produce_allowed(self):
+        # §19.113: evidence_checklist stays empty in Step 8.3, and the
+        # unresolved Step-8.3 requirements keep the default run out of
+        # ALLOWED.
         result = run_defaults()
-        self.assertEqual(result.requirements, [])
+        self.assertEqual(len(result.requirements), 5)
         self.assertEqual(result.evidence_checklist, [])
         self.assertIsNot(result.draft_eligibility, DraftEligibility.ALLOWED)
 
@@ -2401,9 +2525,16 @@ class ImmutabilityStagingTests(unittest.TestCase):
         self.assertEqual(profile.special_rule_handling, snapshot[3])
         self.assertEqual(profile.review_rules, snapshot[4])
 
-    def test_requirements_remain_empty(self):
-        result = run_defaults()
-        self.assertEqual(result.requirements, [])
+    def test_requirements_empty_only_for_unusable_workflows(self):
+        # §19.110: resolved for a usable deep profile, empty for triage.
+        deep = run_defaults()
+        self.assertEqual(len(deep.requirements), 5)
+        triage = run_defaults(
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            )
+        )
+        self.assertEqual(triage.requirements, [])
 
     def test_evidence_checklist_remains_empty(self):
         result = run_defaults()
@@ -2413,6 +2544,1740 @@ class ImmutabilityStagingTests(unittest.TestCase):
         lowered = engine_source_text().lower()
         self.assertNotIn("notice_explainer", lowered)
         self.assertNotIn("import app", lowered)
+
+
+# --- Step 8.3 N. Requirement processing gate / order (§19.90, §19.111) -------
+
+class RequirementGateTests(unittest.TestCase):
+    """Requirement resolution runs only for eligible usable deep
+    workflows, and its output lands in the §19.112 processing order."""
+
+    def test_deep_valid_profile_produces_requirements(self):
+        result = run_defaults()
+        self.assertEqual(len(result.requirements), 5)
+        self.assertEqual(
+            [r.requirement_id for r in result.requirements],
+            [
+                "sec73_itc.r1", "sec73_itc.r2", "sec73_itc.r3",
+                "sec73_itc.r4", "sec73_itc.r5",
+            ],
+        )
+
+    def test_triage_only_produces_empty_requirements(self):
+        result = run_defaults(
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            )
+        )
+        self.assertEqual(result.requirements, [])
+        self.assertEqual(requirement_item_ids(result.checks), [])
+
+    def test_unknown_support_produces_empty_requirements(self):
+        result = run_defaults(
+            classification=make_classification(
+                support_level=SupportLevel.UNKNOWN
+            )
+        )
+        self.assertEqual(result.requirements, [])
+
+    def test_unknown_proceeding_produces_empty_requirements(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.UNKNOWN
+            )
+        )
+        self.assertEqual(result.requirements, [])
+
+    def test_missing_workflow_produces_empty_requirements(self):
+        with mock.patch.object(engine, "get_workflow", return_value=None):
+            result = run_defaults()
+        self.assertEqual(result.requirements, [])
+
+    def test_missing_profile_produces_empty_requirements(self):
+        with mock.patch.object(
+            engine, "get_validation_profile", return_value=None
+        ):
+            result = run_defaults()
+        self.assertEqual(result.requirements, [])
+
+    def test_workflow_misalignment_produces_empty_requirements(self):
+        wrong = make_mock_workflow(
+            proceeding_type=ProceedingType.GST_SEC73_GENERAL
+        )
+        with mock.patch.object(engine, "get_workflow", return_value=wrong):
+            result = run_defaults()
+        self.assertEqual(result.requirements, [])
+
+    def test_profile_misalignment_produces_empty_requirements(self):
+        wrong = make_mock_profile(
+            proceeding_type=ProceedingType.GST_SEC73_GENERAL
+        )
+        with mock.patch.object(
+            engine, "get_validation_profile", return_value=wrong
+        ):
+            result = run_defaults()
+        self.assertEqual(result.requirements, [])
+
+    def test_requirement_alignment_fail_produces_empty_requirements(self):
+        wrong = make_mock_profile(requirement_texts=["Different text."])
+        with mock.patch.object(
+            engine, "get_validation_profile", return_value=wrong
+        ):
+            result = run_defaults()
+        self.assertEqual(result.requirements, [])
+        self.assertEqual(requirement_item_ids(result.checks), [])
+
+    def test_requirement_results_follow_exact_profile_order(self):
+        result = run_defaults()
+        profile = get_validation_profile(ProceedingType.GST_SEC73_ITC)
+        self.assertEqual(
+            [r.requirement_id for r in result.requirements],
+            [spec.requirement_id for spec in profile.requirement_specs],
+        )
+
+    def test_requirement_validation_items_follow_same_order(self):
+        result = run_defaults()
+        profile = get_validation_profile(ProceedingType.GST_SEC73_ITC)
+        self.assertEqual(
+            requirement_item_ids(result.checks),
+            [
+                f"requirement.{spec.requirement_id}"
+                for spec in profile.requirement_specs
+            ],
+        )
+
+    def test_requirement_checks_precede_workflow_special_rule_checks(self):
+        # §19.112: requirement resolution (step 7) runs before special
+        # rules (step 8).
+        result = run_defaults()
+        requirement_indices = [
+            index for index, item in enumerate(result.checks)
+            if item.check_id.startswith("requirement.")
+        ]
+        workflow_indices = [
+            index for index, item in enumerate(result.checks)
+            if item.check_id.startswith("workflow.")
+        ]
+        self.assertTrue(requirement_indices)
+        self.assertTrue(workflow_indices)
+        self.assertLess(
+            max(requirement_indices), min(workflow_indices)
+        )
+
+
+# --- Step 8.3 O. FACT selector matching (§19.91) -----------------------------
+
+class FactRequirementSelectorTests(unittest.TestCase):
+    """Exact enum selectors; FactRole.NONE is real, Python None is the
+    only wildcard; claim/source_text never satisfy a requirement."""
+
+    def _run_itc(self, facts):
+        return run_defaults(extraction=make_extraction(facts=facts))
+
+    def test_fact_type_selector_exact(self):
+        # Correct role, wrong type: must not match sec73_itc.r1.
+        fact = make_fact(
+            "F-001", "3B ITC", FactStatus.CONFIRMED, "x",
+            DraftPermission.YES, FactType.TAX_PERIOD,
+            FactRole.GSTR3B_ITC_CLAIMED_AMOUNT,
+        )
+        requirement = get_requirement(self._run_itc([fact]), "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.MISSING)
+
+    def test_fact_role_selector_exact(self):
+        # Correct type, wrong role: must not match sec73_itc.r1, while
+        # the same fact satisfies the matching role requirement r5.
+        fact = make_fact(
+            "F-001", "Interest", FactStatus.CONFIRMED, "x",
+            DraftPermission.YES, FactType.STATED_AMOUNT,
+            FactRole.INTEREST_PROPOSED_AMOUNT,
+        )
+        result = self._run_itc([fact])
+        self.assertIs(
+            get_requirement(result, "sec73_itc.r1").status,
+            RequirementStatus.MISSING,
+        )
+        self.assertIs(
+            get_requirement(result, "sec73_itc.r5").status,
+            RequirementStatus.SATISFIED,
+        )
+
+    def test_fact_role_none_member_is_a_real_selector(self):
+        # sec73_itc.r4 selects TAX_PERIOD + FactRole.NONE exactly.
+        wrong_role = make_fact(
+            "F-001", "Period", FactStatus.CONFIRMED, "x",
+            DraftPermission.YES, FactType.TAX_PERIOD,
+            FactRole.EXPLICIT_PROCEDURAL_DATE,
+        )
+        self.assertIs(
+            get_requirement(self._run_itc([wrong_role]), "sec73_itc.r4").status,
+            RequirementStatus.MISSING,
+        )
+        right_role = make_fact(
+            "F-002", "Period", FactStatus.CONFIRMED, "x",
+            DraftPermission.YES, FactType.TAX_PERIOD, FactRole.NONE,
+        )
+        self.assertIs(
+            get_requirement(self._run_itc([right_role]), "sec73_itc.r4").status,
+            RequirementStatus.SATISFIED,
+        )
+
+    def test_python_none_fact_type_is_a_wildcard(self):
+        # sec129.r8: fact_type None + EXPLICIT_PROCEDURAL_DATE → every
+        # procedurally compatible type matches.
+        for fact_type in (
+            FactType.STATED_DUE_DATE,
+            FactType.HEARING_DETAILS,
+            FactType.DOCUMENT_DETAIL,
+        ):
+            fact = make_fact(
+                "F-001", "Date", FactStatus.CONFIRMED, "x",
+                DraftPermission.YES, fact_type,
+                FactRole.EXPLICIT_PROCEDURAL_DATE,
+            )
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+                ),
+                extraction=make_extraction(facts=[fact]),
+            )
+            requirement = get_requirement(result, "sec129.r8")
+            self.assertIs(
+                requirement.status, RequirementStatus.SATISFIED,
+                fact_type.name,
+            )
+
+    def test_all_supplied_selectors_must_match(self):
+        # A fact matching neither, only the type, or only the role of a
+        # two-selector requirement never satisfies it.
+        neither = make_fact(
+            "F-001", "Other", FactStatus.CONFIRMED, "x",
+            DraftPermission.YES, FactType.OTHER_NOTICE_FACT, FactRole.NONE,
+        )
+        type_only = make_fact(
+            "F-002", "Amount", FactStatus.CONFIRMED, "x",
+            DraftPermission.YES, FactType.STATED_AMOUNT, FactRole.NONE,
+        )
+        role_only = make_fact(
+            "F-003", "Amount", FactStatus.CONFIRMED, "x",
+            DraftPermission.YES, FactType.OTHER_NOTICE_FACT,
+            FactRole.GSTR3B_ITC_CLAIMED_AMOUNT,
+        )
+        requirement = get_requirement(
+            self._run_itc([neither, type_only, role_only]),
+            "sec73_itc.r1",
+        )
+        self.assertIs(requirement.status, RequirementStatus.MISSING)
+
+    def test_claim_text_cannot_satisfy_a_requirement(self):
+        fact = make_fact(
+            "F-001", "ITC claimed in GSTR-3B (amount)",
+            FactStatus.CONFIRMED, "x", DraftPermission.YES,
+            FactType.OTHER_NOTICE_FACT, FactRole.NONE,
+        )
+        requirement = get_requirement(self._run_itc([fact]), "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.MISSING)
+
+    def test_source_text_cannot_satisfy_a_requirement(self):
+        fact = make_fact(
+            "F-001", "Claim", FactStatus.CONFIRMED,
+            "ITC claimed in GSTR-3B (amount)", DraftPermission.YES,
+            FactType.OTHER_NOTICE_FACT, FactRole.NONE,
+        )
+        requirement = get_requirement(self._run_itc([fact]), "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.MISSING)
+
+
+# --- Step 8.3 P. FACT requirement statuses (§19.92–§19.97) -------------------
+
+class FactRequirementStatusTests(unittest.TestCase):
+    """Fixed precedence: accepted → REQUIRES_VERIFICATION → UNKNOWN →
+    absence (SUCCESS: absent_on_success, otherwise UNKNOWN)."""
+
+    def _r1_fact(self, fact_id, status, allowed_in_draft=DraftPermission.YES):
+        return make_fact(
+            fact_id, "3B ITC", status, "x", allowed_in_draft,
+            FactType.STATED_AMOUNT, FactRole.GSTR3B_ITC_CLAIMED_AMOUNT,
+        )
+
+    def test_accepted_fact_satisfied_and_pass(self):
+        result = run_defaults(
+            extraction=make_extraction(
+                facts=[self._r1_fact("F-001", FactStatus.CONFIRMED)]
+            )
+        )
+        requirement = get_requirement(result, "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.SATISFIED)
+        self.assertEqual(requirement.related_fact_ids, ["F-001"])
+        self.assertIsNone(requirement.calculation_type)
+        item = get_item(result.checks, "requirement.sec73_itc.r1")
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Workflow requirement is satisfied: ITC claimed in GSTR-3B (amount)",
+        )
+        self.assertEqual(item.related_fact_ids, ["F-001"])
+        self.assertEqual(item.related_calculation_types, [])
+
+    def test_multiple_accepted_facts_all_related_in_extraction_order(self):
+        facts = [
+            self._r1_fact("F-002", FactStatus.CONFIRMED),
+            self._r1_fact("F-001", FactStatus.CONFIRMED),
+        ]
+        requirement = get_requirement(
+            run_defaults(extraction=make_extraction(facts=facts)),
+            "sec73_itc.r1",
+        )
+        self.assertIs(requirement.status, RequirementStatus.SATISFIED)
+        self.assertEqual(requirement.related_fact_ids, ["F-002", "F-001"])
+
+    def test_unaccepted_matching_facts_excluded_when_accepted_exists(self):
+        facts = [
+            self._r1_fact("F-001", FactStatus.CONFIRMED),
+            self._r1_fact(
+                "F-002", FactStatus.REQUIRES_VERIFICATION,
+                DraftPermission.NO,
+            ),
+        ]
+        requirement = get_requirement(
+            run_defaults(extraction=make_extraction(facts=facts)),
+            "sec73_itc.r1",
+        )
+        self.assertIs(requirement.status, RequirementStatus.SATISFIED)
+        self.assertEqual(requirement.related_fact_ids, ["F-001"])
+
+    def test_rcm_alleged_requirement_satisfies_with_alleged(self):
+        fact = make_fact(
+            "F-001", "RCM category", FactStatus.ALLEGED, "x",
+            DraftPermission.CONDITIONAL, FactType.DEPARTMENT_ALLEGATION,
+            FactRole.RCM_CATEGORY_ALLEGED,
+        )
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_RCM
+            ),
+            extraction=make_extraction(facts=[fact]),
+        )
+        self.assertIs(
+            get_requirement(result, "sec73_rcm.r1").status,
+            RequirementStatus.SATISFIED,
+        )
+
+    def test_fraud_alleged_requirement_satisfies_with_alleged(self):
+        fact = make_fact(
+            "F-001", "Basis", FactStatus.ALLEGED, "x",
+            DraftPermission.CONDITIONAL, FactType.DEPARTMENT_ALLEGATION,
+            FactRole.FRAUD_BASIS_ALLEGED,
+        )
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC74_FRAUD
+            ),
+            extraction=make_extraction(facts=[fact]),
+        )
+        self.assertIs(
+            get_requirement(result, "sec74_fraud.r1").status,
+            RequirementStatus.SATISFIED,
+        )
+
+    def test_confirmed_does_not_satisfy_alleged_only_requirement(self):
+        fact = make_fact(
+            "F-001", "Basis", FactStatus.CONFIRMED, "x",
+            DraftPermission.YES, FactType.DEPARTMENT_ALLEGATION,
+            FactRole.FRAUD_BASIS_ALLEGED,
+        )
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC74_FRAUD
+            ),
+            extraction=make_extraction(facts=[fact]),
+        )
+        requirement = get_requirement(result, "sec74_fraud.r1")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertEqual(requirement.related_fact_ids, ["F-001"])
+
+    def test_matching_requires_verification_fact_resolves_requires_verification(self):
+        fact = self._r1_fact(
+            "F-001", FactStatus.REQUIRES_VERIFICATION, DraftPermission.NO
+        )
+        result = run_defaults(extraction=make_extraction(facts=[fact]))
+        requirement = get_requirement(result, "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.REQUIRES_VERIFICATION)
+        self.assertEqual(requirement.related_fact_ids, ["F-001"])
+        item = get_item(result.checks, "requirement.sec73_itc.r1")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Workflow requirement requires verification: ITC claimed in GSTR-3B (amount)",
+        )
+
+    def test_matching_nonaccepted_non_rv_fact_resolves_unknown(self):
+        fact = self._r1_fact(
+            "F-001", FactStatus.ALLEGED, DraftPermission.CONDITIONAL
+        )
+        result = run_defaults(extraction=make_extraction(facts=[fact]))
+        requirement = get_requirement(result, "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertEqual(requirement.related_fact_ids, ["F-001"])
+        item = get_item(result.checks, "requirement.sec73_itc.r1")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Workflow requirement status is unknown: ITC claimed in GSTR-3B (amount)",
+        )
+
+    def test_no_match_on_success_missing_by_default(self):
+        result = run_defaults()
+        requirement = get_requirement(result, "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.MISSING)
+        self.assertEqual(requirement.related_fact_ids, [])
+        item = get_item(result.checks, "requirement.sec73_itc.r1")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Workflow requirement is missing from a successful extraction: ITC claimed in GSTR-3B (amount)",
+        )
+
+    def test_sec129_r6_no_match_on_success_requires_verification(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        requirement = get_requirement(result, "sec129.r6")
+        self.assertIs(requirement.status, RequirementStatus.REQUIRES_VERIFICATION)
+        item = get_item(result.checks, "requirement.sec129.r6")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Workflow requirement requires verification: Value of goods and tax payable on the goods where stated and relevant to penalty computation",
+        )
+
+    def test_sec129_r7_no_match_on_success_requires_verification(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        requirement = get_requirement(result, "sec129.r7")
+        self.assertIs(requirement.status, RequirementStatus.REQUIRES_VERIFICATION)
+        item = get_item(result.checks, "requirement.sec129.r7")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Workflow requirement requires verification: Whether the owner of the goods has come forward, where relevant and determinable",
+        )
+
+    def test_sec129_r9_no_match_on_success_requires_verification(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        requirement = get_requirement(result, "sec129.r9")
+        self.assertIs(requirement.status, RequirementStatus.REQUIRES_VERIFICATION)
+        item = get_item(result.checks, "requirement.sec129.r9")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Workflow requirement requires verification: Order date / current enforcement status if an order has already been issued",
+        )
+
+    def test_no_match_on_partial_unknown_not_missing(self):
+        result = run_defaults(
+            extraction=make_extraction(status=FactExtractionStatus.PARTIAL)
+        )
+        requirement = get_requirement(result, "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        item = get_item(result.checks, "requirement.sec73_itc.r1")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Workflow requirement status is unknown because fact extraction was not fully successful: ITC claimed in GSTR-3B (amount)",
+        )
+
+    def test_no_match_on_failed_unknown_not_missing(self):
+        result = run_defaults(
+            extraction=make_extraction(status=FactExtractionStatus.FAILED)
+        )
+        requirement = get_requirement(result, "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertNotIn("missing", get_item(
+            result.checks, "requirement.sec73_itc.r1"
+        ).message.lower())
+
+    def test_no_match_on_no_input_unknown_not_missing(self):
+        result = run_defaults(
+            extraction=make_extraction(status=FactExtractionStatus.NO_INPUT)
+        )
+        requirement = get_requirement(result, "sec73_itc.r1")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertNotIn("missing", get_item(
+            result.checks, "requirement.sec73_itc.r1"
+        ).message.lower())
+
+    def test_fact_requirement_calculation_type_always_none(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            profile = get_validation_profile(proceeding_type)
+            kinds = {
+                spec.requirement_id: spec.kind
+                for spec in profile.requirement_specs
+            }
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            for requirement in result.requirements:
+                if kinds[requirement.requirement_id] == RequirementKind.FACT:
+                    self.assertIsNone(
+                        requirement.calculation_type,
+                        requirement.requirement_id,
+                    )
+
+    def test_exact_requirement_messages(self):
+        # Templates for the remaining default-run states, verbatim.
+        result = run_defaults()
+        expected = {
+            "requirement.sec73_itc.r1":
+                "Workflow requirement is missing from a successful extraction: ITC claimed in GSTR-3B (amount)",
+            "requirement.sec73_itc.r3":
+                "Derived workflow requirement has no matching arithmetic result: Difference between GSTR-3B and GSTR-2B (INFERRED)",
+            "requirement.sec73_itc.r4":
+                "Workflow requirement is missing from a successful extraction: FY / tax period",
+        }
+        for check_id, message in expected.items():
+            self.assertEqual(get_item(result.checks, check_id).message, message)
+
+    def test_only_usable_non_empty_related_ids(self):
+        facts = [
+            self._r1_fact("F-001", FactStatus.CONFIRMED),
+            self._r1_fact("", FactStatus.CONFIRMED),
+            self._r1_fact(None, FactStatus.CONFIRMED),
+        ]
+        requirement = get_requirement(
+            run_defaults(extraction=make_extraction(facts=facts)),
+            "sec73_itc.r1",
+        )
+        self.assertIs(requirement.status, RequirementStatus.SATISFIED)
+        self.assertEqual(requirement.related_fact_ids, ["F-001"])
+
+    def test_matching_facts_are_never_mutated(self):
+        facts = [
+            self._r1_fact("F-001", FactStatus.CONFIRMED),
+            self._r1_fact(
+                "F-002", FactStatus.REQUIRES_VERIFICATION,
+                DraftPermission.NO,
+            ),
+        ]
+        snapshot = copy.deepcopy(facts)
+        run_defaults(extraction=make_extraction(facts=facts))
+        self.assertEqual(facts, snapshot)
+
+
+# --- Step 8.3 Q. DERIVED requirement resolution (§19.98–§19.103) -------------
+
+class DerivedRequirementTests(unittest.TestCase):
+    """DERIVED resolution reuses the already-emitted Step-8.2 structural
+    arithmetic checks; never recomputes arithmetic."""
+
+    def test_itc_single_valid_pass_result_derived(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["A", "B"])],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.DERIVED)
+        self.assertEqual(requirement.related_fact_ids, ["A", "B"])
+        self.assertEqual(
+            requirement.calculation_type,
+            ArithmeticCalculationType.ITC_DIFFERENCE,
+        )
+        item = get_item(result.checks, "requirement.sec73_itc.r3")
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Workflow requirement is deterministically derived: Difference between GSTR-3B and GSTR-2B (INFERRED)",
+        )
+        self.assertEqual(item.related_fact_ids, ["A", "B"])
+        self.assertEqual(
+            item.related_calculation_types,
+            [ArithmeticCalculationType.ITC_DIFFERENCE],
+        )
+
+    def test_itc_single_valid_mismatch_result_derived(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    status=ArithmeticStatus.MISMATCH,
+                    source_fact_ids=["A", "B"],
+                    result=Decimal("5"),
+                )
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.DERIVED)
+        # The mismatch stays communicated by the arithmetic outcome item.
+        outcome = get_item(result.checks, "arithmetic.1.outcome")
+        self.assertIs(outcome.status, ValidationStatus.WARNING)
+
+    def test_general_single_valid_pass_result_derived(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_GENERAL
+            ),
+            extraction=make_extraction(facts=output_tax_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    calculation_type=ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE,
+                    source_fact_ids=["A", "B"],
+                )
+            ],
+        )
+        requirement = get_requirement(result, "sec73_general.r3")
+        self.assertIs(requirement.status, RequirementStatus.DERIVED)
+
+    def test_general_single_valid_mismatch_result_derived(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_GENERAL
+            ),
+            extraction=make_extraction(facts=output_tax_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    calculation_type=ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE,
+                    status=ArithmeticStatus.MISMATCH,
+                    source_fact_ids=["A", "B"],
+                    result=Decimal("5"),
+                )
+            ],
+        )
+        requirement = get_requirement(result, "sec73_general.r3")
+        self.assertIs(requirement.status, RequirementStatus.DERIVED)
+
+    def test_mismatch_requirement_check_remains_pass(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    status=ArithmeticStatus.MISMATCH,
+                    source_fact_ids=["A", "B"],
+                    result=Decimal("5"),
+                )
+            ],
+        )
+        item = get_item(result.checks, "requirement.sec73_itc.r3")
+        self.assertIs(item.status, ValidationStatus.PASS)
+
+    def test_insufficient_data_unknown_warning(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    status=ArithmeticStatus.INSUFFICIENT_DATA,
+                    source_fact_ids=["A", "B"],
+                    result=None,
+                )
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertEqual(requirement.related_fact_ids, ["A", "B"])
+        self.assertEqual(
+            requirement.calculation_type,
+            ArithmeticCalculationType.ITC_DIFFERENCE,
+        )
+        item = get_item(result.checks, "requirement.sec73_itc.r3")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Derived workflow requirement has insufficient arithmetic data: Difference between GSTR-3B and GSTR-2B (INFERRED)",
+        )
+
+    def test_zero_matching_results_unknown_warning(self):
+        result = run_defaults()
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertEqual(requirement.related_fact_ids, [])
+        item = get_item(result.checks, "requirement.sec73_itc.r3")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Derived workflow requirement has no matching arithmetic result: Difference between GSTR-3B and GSTR-2B (INFERRED)",
+        )
+        self.assertEqual(
+            item.related_calculation_types,
+            [ArithmeticCalculationType.ITC_DIFFERENCE],
+        )
+
+    def test_draft_permission_failure_unknown_warning(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    source_fact_ids=["A", "B"],
+                    allowed_in_draft=DraftPermission.YES,
+                )
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        item = get_item(result.checks, "requirement.sec73_itc.r3")
+        self.assertEqual(
+            item.message,
+            "Derived workflow requirement cannot be trusted because its arithmetic result failed structural validation: Difference between GSTR-3B and GSTR-2B (INFERRED)",
+        )
+
+    def test_source_resolution_failure_unknown_warning(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(source_fact_ids=["A", "MISSING"])
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertEqual(requirement.related_fact_ids, ["A", "MISSING"])
+
+    def test_role_provenance_failure_unknown_warning(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["B", "A"])],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertEqual(requirement.related_fact_ids, ["B", "A"])
+
+    def test_consistency_failure_unknown_warning(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    source_fact_ids=["A", "B"], result=Decimal("5")
+                )
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+
+    def test_calculation_type_failure_unknown_warning(self):
+        # A matching enum calculation type whose calculation_type check
+        # FAILs is only reachable by forcing the emitted Step-8.2 item.
+        real = engine._arithmetic_checks
+
+        def wrapper(checks, n, result, facts):
+            real(checks, n, result, facts)
+            for index, item in enumerate(checks):
+                if item.check_id == f"arithmetic.{n}.calculation_type":
+                    checks[index] = ValidationItem(
+                        check_id=item.check_id,
+                        status=ValidationStatus.FAIL,
+                        message="Arithmetic calculation type is unsupported.",
+                        related_fact_ids=[],
+                        related_calculation_types=[],
+                    )
+
+        with mock.patch.object(
+            engine, "_arithmetic_checks", side_effect=wrapper
+        ):
+            result = run_defaults(
+                extraction=make_extraction(facts=itc_operand_facts()),
+                arithmetic=[make_arithmetic(source_fact_ids=["A", "B"])],
+            )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        item = get_item(result.checks, "requirement.sec73_itc.r3")
+        self.assertEqual(
+            item.message,
+            "Derived workflow requirement cannot be trusted because its arithmetic result failed structural validation: Difference between GSTR-3B and GSTR-2B (INFERRED)",
+        )
+
+    def test_outcome_warning_is_not_structural(self):
+        # MISMATCH with a non-zero result: outcome WARNING while all five
+        # structural checks PASS → requirement still DERIVED.
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    status=ArithmeticStatus.MISMATCH,
+                    source_fact_ids=["A", "B"],
+                    result=Decimal("5"),
+                )
+            ],
+        )
+        outcome = get_item(result.checks, "arithmetic.1.outcome")
+        self.assertIs(outcome.status, ValidationStatus.WARNING)
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.DERIVED)
+
+    def test_exactly_five_structural_checks_consulted(self):
+        looked_up = []
+        real_find = engine._find_item
+
+        def spy(checks, check_id):
+            looked_up.append(check_id)
+            return real_find(checks, check_id)
+
+        with mock.patch.object(engine, "_find_item", side_effect=spy):
+            run_defaults(
+                extraction=make_extraction(facts=itc_operand_facts()),
+                arithmetic=[make_arithmetic(source_fact_ids=["A", "B"])],
+            )
+        arithmetic_lookups = {
+            check_id for check_id in looked_up
+            if check_id.startswith("arithmetic.")
+        }
+        self.assertEqual(
+            arithmetic_lookups,
+            {
+                "arithmetic.1.calculation_type",
+                "arithmetic.1.draft_permission",
+                "arithmetic.1.source_resolution",
+                "arithmetic.1.role_provenance",
+                "arithmetic.1.result_status_consistency",
+            },
+        )
+
+    def test_requirement_resolver_does_not_recompute_arithmetic(self):
+        with mock.patch.object(
+            engine, "_arithmetic_checks", wraps=engine._arithmetic_checks
+        ) as spy:
+            run_defaults(
+                extraction=make_extraction(facts=itc_operand_facts()),
+                arithmetic=[make_arithmetic(source_fact_ids=["A", "B"])],
+            )
+        self.assertEqual(spy.call_count, 1)
+
+    def test_source_ids_preserve_stored_operand_order(self):
+        facts = [
+            make_fact(
+                "X", "3B", FactStatus.CONFIRMED, "x", DraftPermission.YES,
+                FactType.STATED_AMOUNT,
+                FactRole.GSTR3B_ITC_CLAIMED_AMOUNT,
+            ),
+            make_fact(
+                "W", "2B", FactStatus.CONFIRMED, "w", DraftPermission.YES,
+                FactType.STATED_AMOUNT,
+                FactRole.GSTR2B_ITC_REFLECTED_AMOUNT,
+            ),
+        ]
+        result = run_defaults(
+            extraction=make_extraction(facts=facts),
+            arithmetic=[make_arithmetic(source_fact_ids=["X", "W"])],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.DERIVED)
+        self.assertEqual(requirement.related_fact_ids, ["X", "W"])
+
+    def test_unusable_source_ids_excluded(self):
+        facts = [
+            make_fact(
+                123, "3B", FactStatus.CONFIRMED, "x", DraftPermission.YES,
+                FactType.STATED_AMOUNT,
+                FactRole.GSTR3B_ITC_CLAIMED_AMOUNT,
+            ),
+            make_fact(
+                "B", "2B", FactStatus.CONFIRMED, "y", DraftPermission.YES,
+                FactType.STATED_AMOUNT,
+                FactRole.GSTR2B_ITC_REFLECTED_AMOUNT,
+            ),
+        ]
+        result = run_defaults(
+            extraction=make_extraction(facts=facts),
+            arithmetic=[make_arithmetic(source_fact_ids=[123, "B"])],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.DERIVED)
+        self.assertEqual(requirement.related_fact_ids, ["B"])
+
+    def test_calculation_type_populated_on_derived_and_unknown_results(self):
+        derived = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["A", "B"])],
+        )
+        self.assertIs(
+            get_requirement(derived, "sec73_itc.r3").calculation_type,
+            ArithmeticCalculationType.ITC_DIFFERENCE,
+        )
+        unknown_zero = run_defaults()
+        self.assertIs(
+            get_requirement(unknown_zero, "sec73_itc.r3").calculation_type,
+            ArithmeticCalculationType.ITC_DIFFERENCE,
+        )
+        unknown_failed = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["B", "A"])],
+        )
+        self.assertIs(
+            get_requirement(unknown_failed, "sec73_itc.r3").calculation_type,
+            ArithmeticCalculationType.ITC_DIFFERENCE,
+        )
+
+
+# --- Step 8.3 R. Multiple matching arithmetic results (§19.104) --------------
+
+class MultipleArithmeticAmbiguityTests(unittest.TestCase):
+    """Two or more matching results → UNKNOWN with the ambiguity
+    WARNING; the engine never selects one arbitrarily."""
+
+    def _two_valid(self):
+        return run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(source_fact_ids=["A", "B"]),
+                make_arithmetic(source_fact_ids=["A", "B"]),
+            ],
+        )
+
+    def test_two_matching_results_unknown(self):
+        requirement = get_requirement(self._two_valid(), "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+
+    def test_does_not_select_first_result(self):
+        # First structurally valid, second structurally invalid → still
+        # UNKNOWN.
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(source_fact_ids=["A", "B"]),
+                make_arithmetic(source_fact_ids=["B", "A"]),
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+
+    def test_does_not_prefer_pass_over_mismatch(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    status=ArithmeticStatus.MISMATCH,
+                    source_fact_ids=["A", "B"],
+                    result=Decimal("5"),
+                ),
+                make_arithmetic(source_fact_ids=["A", "B"]),
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+
+    def test_does_not_prefer_mismatch_over_pass(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(source_fact_ids=["A", "B"]),
+                make_arithmetic(
+                    status=ArithmeticStatus.MISMATCH,
+                    source_fact_ids=["A", "B"],
+                    result=Decimal("5"),
+                ),
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+
+    def test_does_not_prefer_structurally_valid_result(self):
+        for arithmetic in (
+            [
+                make_arithmetic(source_fact_ids=["A", "B"]),
+                make_arithmetic(source_fact_ids=["A", "MISSING"]),
+            ],
+            [
+                make_arithmetic(source_fact_ids=["A", "MISSING"]),
+                make_arithmetic(source_fact_ids=["A", "B"]),
+            ],
+        ):
+            result = run_defaults(
+                extraction=make_extraction(facts=itc_operand_facts()),
+                arithmetic=arithmetic,
+            )
+            self.assertIs(
+                get_requirement(result, "sec73_itc.r3").status,
+                RequirementStatus.UNKNOWN,
+            )
+
+    def test_exact_ambiguity_message(self):
+        item = get_item(self._two_valid().checks, "requirement.sec73_itc.r3")
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Derived workflow requirement is ambiguous because multiple arithmetic results match: Difference between GSTR-3B and GSTR-2B (INFERRED)",
+        )
+        self.assertEqual(
+            item.related_calculation_types,
+            [ArithmeticCalculationType.ITC_DIFFERENCE],
+        )
+
+    def test_one_requirement_item_only(self):
+        matches = [
+            item for item in self._two_valid().checks
+            if item.check_id == "requirement.sec73_itc.r3"
+        ]
+        self.assertEqual(len(matches), 1)
+
+    def test_related_ids_aggregate_in_input_and_operand_order(self):
+        facts = [
+            make_fact(
+                "A", "3B", FactStatus.CONFIRMED, "a", DraftPermission.YES,
+                FactType.STATED_AMOUNT,
+                FactRole.GSTR3B_ITC_CLAIMED_AMOUNT,
+            ),
+            make_fact(
+                "B", "2B", FactStatus.CONFIRMED, "b", DraftPermission.YES,
+                FactType.STATED_AMOUNT,
+                FactRole.GSTR2B_ITC_REFLECTED_AMOUNT,
+            ),
+            make_fact(
+                "C", "3B", FactStatus.CONFIRMED, "c", DraftPermission.YES,
+                FactType.STATED_AMOUNT,
+                FactRole.GSTR3B_ITC_CLAIMED_AMOUNT,
+            ),
+            make_fact(
+                "D", "2B", FactStatus.CONFIRMED, "d", DraftPermission.YES,
+                FactType.STATED_AMOUNT,
+                FactRole.GSTR2B_ITC_REFLECTED_AMOUNT,
+            ),
+        ]
+        result = run_defaults(
+            extraction=make_extraction(facts=facts),
+            arithmetic=[
+                make_arithmetic(source_fact_ids=["A", "B"]),
+                make_arithmetic(source_fact_ids=["C", "D"]),
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertEqual(
+            requirement.related_fact_ids, ["A", "B", "C", "D"]
+        )
+
+    def test_duplicate_source_ids_first_occurrence_dedup(self):
+        requirement = get_requirement(self._two_valid(), "sec73_itc.r3")
+        self.assertEqual(requirement.related_fact_ids, ["A", "B"])
+
+    def test_unrelated_calculation_types_ignored(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(source_fact_ids=["A", "B"]),
+                make_arithmetic(
+                    calculation_type=ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE,
+                    source_fact_ids=["A", "B"],
+                ),
+            ],
+        )
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertIs(requirement.status, RequirementStatus.DERIVED)
+
+
+# --- Step 8.3 S. Stable requirement machine IDs (§19.89) ---------------------
+
+class StableRequirementIdTests(unittest.TestCase):
+    """check_id is always "requirement." + requirement_id; never the
+    requirement text."""
+
+    def test_itc_r1_id_exact(self):
+        self.assertIn(
+            "requirement.sec73_itc.r1", check_ids(run_defaults().checks)
+        )
+
+    def test_itc_r3_id_exact(self):
+        self.assertIn(
+            "requirement.sec73_itc.r3", check_ids(run_defaults().checks)
+        )
+
+    def test_general_r3_id_exact(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_GENERAL
+            )
+        )
+        self.assertIn(
+            "requirement.sec73_general.r3", check_ids(result.checks)
+        )
+
+    def test_sec129_r9_id_exact(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        self.assertIn("requirement.sec129.r9", check_ids(result.checks))
+
+    def test_all_29_ids_equal_requirement_prefix_plus_id(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            profile = get_validation_profile(proceeding_type)
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            expected = {
+                f"requirement.{spec.requirement_id}"
+                for spec in profile.requirement_specs
+            }
+            emitted = {
+                item.check_id for item in result.checks
+                if item.check_id.startswith("requirement.")
+            }
+            self.assertEqual(emitted, expected, proceeding_type.name)
+
+    def test_no_requirement_text_appears_in_machine_id(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            profile = get_validation_profile(proceeding_type)
+            texts = {
+                spec.requirement_text for spec in profile.requirement_specs
+            }
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            for item in result.checks:
+                if item.check_id.startswith("requirement."):
+                    for text in texts:
+                        self.assertNotIn(
+                            text, item.check_id, item.check_id
+                        )
+
+
+# --- Step 8.3 T. ITC derived special-rule replacement (§19.107) --------------
+
+class ItcDerivedRuleReplacementTests(unittest.TestCase):
+    """The resolved sec73_itc.r3 drives workflow rule 1; the Step-8.2
+    temporary message must never appear."""
+
+    def _derived(self):
+        return run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["A", "B"])],
+        )
+
+    def test_temporary_deferral_message_never_emitted(self):
+        self.assertNotIn("deferred until Step 8.3", engine_source_text())
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            for item in result.checks:
+                self.assertNotIn(
+                    "deferred until Step 8.3", item.message, item.check_id
+                )
+
+    def test_derived_requirement_makes_special_rule_pass(self):
+        item = get_item(self._derived().checks, ITC_RULE_ID)
+        self.assertIsNotNone(item)
+        self.assertIs(item.status, ValidationStatus.PASS)
+
+    def test_exact_derived_pass_message(self):
+        item = get_item(self._derived().checks, ITC_RULE_ID)
+        self.assertEqual(
+            item.message,
+            "Deterministic ITC-difference workflow requirement is derived from approved arithmetic output.",
+        )
+        self.assertEqual(
+            item.related_calculation_types,
+            [ArithmeticCalculationType.ITC_DIFFERENCE],
+        )
+
+    def test_related_ids_copied_from_r3(self):
+        result = self._derived()
+        requirement = get_requirement(result, "sec73_itc.r3")
+        item = get_item(result.checks, ITC_RULE_ID)
+        self.assertEqual(item.related_fact_ids, requirement.related_fact_ids)
+        self.assertEqual(item.related_fact_ids, ["A", "B"])
+
+    def test_no_matching_result_warning(self):
+        result = run_defaults()
+        item = get_item(result.checks, ITC_RULE_ID)
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Deterministic ITC-difference workflow requirement could not be resolved from one sufficient arithmetic result.",
+        )
+        self.assertEqual(item.related_fact_ids, [])
+        self.assertEqual(
+            item.related_calculation_types,
+            [ArithmeticCalculationType.ITC_DIFFERENCE],
+        )
+
+    def test_insufficient_data_warning(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    status=ArithmeticStatus.INSUFFICIENT_DATA,
+                    source_fact_ids=["A", "B"],
+                    result=None,
+                )
+            ],
+        )
+        item = get_item(result.checks, ITC_RULE_ID)
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Deterministic ITC-difference workflow requirement could not be resolved from one sufficient arithmetic result.",
+        )
+
+    def test_multiple_matches_warning(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(source_fact_ids=["A", "B"]),
+                make_arithmetic(source_fact_ids=["A", "B"]),
+            ],
+        )
+        item = get_item(result.checks, ITC_RULE_ID)
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(item.related_fact_ids, ["A", "B"])
+
+    def test_matching_structural_failure_fail(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["B", "A"])],
+        )
+        item = get_item(result.checks, ITC_RULE_ID)
+        self.assertIs(item.status, ValidationStatus.FAIL)
+
+    def test_exact_structural_fail_message(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["B", "A"])],
+        )
+        item = get_item(result.checks, ITC_RULE_ID)
+        self.assertEqual(
+            item.message,
+            "Deterministic ITC-difference workflow requirement failed arithmetic structural validation.",
+        )
+
+    def test_structural_fail_related_ids_aggregated(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["B", "A"])],
+        )
+        item = get_item(result.checks, ITC_RULE_ID)
+        self.assertEqual(item.related_fact_ids, ["B", "A"])
+
+    def test_structural_fail_multiple_results_dedup_by_first_occurrence(self):
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[
+                make_arithmetic(source_fact_ids=["A", "B"]),
+                make_arithmetic(source_fact_ids=["B", "A"]),
+            ],
+        )
+        item = get_item(result.checks, ITC_RULE_ID)
+        self.assertIs(item.status, ValidationStatus.FAIL)
+        self.assertEqual(item.related_fact_ids, ["A", "B"])
+
+    def test_calculation_type_exact_itc_difference_in_all_outcomes(self):
+        cases = (
+            {},  # no arithmetic → WARNING
+            {
+                "extraction": make_extraction(facts=itc_operand_facts()),
+                "arithmetic": [make_arithmetic(source_fact_ids=["A", "B"])],
+            },  # DERIVED → PASS
+            {
+                "extraction": make_extraction(facts=itc_operand_facts()),
+                "arithmetic": [make_arithmetic(source_fact_ids=["B", "A"])],
+            },  # structural fail → FAIL
+        )
+        for kwargs in cases:
+            result = run_defaults(**kwargs)
+            item = get_item(result.checks, ITC_RULE_ID)
+            self.assertEqual(
+                item.related_calculation_types,
+                [ArithmeticCalculationType.ITC_DIFFERENCE],
+            )
+
+
+# --- Step 8.3 U. GENERAL derived special-rule replacement (§19.108) ----------
+
+class GeneralDerivedRuleReplacementTests(unittest.TestCase):
+    """The resolved sec73_general.r3 drives workflow rule 1."""
+
+    def _run(self, **kwargs):
+        kwargs.setdefault(
+            "classification",
+            make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_GENERAL
+            ),
+        )
+        return run_defaults(**kwargs)
+
+    def test_derived_requirement_makes_special_rule_pass(self):
+        result = self._run(
+            extraction=make_extraction(facts=output_tax_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    calculation_type=ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE,
+                    source_fact_ids=["A", "B"],
+                )
+            ],
+        )
+        item = get_item(result.checks, GENERAL_RULE_ID)
+        self.assertIsNotNone(item)
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Deterministic output-tax-difference workflow requirement is derived from approved arithmetic output.",
+        )
+        self.assertEqual(item.related_fact_ids, ["A", "B"])
+
+    def test_unresolved_warning(self):
+        result = self._run()
+        item = get_item(result.checks, GENERAL_RULE_ID)
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "Deterministic output-tax-difference workflow requirement could not be resolved from one sufficient arithmetic result.",
+        )
+
+    def test_matching_structural_failure_fail(self):
+        result = self._run(
+            extraction=make_extraction(facts=output_tax_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    calculation_type=ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE,
+                    source_fact_ids=["B", "A"],
+                )
+            ],
+        )
+        item = get_item(result.checks, GENERAL_RULE_ID)
+        self.assertIs(item.status, ValidationStatus.FAIL)
+        self.assertEqual(
+            item.message,
+            "Deterministic output-tax-difference workflow requirement failed arithmetic structural validation.",
+        )
+
+    def test_calculation_type_exact_output_tax_difference(self):
+        result = self._run(
+            extraction=make_extraction(facts=output_tax_operand_facts()),
+            arithmetic=[
+                make_arithmetic(
+                    calculation_type=ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE,
+                    source_fact_ids=["A", "B"],
+                )
+            ],
+        )
+        item = get_item(result.checks, GENERAL_RULE_ID)
+        self.assertEqual(
+            item.related_calculation_types,
+            [ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE],
+        )
+
+    def test_temporary_message_absent_in_general_runs(self):
+        for arithmetic in (
+            [],
+            [
+                make_arithmetic(
+                    calculation_type=ArithmeticCalculationType.OUTPUT_TAX_DIFFERENCE,
+                    source_fact_ids=["A", "B"],
+                )
+            ],
+        ):
+            result = self._run(
+                extraction=make_extraction(facts=output_tax_operand_facts()),
+                arithmetic=arithmetic,
+            )
+            for item in result.checks:
+                self.assertNotIn(
+                    "deferred until Step 8.3", item.message, item.check_id
+                )
+
+
+# --- Step 8.3 V. Special-rule regression (§19.83–§19.85) ---------------------
+
+class SpecialRuleRegressionTests(unittest.TestCase):
+    """Only ITC/GENERAL rule 1 changed in Step 8.3; everything else keeps
+    its Step-8.2 semantics."""
+
+    def test_fraud_rule_0_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC74_FRAUD
+            ),
+            extraction=make_extraction(facts=fraud_clean_facts()),
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec74_fraud.special_rule.0.deterministic_check",
+        )
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Fraud/suppression allegations remain departmental allegations.",
+        )
+
+    def test_fraud_rule_2_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC74_FRAUD
+            ),
+            extraction=make_extraction(facts=fraud_clean_facts()),
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec74_fraud.special_rule.2.deterministic_check",
+        )
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Fraud-workflow fact provenance is present.",
+        )
+
+    def test_sec129_rule_6_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec129.special_rule.6.deterministic_check",
+        )
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "Section-129 deadline handling uses only supplied preflight/deadline results; validation adds no statutory deadline calculation.",
+        )
+
+    def test_review_gate_unchanged(self):
+        result = run_defaults()
+        item = get_item(
+            result.checks, "workflow.sec73_itc.special_rule.0.review_gate"
+        )
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertTrue(
+            item.message.startswith("Mandatory review gate applies:")
+        )
+
+    def test_future_legal_rule_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_RCM
+            )
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec73_rcm.special_rule.1.future_legal_rule",
+        )
+        self.assertIs(item.status, ValidationStatus.WARNING)
+        self.assertEqual(
+            item.message,
+            "This workflow rule requires future verified legal-rule support and CA review.",
+        )
+
+    def test_upstream_invariant_unchanged(self):
+        result = run_defaults(
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC129_ENFORCE
+            )
+        )
+        item = get_item(
+            result.checks,
+            "workflow.sec129.special_rule.2.upstream_invariant",
+        )
+        self.assertIs(item.status, ValidationStatus.PASS)
+        self.assertEqual(
+            item.message,
+            "This safety boundary is enforced by an authoritative upstream component and is not re-run by validation.",
+        )
+
+
+# --- Step 8.3 W. Requirement-driven eligibility (§19.106) --------------------
+
+class RequirementEligibilityTests(unittest.TestCase):
+    """MISSING/UNKNOWN/REQUIRES_VERIFICATION force at least
+    REVIEW_REQUIRED; SATISFIED/DERIVED never force review alone;
+    BLOCKED conditions remain dominant."""
+
+    def test_missing_requirement_forces_review_required(self):
+        result = run_custom([make_spec()])
+        requirement = get_requirement(result, "mock.r0")
+        self.assertIs(requirement.status, RequirementStatus.MISSING)
+        self.assertIsNot(result.draft_eligibility, DraftEligibility.BLOCKED)
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_unknown_requirement_forces_review_required(self):
+        spec = make_spec(
+            requirement_id="mock.d1",
+            requirement_text="Derived value",
+            kind=RequirementKind.DERIVED,
+            calculation_type=ArithmeticCalculationType.ITC_DIFFERENCE,
+        )
+        result = run_custom([spec])
+        requirement = get_requirement(result, "mock.d1")
+        self.assertIs(requirement.status, RequirementStatus.UNKNOWN)
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_requires_verification_requirement_forces_review_required(self):
+        spec = make_spec(
+            absent_on_success=RequirementStatus.REQUIRES_VERIFICATION
+        )
+        result = run_custom([spec])
+        requirement = get_requirement(result, "mock.r0")
+        self.assertIs(requirement.status, RequirementStatus.REQUIRES_VERIFICATION)
+        self.assertIs(
+            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
+        )
+
+    def test_satisfied_requirement_does_not_independently_force_review(self):
+        fact = make_fact(
+            "F-001", "Date", FactStatus.CONFIRMED, "s",
+            DraftPermission.YES, FactType.NOTICE_DATE, FactRole.NONE,
+        )
+        result = run_custom(
+            [make_spec()], extraction=make_extraction(facts=[fact])
+        )
+        requirement = get_requirement(result, "mock.r0")
+        self.assertIs(requirement.status, RequirementStatus.SATISFIED)
+        self.assertIs(result.draft_eligibility, DraftEligibility.ALLOWED)
+
+    def test_derived_requirement_does_not_independently_force_review(self):
+        spec = make_spec(
+            requirement_id="mock.d1",
+            requirement_text="Derived value",
+            kind=RequirementKind.DERIVED,
+            calculation_type=ArithmeticCalculationType.ITC_DIFFERENCE,
+        )
+        result = run_custom(
+            [spec],
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["A", "B"])],
+        )
+        requirement = get_requirement(result, "mock.d1")
+        self.assertIs(requirement.status, RequirementStatus.DERIVED)
+        self.assertIs(result.draft_eligibility, DraftEligibility.ALLOWED)
+
+    def test_structural_arithmetic_fail_remains_blocked(self):
+        # A structural FAIL blocks even while requirement resolution is
+        # active and its own derived requirement is UNKNOWN.
+        result = run_defaults(
+            extraction=make_extraction(facts=itc_operand_facts()),
+            arithmetic=[make_arithmetic(source_fact_ids=["B", "A"])],
+        )
+        self.assertIs(
+            get_requirement(result, "sec73_itc.r3").status,
+            RequirementStatus.UNKNOWN,
+        )
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
+
+    def test_requirement_warning_affects_overall_status(self):
+        result = run_custom([make_spec()])  # MISSING → requirement WARNING
+        self.assertIs(result.overall_status, ValidationStatus.WARNING)
+
+    def test_requirement_pass_does_not_create_warning(self):
+        fact = make_fact(
+            "F-001", "Date", FactStatus.CONFIRMED, "s",
+            DraftPermission.YES, FactType.NOTICE_DATE, FactRole.NONE,
+        )
+        result = run_custom(
+            [make_spec()], extraction=make_extraction(facts=[fact])
+        )
+        self.assertIs(result.overall_status, ValidationStatus.PASS)
+
+    def test_requirements_never_create_fail_alone(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            for item in result.checks:
+                if item.check_id.startswith("requirement."):
+                    self.assertIn(
+                        item.status,
+                        (ValidationStatus.PASS, ValidationStatus.WARNING),
+                        item.check_id,
+                    )
+
+
+# --- Step 8.3 X. Profile-wide requirement behavior (§19.16) ------------------
+
+class ProfileWideRequirementTests(unittest.TestCase):
+    """Every deep profile resolves all of its authoritative specs at
+    runtime."""
+
+    def _run(self, proceeding_type):
+        return run_defaults(
+            classification=make_classification(
+                proceeding_type=proceeding_type
+            )
+        )
+
+    def test_itc_produces_exactly_five_requirement_results(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC73_ITC).requirements), 5
+        )
+
+    def test_general_produces_exactly_five_requirement_results(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC73_GENERAL).requirements), 5
+        )
+
+    def test_rcm_produces_exactly_five_requirement_results(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC73_RCM).requirements), 5
+        )
+
+    def test_fraud_produces_exactly_five_requirement_results(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC74_FRAUD).requirements), 5
+        )
+
+    def test_sec129_produces_exactly_nine_requirement_results(self):
+        self.assertEqual(
+            len(self._run(ProceedingType.GST_SEC129_ENFORCE).requirements), 9
+        )
+
+    def test_total_authoritative_profile_count_remains_29(self):
+        static_total = sum(
+            len(profile.requirement_specs)
+            for profile in VALIDATION_PROFILE_REGISTRY.values()
+        )
+        self.assertEqual(static_total, 29)
+        runtime_total = sum(
+            len(self._run(proceeding_type).requirements)
+            for proceeding_type in DEEP_PROFILE_COUNTS
+        )
+        self.assertEqual(runtime_total, 29)
+
+    def test_requirement_ids_unique(self):
+        for proceeding_type in DEEP_PROFILE_COUNTS:
+            result = self._run(proceeding_type)
+            ids = [r.requirement_id for r in result.requirements]
+            self.assertEqual(len(ids), len(set(ids)), proceeding_type.name)
+
+    def test_result_requirement_text_equals_profile_text_verbatim(self):
+        for proceeding_type in DEEP_PROFILE_COUNTS:
+            profile = get_validation_profile(proceeding_type)
+            result = self._run(proceeding_type)
+            for requirement, spec in zip(
+                result.requirements, profile.requirement_specs
+            ):
+                self.assertEqual(
+                    requirement.requirement_id, spec.requirement_id
+                )
+                self.assertEqual(
+                    requirement.requirement_text, spec.requirement_text
+                )
+
+
+# --- Step 8.3 Y. Staging and purity ------------------------------------------
+
+class StagingPurityTests(unittest.TestCase):
+    """Step 8.3 keeps evidence staged and the engine pure and immutable."""
+
+    def test_evidence_checklist_remains_empty_everywhere(self):
+        for proceeding_type in ALL_DEEP_PROCEEDINGS:
+            result = run_defaults(
+                classification=make_classification(
+                    proceeding_type=proceeding_type
+                )
+            )
+            self.assertEqual(
+                result.evidence_checklist, [], proceeding_type.name
+            )
+        triage = run_defaults(
+            classification=make_classification(
+                support_level=SupportLevel.TRIAGE_ONLY
+            )
+        )
+        self.assertEqual(triage.evidence_checklist, [])
+
+    def test_no_evidence_gap_generation(self):
+        self.assertNotIn("EvidenceGap", engine_source_text())
+
+    def test_no_potential_defence_generation(self):
+        self.assertNotIn("PotentialDefence", engine_source_text())
+
+    def test_api_signature_unchanged(self):
+        signature = inspect.signature(engine.run_validation)
+        self.assertEqual(
+            list(signature.parameters),
+            [
+                "classification",
+                "extraction_result",
+                "preflight_result",
+                "arithmetic_results",
+                "deadline_result",
+            ],
+        )
+        self.assertEqual(
+            signature.parameters["deadline_result"].default, None
+        )
+
+    def test_no_new_public_callable(self):
+        public_callables = [
+            name
+            for name, obj in vars(engine).items()
+            if not name.startswith("_")
+            and callable(obj)
+            and getattr(obj, "__module__", None) == engine.__name__
+        ]
+        self.assertEqual(public_callables, ["run_validation"])
+
+    def test_no_forbidden_imports(self):
+        source = engine_source_text().lower()
+        for token in (
+            "llm_client", "gemini", "genai", "google", "requests",
+            "urllib", "socket", "http", "sqlite", "streamlit",
+            "deadline_engine", "arithmetic_engine", "fact_engine",
+            "preflight_engine", "proceeding_classifier",
+            "taxonomy_registry", "notice_explainer", "import app",
+        ):
+            self.assertNotIn(token, source, token)
+
+    def test_no_deadline_or_arithmetic_recomputation(self):
+        source = engine_source_text()
+        self.assertNotIn("deadline_engine", source)
+        self.assertNotIn("arithmetic_engine", source)
+        lowered = source.lower()
+        self.assertNotIn("timedelta", lowered)
+        self.assertNotIn("seven", lowered)
+
+    def test_input_objects_not_mutated_with_matching_facts(self):
+        facts = itc_operand_facts() + [
+            make_fact(
+                "F-001", "Period", FactStatus.CONFIRMED, "p",
+                DraftPermission.YES, FactType.TAX_PERIOD, FactRole.NONE,
+            ),
+        ]
+        arithmetic = [
+            make_arithmetic(
+                status=ArithmeticStatus.MISMATCH,
+                source_fact_ids=["A", "B"],
+                result=Decimal("5"),
+            )
+        ]
+        facts_snapshot = copy.deepcopy(facts)
+        arithmetic_snapshot = copy.deepcopy(arithmetic)
+        result = run_defaults(
+            extraction=make_extraction(facts=facts),
+            arithmetic=arithmetic,
+        )
+        self.assertEqual(facts, facts_snapshot)
+        self.assertEqual(arithmetic, arithmetic_snapshot)
+        # Resolved related IDs are defensive copies: mutating the output
+        # must not touch the inputs.
+        requirement = get_requirement(result, "sec73_itc.r3")
+        self.assertEqual(requirement.related_fact_ids, ["A", "B"])
+        requirement.related_fact_ids.append("INJECTED")
+        self.assertEqual(facts, facts_snapshot)
+
+    def test_profile_and_spec_objects_not_mutated(self):
+        profile = get_validation_profile(ProceedingType.GST_SEC73_ITC)
+        snapshot = copy.deepcopy(profile.requirement_specs)
+        run_defaults()
+        self.assertEqual(profile.requirement_specs, snapshot)
 
 
 def engine_source_text():
