@@ -938,6 +938,8 @@ No Section-74A deep type may be invented in Phase 2.
 - Identifier/authenticity status from extracted RFN/DIN signals via `CommunicationIdentifierStatus` (no unsupported invalidity conclusion).
 - This step defines the full `ArithmeticResult` contract (§6.7); Step 2.5 adds only the `ArithmeticStatus` enum.
 
+The authoritative Preflight + Arithmetic contract is defined in §18 (finalized by Phase 2 Step 7A).
+
 ### Step 8 — Validation Engine
 
 - Fact provenance rules.
@@ -1139,6 +1141,15 @@ List[ExtractedFact]
 
 No result wrapper is introduced in Step 6. Do NOT create
 `FactEngineResult`, `PreflightResult` or `ArithmeticResult` in Step 6.
+
+**Additive outcome channel (Phase 2 Step 7A):** the output contract above
+remains the backward-compatible primary API. Step 7A adds an additive
+outcome channel without changing `extract_facts`: a `FactExtractionStatus`
+enum, a `FactExtractionResult` dataclass and a companion function
+`extract_facts_with_status` (authoritative contract in §18.1–18.2). The
+status channel exists so downstream preflight can distinguish successful
+extraction (including a genuinely empty facts list) from partial or failed
+extraction before drawing absence-based conclusions (§18.3).
 
 ### 17.5 LLM candidate contract
 
@@ -1530,4 +1541,669 @@ Step 8 remains responsible for deeper validation such as:
 
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+## 18. Preflight + Arithmetic Contract (Phase 2 Step 7A — authoritative)
+
+This section is the authoritative contract for Phase 2 Step 7 (deterministic
+preflight) and the deterministic arithmetic layer. It also introduces the
+additive fact-extraction outcome channel (implemented in Step 6.3) without
+changing the backward-compatible `extract_facts` API (§17.4). It resolves,
+decisively, every contract question identified by the Phase 2 Step 7
+pre-implementation review.
+
+### 18.1 `FactExtractionStatus` — additive extraction outcome channel
+
+Approve an additive enum `FactExtractionStatus` with exactly four members:
+
+```text
+SUCCESS = "success"
+PARTIAL = "partial"
+FAILED = "failed"
+NO_INPUT = "no_input"
+```
+
+- **`SUCCESS`** — the LLM returned a structurally usable top-level `facts`
+  list and every candidate item was processed without any candidate
+  rejection. `SUCCESS` may contain zero facts: a valid response
+  `{"facts": []}` is `SUCCESS`.
+- **`PARTIAL`** — the overall LLM response was structurally usable, but one
+  or more candidate items were rejected by deterministic validation.
+  `PARTIAL` may contain zero or more accepted facts.
+- **`FAILED`** — the LLM call failed, returned unusable overall output,
+  malformed JSON, a non-object root, a missing/non-list `facts` field, or
+  another overall extraction failure.
+- **`NO_INPUT`** — `raw_text` was missing, non-string, empty, or
+  whitespace-only and no LLM extraction was attempted.
+
+### 18.2 `FactExtractionResult` + `extract_facts_with_status`
+
+Approve an additive dataclass `FactExtractionResult` with exactly:
+
+```text
+facts: List[ExtractedFact]
+status: FactExtractionStatus
+rejected_item_count: int = 0
+```
+
+No provider exception strings. No API internals. No raw API error object.
+
+Approve the new companion public API:
+
+```text
+extract_facts_with_status(
+    raw_text: str,
+    classification: NoticeClassification
+) -> FactExtractionResult
+```
+
+The existing `extract_facts(...)` remains backward-compatible and returns:
+
+```text
+extract_facts_with_status(...).facts
+```
+
+There must still be exactly ONE LLM extraction call. Extraction is never
+run twice.
+
+### 18.3 Absence-based preflight safety
+
+Absence-based conclusions may be made ONLY when
+`FactExtractionStatus.SUCCESS`.
+
+Therefore, if extraction status is `PARTIAL`, `FAILED` or `NO_INPUT`,
+preflight must NOT conclude merely from absence that RFN is absent, DIN is
+absent, or authority details are missing. Those absence-derived statuses
+become `UNKNOWN`.
+
+Validated positive `ExtractedFact` objects remain available to later
+layers, but completeness/absence statuses stay conservative whenever
+extraction was not `SUCCESS`.
+
+### 18.4 Preflight input contract
+
+```text
+run_preflight(
+    extraction_result: FactExtractionResult,
+    classification: NoticeClassification,
+    deadline_result: Optional[DeadlineResult] = None
+) -> PreflightResult
+```
+
+Preflight does NOT receive:
+
+- `raw_text`
+- `WorkflowDefinition`
+- uploaded-document metadata
+
+It does NOT call an LLM. It does NOT call the deadline engine itself.
+`DeadlineResult`, when available, is supplied by integration as an already
+calculated deterministic result.
+
+This keeps `domain/deadline_engine.py` frozen and prevents generic prose
+parsing from entering the Deadline Engine.
+
+### 18.5 Communication identifier mapping
+
+When `extraction_result.status == SUCCESS`, derive from validated
+`FactType`s:
+
+| Extracted | Derived status |
+|---|---|
+| RFN + DIN present | `CommunicationIdentifierStatus.BOTH_PRESENT` |
+| RFN present only | `CommunicationIdentifierStatus.RFN_PRESENT` |
+| DIN present only | `CommunicationIdentifierStatus.DIN_PRESENT` |
+| neither present | `CommunicationIdentifierStatus.NEITHER_FOUND` |
+
+When extraction status is `PARTIAL`, `FAILED` or `NO_INPUT`, derive
+`CommunicationIdentifierStatus.UNKNOWN`.
+
+Do not infer absence from a non-successful extraction.
+
+### 18.6 Portal verification flag
+
+For Phase 2:
+
+```text
+portal_verification_required = True
+```
+
+always.
+
+Reason: Phase 2 extracts RFN/DIN presence only. It does not authenticate
+either identifier against the GST portal. Therefore even `BOTH_PRESENT`
+does not mean portal authenticity has been established.
+
+This flag must remain separate from
+`DeadlineResult.portal_verification_required`. Do not merge those concepts.
+
+### 18.7 Authority details mapping
+
+Core authority fields:
+
+```text
+AUTHORITY_DESIGNATION
+AUTHORITY_OFFICE
+```
+
+Supplementary fields:
+
+```text
+AUTHORITY_NAME
+JURISDICTION_TEXT
+```
+
+When `extraction_result.status == SUCCESS`, derive:
+
+- **`PRESENT`** — `AUTHORITY_DESIGNATION` and `AUTHORITY_OFFICE` are both
+  present.
+- **`PARTIAL`** — at least one authority-related fact exists, but both core
+  fields are not present.
+- **`MISSING`** — no authority-related `FactType` is present.
+
+When extraction status is `PARTIAL`, `FAILED` or `NO_INPUT`, derive
+`AuthorityDetailsStatus.UNKNOWN`.
+
+`PRESENT` means only: sufficient authority-identification details were
+extracted. It does NOT mean legal competence established, jurisdiction
+established, or notice valid.
+
+### 18.8 Authority verification flag
+
+For Phase 2:
+
+```text
+authority_verification_required = True
+```
+
+always.
+
+Reason: Phase 2 does not yet contain the verified legal/jurisdiction rule
+layer needed to establish officer competence. Even
+`AuthorityDetailsStatus.PRESENT` still requires CA/legal verification
+before a competence conclusion.
+
+### 18.9 `DeadlineConflictStatus`
+
+Approve enum `DeadlineConflictStatus` with exactly:
+
+```text
+MATCH = "match"
+CONFLICT = "conflict"
+CANNOT_COMPARE = "cannot_compare"
+```
+
+No `VALID` / `INVALID` member. This enum compares dates only. It does not
+decide legal validity.
+
+### 18.10 Stated due date parsing
+
+Preflight may deterministically parse `STATED_DUE_DATE` facts.
+
+Supported date representations in Phase 2:
+
+```text
+DD-MM-YYYY
+DD/MM/YYYY
+YYYY-MM-DD
+DD Month YYYY
+DD Mon YYYY
+```
+
+English month names/abbreviations only. Slash-form dates use the Indian
+day-first convention `DD/MM/YYYY`. Two-digit years are not supported.
+Unsupported formats are not silently guessed.
+
+For each `STATED_DUE_DATE` fact:
+
+- preserve the original `ExtractedFact`;
+- attempt deterministic date parsing from `source_text`;
+- if exactly one supported date can be safely parsed, record that date;
+- if zero supported dates are found, mark that fact as unparsed;
+- if multiple distinct supported dates occur in one due-date fact, mark
+  that fact as unparsed for comparison purposes.
+
+Do not use an LLM for date parsing.
+
+### 18.11 Multiple stated due dates
+
+Preserve all `STATED_DUE_DATE` fact IDs.
+
+For deadline comparison:
+
+- If all successfully parsed due-date facts resolve to exactly one unique
+  date, that date may be compared to the calculated deadline.
+- If more than one distinct parsed stated due date exists:
+  `DeadlineConflictStatus.CANNOT_COMPARE`.
+- If no stated due date is safely parseable:
+  `DeadlineConflictStatus.CANNOT_COMPARE`.
+
+Do not arbitrarily choose one date.
+
+### 18.12 Deadline comparison
+
+If:
+
+- exactly one unique safely parsed stated due date exists
+  AND
+- `deadline_result` contains a calculated response deadline
+
+then:
+
+- same date → `MATCH`
+- different date → `CONFLICT`
+
+Otherwise: `CANNOT_COMPARE`.
+
+Preflight does NOT change `DeadlineResult`. It does NOT replace the
+notice-stated date. It does NOT decide which date is legally correct.
+
+Later presentation must show both dates when both exist and surface the
+`CONFLICT` warning.
+
+### 18.13 `PreflightResult`
+
+Approve additive dataclass `PreflightResult` with exactly:
+
+```text
+fact_extraction_status: FactExtractionStatus
+
+communication_identifier_status: CommunicationIdentifierStatus
+portal_verification_required: bool
+
+authority_details_status: AuthorityDetailsStatus
+authority_verification_required: bool
+
+stated_due_date_fact_ids: List[str]
+parsed_stated_due_dates: List[date]
+unparsed_stated_due_date_fact_ids: List[str]
+
+deadline_conflict_status: DeadlineConflictStatus
+
+hearing_fact_ids: List[str]
+requested_document_fact_ids: List[str]
+referenced_annexure_fact_ids: List[str]
+```
+
+Do NOT include legal-validity fields. Do NOT create:
+
+```text
+notice_valid
+notice_invalid
+jurisdiction_valid
+officer_competent
+```
+
+### 18.14 Preflight pass-through fact indexing
+
+Preflight deterministically records IDs of:
+
+```text
+HEARING_DETAILS
+REQUESTED_DOCUMENT
+REFERENCED_ANNEXURE
+```
+
+It does NOT create `EvidenceGap` objects. It does NOT determine whether a
+referenced annexure was uploaded. Uploaded-document comparison belongs to
+Step 8/integration once document metadata exists.
+
+### 18.15 Deadline Engine ownership
+
+Step 7 does NOT build `DeadlineResult` from raw notice facts. There is NO
+generic Fact → Deadline Engine adapter in Phase 2 Step 7.
+
+The existing deterministic Deadline Engine continues to accept its existing
+structured input contract. The integration layer later supplies structured
+inputs:
+
+```text
+notice date
+service date
+response period/basis
+hearing date
+today/current date
+```
+
+when those values are independently available.
+
+Do NOT add `SERVICE_DATE` or `RESPONSE_PERIOD` `FactType`s merely for
+Step 7. Do NOT modify `domain/deadline_engine.py`.
+
+### 18.16 Arithmetic design principle
+
+The Arithmetic Engine must NOT infer operand roles from arbitrary natural
+language. It must NOT scan all extracted facts and guess:
+
+```text
+which amount is GSTR-3B
+which amount is GSTR-2B
+which amount is GSTR-1
+which amount is penalty
+```
+
+Instead it receives an explicit calculation request referring to exact
+source facts and exact amount text.
+
+### 18.17 `ArithmeticCalculationType`
+
+Approve enum `ArithmeticCalculationType` with exactly:
+
+```text
+ITC_DIFFERENCE = "itc_difference"
+OUTPUT_TAX_DIFFERENCE = "output_tax_difference"
+```
+
+No Section-129 penalty calculation type yet. No RCM statutory calculation
+type. No Section-74 penalty calculation type. No interest calculation type
+yet.
+
+### 18.18 `ArithmeticOperand`
+
+Approve dataclass `ArithmeticOperand` with exactly:
+
+```text
+source_fact_id: str
+value_text: str
+```
+
+`value_text` must be an exact substring of the referenced fact's
+`source_text`.
+
+Purpose: the arithmetic layer does not need to guess which numeric token
+inside a long notice sentence/table row should be used. The caller selects
+the exact text fragment to calculate from. The Arithmetic Engine validates
+the provenance relationship.
+
+### 18.19 `ArithmeticRequest`
+
+Approve dataclass `ArithmeticRequest` with exactly:
+
+```text
+calculation_type: ArithmeticCalculationType
+left_operand: ArithmeticOperand
+right_operand: ArithmeticOperand
+```
+
+Operand ordering is authoritative:
+
+```text
+ITC_DIFFERENCE:
+    left  = GSTR-3B ITC
+    right = GSTR-2B ITC
+
+OUTPUT_TAX_DIFFERENCE:
+    left  = GSTR-1 liability
+    right = GSTR-3B liability
+```
+
+Result:
+
+```text
+left - right
+```
+
+The Arithmetic Engine itself does not infer these semantic roles. The
+caller constructing the request is responsible for selecting the
+appropriate sourced facts. Workflow/integration validation later checks
+that role selection is correct.
+
+### 18.20 Numeric representation
+
+Use `decimal.Decimal` for all monetary arithmetic. Never use binary float.
+
+Currency for current approved calculations:
+
+```text
+INR
+```
+
+The Phase-2 deterministic amount parser may accept:
+
+- optional leading minus sign;
+- optional `₹`;
+- optional `INR`;
+- optional `Rs` / `Rs.`;
+- digits without grouping;
+- standard 3-digit comma grouping;
+- Indian lakh/crore grouping;
+- optional decimal fraction of one or two digits.
+
+Examples intended to be parseable:
+
+```text
+150000
+150000.50
+1,50,000
+10,00,000.25
+150,000
+₹1,50,000
+Rs. 1,50,000.00
+INR 150000
+```
+
+Malformed/inconsistent grouping must be rejected rather than guessed.
+
+Do not parse word forms such as:
+
+```text
+one lakh
+five crore
+```
+
+in Phase 2.
+
+### 18.21 `ArithmeticResult`
+
+Approve dataclass `ArithmeticResult` with exactly:
+
+```text
+calculation_type: ArithmeticCalculationType
+status: ArithmeticStatus
+
+source_fact_ids: List[str]
+operand_values: List[Decimal]
+
+result: Optional[Decimal]
+formula: str
+
+currency: str = "INR"
+
+allowed_in_draft: DraftPermission = DraftPermission.CONDITIONAL
+```
+
+`ArithmeticResult` is a deterministic derived result. It is semantically
+`INFERRED` but it is NOT an `ExtractedFact`.
+
+Do NOT fabricate a new `ExtractedFact` merely to represent arithmetic
+output. Do NOT assign F-xxx fact IDs to `ArithmeticResult`.
+
+### 18.22 Arithmetic status
+
+For the two approved difference calculations:
+
+If either operand:
+
+- cannot be linked to an existing source fact;
+- `value_text` is not inside that source fact's `source_text`;
+- cannot be parsed deterministically;
+
+return:
+
+```text
+ArithmeticStatus.INSUFFICIENT_DATA
+result = None
+```
+
+If calculation succeeds:
+
+```text
+result = left - right
+```
+
+If:
+
+```text
+result == Decimal("0")
+```
+
+status:
+
+```text
+ArithmeticStatus.PASS
+```
+
+Otherwise:
+
+```text
+ArithmeticStatus.MISMATCH
+```
+
+No tolerance is introduced in Phase 2 for these two reconciliation
+differences. Do not silently round operands/results.
+
+### 18.23 Approved arithmetic whitelist
+
+Phase 2 Step 7 authorizes exactly:
+
+1. `GST_SEC73_ITC` reconciliation: GSTR-3B ITC − GSTR-2B ITC.
+2. `GST_SEC73_GENERAL` reconciliation: GSTR-1 liability − GSTR-3B
+   liability.
+
+No other statutory calculations are authorized yet. Specifically NOT
+authorized:
+
+- Section 129 statutory penalty computation;
+- Section 74 penalty computation;
+- Section 74A computation;
+- RCM statutory liability computation;
+- statutory interest computation.
+
+Those require future verified/versioned legal-rule contracts.
+
+### 18.24 Section 129 safety
+
+Reaffirm: Step 7 MUST NOT hardcode a 100% penalty, a 200% penalty, or any
+other Section-129 statutory penalty formula. The notice-displayed proposed
+penalty remains an extracted fact. Statutory penalty verification remains
+deferred until a verified, versioned legal-rule subsystem is implemented.
+Do not reintroduce historical MOV assumptions.
+
+### 18.25 Inferred representation
+
+`ArithmeticResult` is the Phase-2 representation of deterministic derived
+numeric information. It is not an `ExtractedFact`. Therefore Step 7 creates
+no `FactStatus.INFERRED` `ExtractedFact`.
+
+The semantic rule is:
+
+```text
+successful ArithmeticResult = deterministic derived/inferred information
+```
+
+and:
+
+```text
+allowed_in_draft = DraftPermission.CONDITIONAL
+```
+
+Later Validation Engine controls its use in drafting.
+
+### 18.26 Workflow completeness ownership
+
+Step 7 "completeness signals" means ONLY deterministic preflight-level
+completeness such as:
+
+```text
+identifier completeness
+authority-information completeness
+arithmetic input sufficiency
+date comparison availability
+```
+
+Step 7 does NOT compare `WorkflowDefinition.required_facts` or
+`WorkflowDefinition.evidence_requirements`. That is Step 8 Validation /
+Workflow Completeness.
+
+### 18.27 Evidence gap ownership
+
+Step 7 does NOT create `EvidenceGap` objects.
+
+Step 8/integration owns:
+
+- workflow evidence requirements;
+- missing invoices;
+- missing returns;
+- missing bank records;
+- referenced-but-not-uploaded annexures;
+- uploaded document matching;
+
+until a concrete uploaded-document metadata contract exists.
+
+### 18.28 Pure Python boundary
+
+Step 7 adds ZERO LLM calls. Preflight and arithmetic are deterministic
+Python only.
+
+They must not import:
+
+```text
+modules.llm_client
+Gemini / Google SDK
+workflows for inference
+web/network libraries
+```
+
+The only Phase-2 LLM surfaces remain:
+
+```text
+proceeding classification
+fact extraction
+later controlled deep reasoning/drafting
+```
+
+### 18.29 Implementation split
+
+After this Step 7A spec amendment, implementation proceeds as:
+
+```text
+Step 6.3
+    Add FactExtractionStatus
+    Add FactExtractionResult
+    Add extract_facts_with_status()
+    Preserve extract_facts() compatibility
+
+Step 7.1
+    Add:
+        DeadlineConflictStatus
+        PreflightResult
+        ArithmeticCalculationType
+        ArithmeticOperand
+        ArithmeticRequest
+        ArithmeticResult
+
+Step 7.2
+    Implement deterministic preflight engine
+
+Step 7.3
+    Implement deterministic arithmetic engine
+```
+
+Each is a separate commit.
+
+### 18.30 No Step-8 leakage
+
+Do NOT move into Step 7:
+
+- workflow completeness;
+- evidence-gap generation;
+- legal knowledge retrieval;
+- case-law validation;
+- legal validity conclusions;
+- workflow special-rule validation;
+- drafting permissions beyond the deterministic arithmetic default;
+- final draft validation.
+
+Those remain later phases.
+
+---
+
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4. Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
