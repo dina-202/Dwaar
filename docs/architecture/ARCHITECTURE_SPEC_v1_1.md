@@ -7611,4 +7611,1972 @@ Step 9D still owns the exact §20.31 literal/regex catalog before Step
 
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20; amended 2026-08-29 by Phase 2 Step 9B: authoritative Controlled Drafting Context + Prompt Assembly contract added as §21 (§21.1–§21.31); amended 2026-08-29 by Phase 2 Step 9C: authoritative Step-9.3 Generation/Parser Result-State Contract added as §22 (§22.1–§22.29). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+## 23. Step-9.4 Deterministic Post-Validation + Rendering Catalog (Phase 2 Step 9D — authoritative)
+
+This section is the closed machine contract for Step 9.4: the
+deterministic post-draft validator and Python-owned renderer. It closes
+the operational catalog deferred by §20.29–§20.31 and §22.29: the exact
+check order, the exact PASS/FAIL message catalog, the closed token
+grammars and scanning algorithm, resolution and permission rules,
+related-ID metadata, every raw-literal / evidence / external-citation
+regex, the exact rendering strings, the exact DEADLINE renderer field
+sequence transcribed from the committed `DeadlineResult` model, the
+replacement semantics and the final SUCCESS / POST_VALIDATION_FAILED
+result shapes.
+
+Implementation must not invent any of it: no regexes, no lexical
+patterns, no token scanning rules, no check messages, no PASS/FAIL
+behavior, no related-ID behavior, no rendering strings, no
+post-validation result shape, and no final success/failure transition.
+
+This section supplements §20, §21 and §22 and supersedes nothing in
+them: where those sections already pin a rule (token families, Python
+factual rendering ownership, aggregation, failure codes, model
+contracts, metadata ownership), that rule is reused verbatim and not
+re-interpreted. §22.19 explicitly deferred post-validation to Step 9.4;
+this section activates it.
+
+Core limitation — repeated explicitly. The Step-9.4 validator is NOT a semantic legal-prose verifier. It does NOT prove:
+
+```text
+legal correctness
+truth of arbitrary prose
+complete allegation preservation under every paraphrase
+absence of every possible citation style
+absence of every conceivable factual hallucination
+```
+
+It enforces only CLOSED deterministic boundaries:
+
+```text
+structural section contract
+reference-token syntax
+reference resolution
+draft permissions
+deterministic rendering
+literal leakage barriers
+closed evidence-language patterns
+closed external-citation patterns
+```
+
+General argument prose remains subject to mandatory CA review
+(§20.43 reused verbatim).
+
+### 23.1 Step-9.4 entry condition
+
+Step-9.4 post-validation runs ONLY after Step-9.3 has successfully
+produced:
+
+```text
+DraftGenerationStatus.SUCCESS
+```
+
+with:
+
+```text
+failure_code is None
+error_message is None
+post_validation is None
+```
+
+and parsed DraftSections.
+
+BLOCKED, LLM_ERROR and MALFORMED_RESPONSE paths do NOT run Step-9.4.
+
+### 23.2 Validation input surface
+
+Step-9.4 validation may use only:
+
+```text
+parsed DraftSection.template_text
+drafting_profile
+extraction_result
+arithmetic_results
+validation_result
+preflight_result
+deadline_result
+```
+
+plus the already-resolved workflow/proceeding identity needed by the
+drafting engine.
+
+It must NOT use:
+
+```text
+raw notice text
+ExtractedFact.claim
+workflow.special_rules
+external legal research
+network
+LLM
+another prompt
+current date/time
+```
+
+### 23.3 Post-validation check order
+
+Emit exactly fourteen ValidationItems in this exact order:
+
+```text
+1. draft.response.schema
+2. draft.sections.count
+3. draft.sections.ids
+4. draft.sections.order
+5. draft.sections.nonempty
+6. draft.tokens.syntax
+7. draft.tokens.fact_resolution
+8. draft.tokens.fact_permission
+9. draft.tokens.arithmetic_resolution
+10. draft.tokens.deadline_resolution
+11. draft.tokens.hearing_resolution
+12. draft.prose.raw_fact_literal
+13. draft.prose.evidence_presence_language
+14. draft.prose.external_citation_surface
+```
+
+Exactly one item per ID. No implementation-owned suffixes. No
+additional post-draft ValidationItem ID in Phase 2.
+
+### 23.4 Post-validation statuses
+
+All fourteen Step-9.4 checks emit ONLY:
+
+```text
+ValidationStatus.PASS
+```
+
+or:
+
+```text
+ValidationStatus.FAIL
+```
+
+Never:
+
+```text
+WARNING
+```
+
+in Phase 2.
+
+Aggregation:
+
+```text
+any FAIL
+    → DraftPostValidationResult.overall_status = FAIL
+
+otherwise
+    → PASS
+```
+
+No WARNING result is produced by Step-9.4 in current Phase 2. The
+WARNING branch of the §20.30 aggregation rule remains defined but is
+never exercised by Step 9.4.
+
+### 23.5 Exact check message catalog
+
+Use the following exact PASS / FAIL messages.
+
+`draft.response.schema`
+
+PASS:
+
+```text
+"Draft response schema is structurally valid."
+```
+
+FAIL:
+
+```text
+"Draft response schema is not structurally valid."
+```
+
+`draft.sections.count`
+
+PASS:
+
+```text
+"Draft section count matches the drafting profile."
+```
+
+FAIL:
+
+```text
+"Draft section count does not match the drafting profile."
+```
+
+`draft.sections.ids`
+
+PASS:
+
+```text
+"Draft section IDs match the drafting profile."
+```
+
+FAIL:
+
+```text
+"Draft section IDs do not match the drafting profile."
+```
+
+`draft.sections.order`
+
+PASS:
+
+```text
+"Draft section order matches the drafting profile."
+```
+
+FAIL:
+
+```text
+"Draft section order does not match the drafting profile."
+```
+
+`draft.sections.nonempty`
+
+PASS:
+
+```text
+"Every draft section contains non-empty template text."
+```
+
+FAIL:
+
+```text
+"One or more draft sections contain empty template text."
+```
+
+`draft.tokens.syntax`
+
+PASS:
+
+```text
+"Draft reference-token syntax is valid."
+```
+
+FAIL:
+
+```text
+"Draft contains malformed or unsupported reference-token syntax."
+```
+
+`draft.tokens.fact_resolution`
+
+PASS:
+
+```text
+"All FACT tokens resolve to exactly one eligible fact."
+```
+
+FAIL:
+
+```text
+"One or more FACT tokens do not resolve to exactly one eligible fact."
+```
+
+`draft.tokens.fact_permission`
+
+PASS:
+
+```text
+"All resolved FACT tokens satisfy draft-permission and fact-status invariants."
+```
+
+FAIL:
+
+```text
+"One or more resolved FACT tokens violate draft-permission or fact-status invariants."
+```
+
+`draft.tokens.arithmetic_resolution`
+
+PASS:
+
+```text
+"All ARITH tokens resolve to approved deterministic arithmetic results."
+```
+
+FAIL:
+
+```text
+"One or more ARITH tokens do not resolve to approved deterministic arithmetic results."
+```
+
+`draft.tokens.deadline_resolution`
+
+PASS:
+
+```text
+"All DEADLINE tokens resolve to the supplied deterministic deadline result."
+```
+
+FAIL:
+
+```text
+"One or more DEADLINE tokens cannot resolve to the supplied deterministic deadline result."
+```
+
+`draft.tokens.hearing_resolution`
+
+PASS:
+
+```text
+"All HEARING tokens resolve to supplied deterministic hearing information."
+```
+
+FAIL:
+
+```text
+"One or more HEARING tokens cannot resolve to supplied deterministic hearing information."
+```
+
+`draft.prose.raw_fact_literal`
+
+PASS:
+
+```text
+"Draft template contains no prohibited raw case-specific factual literal."
+```
+
+FAIL:
+
+```text
+"Draft template contains a prohibited raw case-specific factual literal outside authorized tokens."
+```
+
+`draft.prose.evidence_presence_language`
+
+PASS:
+
+```text
+"Draft template contains no prohibited evidence-presence language."
+```
+
+FAIL:
+
+```text
+"Draft template contains prohibited evidence-presence language."
+```
+
+`draft.prose.external_citation_surface`
+
+PASS:
+
+```text
+"Draft template contains no prohibited external-citation surface."
+```
+
+FAIL:
+
+```text
+"Draft template contains a prohibited external-citation surface."
+```
+
+No alternate wording.
+
+### 23.6 Structural check semantics
+
+Because Step 9.3 has already strictly parsed the response, normal
+Step-9.4 entry should cause checks 1–5 to PASS.
+
+Nevertheless Step 9.4 defensively rechecks:
+
+```text
+schema-compatible DraftSection objects
+exact section count
+exact IDs
+exact order
+non-empty template_text after strip semantics
+```
+
+`schema-compatible` means: every parsed object is a `DraftSection`
+instance whose `section_id`, `title` and `template_text` are `str`, and
+whose `rendered_text` is exactly `""` at Step-9.4 entry (§22.17 interim
+contract). Exact IDs and exact order are compared against
+`drafting_profile.sections` with exact case-sensitive equality at each
+position (§22.15 reused verbatim).
+
+Do NOT silently repair structural drift.
+
+If any of checks 1–5 FAIL:
+
+```text
+overall post-validation FAIL
+```
+
+No rendering.
+
+### 23.7 Closed token families
+
+The only valid complete reference-token forms remain:
+
+```text
+[[FACT:<fact-id>]]
+[[ARITH:<positive-integer>]]
+[[DEADLINE]]
+[[HEARING]]
+```
+
+No whitespace inside a token. No lowercase aliases. No alternative
+delimiters. No escaping syntax.
+
+### 23.8 FACT token syntax
+
+A syntactically valid FACT token must match exactly:
+
+```text
+\[\[FACT:([A-Za-z0-9][A-Za-z0-9._-]*)\]\]
+```
+
+The captured fact identifier is used exactly as written.
+
+Examples syntactically valid:
+
+```text
+[[FACT:F-001]]
+[[FACT:F-1000]]
+```
+
+Examples syntactically invalid:
+
+```text
+[[FACT:]]
+[[fact:F-001]]
+[[FACT: F-001]]
+[[FACT:F-001 ]]
+[FACT:F-001]
+[[FACT:F 001]]
+```
+
+Syntactic validity does NOT prove resolution.
+
+### 23.9 ARITH token syntax
+
+A syntactically valid ARITH token must match exactly:
+
+```text
+\[\[ARITH:([1-9][0-9]*)\]\]
+```
+
+Therefore:
+
+```text
+[[ARITH:1]]
+[[ARITH:25]]
+```
+
+are syntactically valid.
+
+The following are invalid:
+
+```text
+[[ARITH:0]]
+[[ARITH:-1]]
+[[ARITH:01]]
+[[ARITH:1.0]]
+[[arith:1]]
+[[ARITH: 1]]
+```
+
+### 23.10 DEADLINE / HEARING token syntax
+
+Exact only:
+
+```text
+[[DEADLINE]]
+[[HEARING]]
+```
+
+No suffix. No colon. No lowercase form.
+
+### 23.11 Malformed / unknown token detection
+
+The token-syntax validator works over each DraftSection.template_text
+in profile order.
+
+A template fails:
+
+```text
+draft.tokens.syntax
+```
+
+when ANY reference-like construct — a double-bracket construct or a
+single-bracket lookalike of the closed token families — is not one of
+the four closed valid forms.
+
+Closed single-bracket lookalike regex — architecture-owned
+malformed-reference detector:
+
+```text
+(?i)(?<!\[)\[(?:FACT:[^\[\]\r\n]*|ARITH:[^\[\]\r\n]*|DEADLINE(?::[^\[\]\r\n]*)?|HEARING(?::[^\[\]\r\n]*)?)\](?!\])
+```
+
+This regex detects a single-bracket construct that looks like one of
+the architecture's reference-token families. It is ONLY a
+malformed-token detector. It does NOT make lowercase forms valid. It
+does NOT resolve anything. It does NOT replace anything.
+
+Occurrence boundary rule — a token occurrence is COMPLETE ONLY when:
+
+```text
+the opening [[ is NOT immediately preceded by [
+AND
+the closing ]] is NOT immediately followed by ]
+```
+
+An inner token inside an over-bracketed construct is NOT a complete
+valid token occurrence and is NEVER recognized or removed by step A
+of the algorithm below. Recognition and removal apply ONLY to
+complete valid token occurrences.
+
+Boundary-safe occurrence regexes — architecture-owned recognition
+patterns for the four closed valid forms, each carrying the outer
+bracket boundary guards:
+
+```text
+(?<!\[)\[\[FACT:([A-Za-z0-9][A-Za-z0-9._-]*)\]\](?!\])
+(?<!\[)\[\[ARITH:([1-9][0-9]*)\]\](?!\])
+(?<!\[)\[\[DEADLINE\]\](?!\])
+(?<!\[)\[\[HEARING\]\](?!\])
+```
+
+The canonical §23.8, §23.9 and §23.10 token grammars are UNCHANGED by
+these boundary guards. The boundary guards constrain ONLY occurrence
+recognition — which instances of the grammar count as complete valid
+tokens during malformed-token detection. They do NOT change the token
+grammar itself, token resolution, or rendering.
+
+Final token-syntax algorithm, pinned in exactly this logical order:
+
+For every DraftSection.template_text:
+
+A. recognize/remove or replace ONLY COMPLETE VALID TOKEN
+   OCCURRENCES whose:
+
+   1. internal grammar matches one of the four canonical families:
+
+      ```text
+      [[FACT:<fact-id>]]
+      [[ARITH:<positive-integer>]]
+      [[DEADLINE]]
+      [[HEARING]]
+      ```
+
+   2. AND whose immediate outer bracket boundary passes:
+
+      ```text
+      opening [[ is NOT immediately preceded by [
+      AND
+      closing ]] is NOT immediately followed by ]
+      ```
+
+   A token occurrence failing the outer bracket boundary is NOT a
+   complete valid token occurrence, is NOT removed or replaced, and
+   leaves its double brackets present for step B.
+
+B. Inspect the remaining text.
+
+draft.tokens.syntax = FAIL if EITHER:
+
+1. remaining text contains:
+
+   ```text
+   [[
+   ```
+
+   OR:
+
+   ```text
+   ]]
+   ```
+
+OR:
+
+2. remaining text matches the closed single-bracket lookalike regex:
+
+   ```text
+   (?i)(?<!\[)\[(?:FACT:[^\[\]\r\n]*|ARITH:[^\[\]\r\n]*|DEADLINE(?::[^\[\]\r\n]*)?|HEARING(?::[^\[\]\r\n]*)?)\](?!\])
+   ```
+
+Otherwise:
+
+```text
+draft.tokens.syntax = PASS
+```
+
+No repair. No recursive recognition. No normalization. No semantic
+inference. No auto-correction.
+
+Explicit invalid single-bracket examples — each must produce
+draft.tokens.syntax FAIL:
+
+```text
+[FACT:F-001]
+[ARITH:1]
+[DEADLINE]
+[HEARING]
+
+[fact:F-001]
+[arith:1]
+[deadline]
+[hearing]
+
+[DEADLINE:foo]
+[HEARING:foo]
+```
+
+The already-invalid double-bracket forms remain pinned by §23.8,
+§23.9 and §23.38:
+
+```text
+[[FACT:]]
+[[fact:F-001]]
+[[FACT: F-001]]
+[[FACT:F-001 ]]
+[[ARITH:0]]
+[[ARITH:01]]
+[[BAD:TOKEN]]
+```
+
+Explicit over-run invalid examples — adjacent extra brackets around
+an inner valid-looking token. The inner token is NOT a complete valid
+token occurrence, so nothing is removed and each must produce
+draft.tokens.syntax FAIL:
+
+```text
+[[[FACT:F-001]]]
+[[[FACT:F-001]]
+[[FACT:F-001]]]
+
+[[[ARITH:1]]]
+[[[ARITH:1]]
+[[ARITH:1]]]
+
+[[[DEADLINE]]]
+[[[DEADLINE]]
+[[DEADLINE]]]
+
+[[[HEARING]]]
+[[[HEARING]]
+[[HEARING]]]
+```
+
+Explicit canonical and prose valid examples — each complete valid
+token occurrence is removed and each line must produce
+draft.tokens.syntax PASS:
+
+```text
+[[FACT:F-001]]
+[[ARITH:1]]
+[[DEADLINE]]
+[[HEARING]]
+
+The response deadline is [[DEADLINE]]. The amount is
+[[ARITH:1]] and the fact is [[FACT:F-001]]. A hearing is
+scheduled: [[HEARING]].
+```
+
+Valid-token non-false-positive guarantee. After valid-token removal:
+
+```text
+[[FACT:F-001]]
+[[ARITH:1]]
+[[DEADLINE]]
+[[HEARING]]
+```
+
+must NOT match the single-bracket lookalike rule. The negative
+lookbehind/lookahead around `[` and `]` are part of the
+architecture-owned pattern for this reason.
+
+The outer bracket boundary guards do NOT false-fail a canonical token
+occurrence surrounded by ordinary prose. They block recognition ONLY
+when an extra `[` touches the opening `[[` or an extra `]` touches the
+closing `]]`.
+
+This catches:
+
+```text
+unknown token family
+malformed delimiter
+incomplete token
+empty token
+unsupported token
+single-bracket reference lookalike
+over-bracketed token construct (adjacent extra brackets)
+```
+
+Do NOT attempt semantic recovery. Do NOT auto-correct malformed tokens.
+
+### 23.12 Token occurrence order
+
+When collecting token references for checks or rendering:
+
+```text
+section order first
+then left-to-right textual occurrence order within each section.
+```
+
+Repeated tokens remain repeated for rendering.
+
+For related-ID metadata, use first-occurrence deduplication as
+specified below.
+
+### 23.13 FACT resolution
+
+A FACT token resolves only when its captured fact_id matches EXACTLY
+ONE fact in:
+
+```text
+extraction_result.facts
+```
+
+whose:
+
+```text
+allowed_in_draft
+    is YES or CONDITIONAL
+```
+
+Case-sensitive exact fact_id equality.
+
+Zero eligible matches:
+
+```text
+fact_resolution FAIL
+```
+
+More than one eligible match with same fact_id:
+
+```text
+fact_resolution FAIL
+```
+
+No arbitrary selection. No fuzzy matching. No claim/source semantic
+matching.
+
+### 23.14 FACT permission / status
+
+For every successfully resolved FACT token, permitted pairs are
+EXACTLY:
+
+```text
+FactStatus.CONFIRMED
++
+DraftPermission.YES
+```
+
+or:
+
+```text
+FactStatus.ALLEGED
++
+DraftPermission.CONDITIONAL
+```
+
+Any other resolved pair:
+
+```text
+fact_permission FAIL
+```
+
+Including:
+
+```text
+REQUIRES_VERIFICATION
+UNKNOWN
+DraftPermission.NO
+unexpected INFERRED notice fact
+mismatched YES/CONDITIONAL pair
+```
+
+If no FACT tokens exist:
+
+```text
+fact_resolution PASS
+fact_permission PASS
+```
+
+vacuously.
+
+If a FACT token fails resolution, that token affects:
+
+```text
+fact_resolution
+```
+
+but does NOT automatically cause:
+
+```text
+fact_permission
+```
+
+to FAIL because no resolved fact exists to test.
+
+Overall still fails through fact_resolution.
+
+### 23.15 FACT check related IDs
+
+For:
+
+```text
+draft.tokens.fact_resolution
+draft.tokens.fact_permission
+```
+
+related_fact_ids is:
+
+```text
+FACT token captured IDs
+in occurrence order
+first-occurrence deduplicated.
+```
+
+This may include an unresolved ID such as:
+
+```text
+F-999
+```
+
+for diagnostic purposes.
+
+related_calculation_types:
+
+```text
+[]
+```
+
+for both checks.
+
+All other non-fact checks use:
+
+```text
+related_fact_ids = []
+```
+
+unless explicitly stated otherwise below.
+
+### 23.16 ARITH resolution
+
+For token:
+
+```text
+[[ARITH:N]]
+```
+
+resolve N against ORIGINAL:
+
+```text
+arithmetic_results
+```
+
+one-based input position.
+
+N must satisfy:
+
+```text
+1 <= N <= len(arithmetic_results)
+```
+
+The referenced result is approved only when ALL five existing Step-8
+structural checks are present and PASS:
+
+```text
+arithmetic.N.calculation_type
+arithmetic.N.draft_permission
+arithmetic.N.source_resolution
+arithmetic.N.role_provenance
+arithmetic.N.result_status_consistency
+```
+
+The five checks are looked up by exact check_id in
+`validation_result.checks`. A missing entry or any status other than
+`ValidationStatus.PASS` counts as not PASS.
+
+AND:
+
+```text
+ArithmeticResult.status
+    is PASS or MISMATCH
+```
+
+AND:
+
+```text
+ArithmeticResult.result
+    is not None
+```
+
+INSUFFICIENT_DATA:
+
+```text
+not renderable
+arithmetic_resolution FAIL
+```
+
+Missing structural check:
+
+```text
+FAIL
+```
+
+WARNING structural check:
+
+```text
+FAIL
+```
+
+FAIL structural check:
+
+```text
+FAIL
+```
+
+Do not use:
+
+```text
+arithmetic.N.outcome
+```
+
+as structural eligibility.
+
+No arithmetic recomputation.
+
+If no ARITH tokens exist:
+
+```text
+arithmetic_resolution PASS
+```
+
+vacuously.
+
+### 23.17 ARITH check related calculation types
+
+For:
+
+```text
+draft.tokens.arithmetic_resolution
+```
+
+related_calculation_types contains the calculation_type of every
+in-range referenced ArithmeticResult in first token-occurrence order,
+first-occurrence deduplicated.
+
+Out-of-range tokens contribute no calculation type.
+
+related_fact_ids:
+
+```text
+[]
+```
+
+Do not derive a calculation type from token text.
+
+### 23.18 DEADLINE resolution
+
+If no:
+
+```text
+[[DEADLINE]]
+```
+
+token exists:
+
+```text
+deadline_resolution PASS
+```
+
+vacuously.
+
+If one or more DEADLINE tokens exist:
+
+```text
+deadline_result must not be None
+```
+
+Otherwise:
+
+```text
+deadline_resolution FAIL.
+```
+
+The token uses only the already-supplied DeadlineResult and preflight
+state. No date calculation. No current date.
+
+Repeated DEADLINE tokens are allowed.
+
+### 23.19 HEARING resolution
+
+If no:
+
+```text
+[[HEARING]]
+```
+
+token exists:
+
+```text
+hearing_resolution PASS
+```
+
+vacuously.
+
+If one or more HEARING tokens exist, usable hearing information
+requires:
+
+```text
+deadline_result is not None
+```
+
+AND:
+
+```text
+deadline_result.hearing_date is not None
+```
+
+AND:
+
+```text
+deadline_result.hearing_status in:
+    HearingStatus.UPCOMING
+    HearingStatus.TODAY
+    HearingStatus.PASSED
+```
+
+If:
+
+```text
+HearingStatus.NOT_SCHEDULED
+```
+
+or:
+
+```text
+hearing_date is None
+```
+
+then:
+
+```text
+hearing_resolution FAIL
+```
+
+No inferred hearing information.
+
+Repeated HEARING tokens are allowed.
+
+### 23.20 Raw fact literal scan — general rule
+
+This is a deterministic LEAKAGE BARRIER.
+
+It does NOT claim semantic understanding.
+
+Scan:
+
+```text
+DraftSection.template_text
+```
+
+BEFORE token resolution / Python factual rendering.
+
+Therefore Python-inserted factual text is never scanned as LLM-authored
+literal leakage.
+
+Apply the closed patterns below to LLM template text only.
+
+Any match:
+
+```text
+draft.prose.raw_fact_literal = FAIL
+```
+
+No match:
+
+```text
+PASS
+```
+
+Patterns are not extended by implementation.
+
+### 23.21 Regex flags
+
+Unless otherwise stated, all raw-literal and lexical regexes use:
+
+```text
+re.IGNORECASE
+```
+
+No fuzzy matching. No Unicode normalization. No OCR correction. No
+semantic synonyms.
+
+### 23.22 Raw literal — GSTIN
+
+Regex:
+
+```text
+(?<![A-Z0-9])[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z](?![A-Z0-9])
+```
+
+Case-insensitive.
+
+Any such GSTIN-like literal in body_template:
+
+```text
+FAIL
+```
+
+The pattern is a leakage detector, not a GSTIN-validity checker.
+
+### 23.23 Raw literal — rupee / currency amount
+
+Pattern A:
+
+```text
+₹\s*[0-9][0-9,]*(?:\.[0-9]+)?
+```
+
+Pattern B:
+
+```text
+\b(?:INR|RS\.?|RUPEES?)\s*[:\-]?\s*[0-9][0-9,]*(?:\.[0-9]+)?\b
+```
+
+Case-insensitive where applicable.
+
+Any match:
+
+```text
+FAIL
+```
+
+A bare unlabeled integer is NOT prohibited by this catalog merely
+because it is numeric.
+
+### 23.24 Raw literal — percentage
+
+Regex:
+
+```text
+(?<![A-Z0-9.])[0-9]+(?:\.[0-9]+)?\s*%(?![A-Z0-9])
+```
+
+Any match:
+
+```text
+FAIL
+```
+
+This intentionally catches:
+
+```text
+100%
+18 %
+2.5%
+```
+
+because case-specific percentages should not be freely authored when
+the architecture expects validated/tokenized case values.
+
+### 23.25 Raw literal — numeric date
+
+Regex:
+
+```text
+\b(?:0?[1-9]|[12][0-9]|3[01])([./-])(?:0?[1-9]|1[0-2])\1(?:19|20)[0-9]{2}\b
+```
+
+This catches day-first:
+
+```text
+29-08-2026
+29/08/2026
+29.08.2026
+```
+
+with the same separator.
+
+### 23.26 Raw literal — ISO date
+
+Regex:
+
+```text
+\b(?:19|20)[0-9]{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])\b
+```
+
+Any match:
+
+```text
+FAIL
+```
+
+### 23.27 Raw literal — textual date
+
+Regex:
+
+```text
+\b(?:0?[1-9]|[12][0-9]|3[01])\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?:19|20)[0-9]{2}\b
+```
+
+Case-insensitive.
+
+Any match:
+
+```text
+FAIL
+```
+
+Do not add month-first formats in Phase 2 unless this amendment
+explicitly lists them.
+
+### 23.28 Raw literal — labelled RFN / DIN
+
+Regex:
+
+```text
+\b(?:RFN|DIN)\s*(?:NO\.?|NUMBER)?\s*[:#-]?\s*[A-Z0-9][A-Z0-9/-]{5,}\b
+```
+
+Case-insensitive.
+
+This intentionally requires an RFN/DIN label plus an identifier-like
+value.
+
+The words:
+
+```text
+RFN
+DIN
+```
+
+alone do NOT fail.
+
+### 23.29 Raw literal — exact source_text copy
+
+For every fact eligible for factual drafting context:
+
+```text
+DraftPermission.YES
+DraftPermission.CONDITIONAL
+```
+
+compute:
+
+```text
+candidate = fact.source_text.strip()
+```
+
+Only inspect candidate when:
+
+```text
+len(candidate) >= 24
+```
+
+where length means Python string length / Unicode code points.
+
+If candidate occurs as an exact case-sensitive substring anywhere in
+any body_template:
+
+```text
+raw_fact_literal FAIL
+```
+
+Rules:
+
+```text
+no lowercasing
+no whitespace normalization
+no punctuation normalization
+no fuzzy matching
+no semantic similarity
+no claim-field comparison
+```
+
+Minimum length is architecture-owned:
+
+```text
+24
+```
+
+Implementation must not change it.
+
+This check deliberately catches verbatim notice copying while avoiding
+very short common phrases.
+
+### 23.30 Raw fact literal related IDs
+
+For:
+
+```text
+draft.prose.raw_fact_literal
+```
+
+related_fact_ids contains only fact IDs whose eligible source_text
+caused an exact-source-text-copy match under §23.29.
+
+First occurrence, deduplicated.
+
+Regex-only GSTIN/currency/percentage/date/RFN/DIN matches do not
+invent a related fact ID.
+
+related_calculation_types:
+
+```text
+[]
+```
+
+### 23.31 Evidence-presence language catalog
+
+Scan body_template only, before Python rendering.
+
+Closed case-insensitive patterns:
+
+```text
+\battached\b
+
+\benclosed\b
+
+\bannexed\b
+
+\bsubmitted\s+herewith\b
+
+\bwe\s+have\s+enclosed\b
+
+\bwe\s+attach\b
+```
+
+ANY match:
+
+```text
+draft.prose.evidence_presence_language FAIL
+```
+
+No match:
+
+```text
+PASS
+```
+
+No semantic synonym inference. No tense analysis. No exception such as:
+
+```text
+"to be attached"
+```
+
+in current Phase 2.
+
+This conservative false-positive behavior is intentional because the
+current evidence state is UNKNOWN.
+
+```text
+related_fact_ids = []
+related_calculation_types = []
+```
+
+### 23.32 External citation surface — URLs
+
+Closed case-insensitive URL patterns:
+
+```text
+\bhttps?://[^\s<>"']+
+
+\bwww\.[^\s<>"']+
+```
+
+Any match:
+
+```text
+external_citation_surface FAIL
+```
+
+### 23.33 External citation surface — case-name style
+
+Closed case-style regex:
+
+```text
+\b[A-Z][A-Za-z0-9&.,'() -]{1,80}\s+(?:v\.|vs\.|versus)\s+[A-Z][A-Za-z0-9&.,'() -]{1,80}\b
+```
+
+Use this pattern case-sensitively.
+
+It is a citation-surface barrier, not a determination that the text is
+a real case.
+
+Any match:
+
+```text
+FAIL
+```
+
+### 23.34 External citation surface — reporter style
+
+Closed case-insensitive patterns:
+
+A.
+
+```text
+\bAIR\s+(?:19|20)[0-9]{2}\s+[A-Z]{2,10}\s+[0-9]+\b
+```
+
+B.
+
+```text
+\b(?:19|20)[0-9]{2}\s*\([0-9]+\)\s*(?:SCC|GSTL|ELT|STR)\s+[0-9]+\b
+```
+
+C.
+
+```text
+\((?:19|20)[0-9]{2}\)\s*[0-9]+\s*(?:SCC|GSTL|ELT|STR)\s+[0-9]+\b
+```
+
+D.
+
+```text
+\b(?:19|20)[0-9]{2}\s+(?:INSC|INHC)\s+[0-9]+\b
+```
+
+E.
+
+```text
+\b(?:19|20)[0-9]{2}\s+SCC\s+OnLine\s+[A-Za-z]+\s+[0-9]+\b
+```
+
+Any match:
+
+```text
+FAIL
+```
+
+These patterns are a closed safety catalog, not an exhaustive
+Indian-law citation recognizer.
+
+### 23.35 External citation surface — numeric footnote
+
+Regex:
+
+```text
+(?<!\[)\[[0-9]{1,3}\](?!\])
+```
+
+Any match:
+
+```text
+FAIL
+```
+
+This does not match the architecture's double-bracket reference
+tokens.
+
+### 23.36 External citation related IDs
+
+For:
+
+```text
+draft.prose.external_citation_surface
+```
+
+```text
+related_fact_ids = []
+related_calculation_types = []
+```
+
+The validator does not attempt to associate an external citation with
+a fact.
+
+### 23.37 No statutory semantic scanner
+
+Do NOT invent a generic regex that treats every:
+
+```text
+Section 73
+Rule 142
+CGST Act
+```
+
+reference as a failure.
+
+The workflow identity itself may contain statutory vocabulary.
+
+The prompt already forbids invented statutory quotations.
+
+Phase 2 does not pretend a regex can determine whether arbitrary
+statutory prose is legally correct.
+
+Notice-grounded statutory source text may still be inserted through an
+authorized FACT token.
+
+### 23.38 Check dependency / vacuous pass
+
+Resolution checks operate independently over their recognized token
+family.
+
+Examples:
+
+If malformed:
+
+```text
+[[BAD:TOKEN]]
+```
+
+then:
+
+```text
+draft.tokens.syntax = FAIL
+```
+
+but if there are no syntactically valid FACT tokens:
+
+```text
+draft.tokens.fact_resolution = PASS
+draft.tokens.fact_permission = PASS
+```
+
+vacuously.
+
+If:
+
+```text
+[[FACT:F-999]]
+```
+
+is syntactically valid but unresolved:
+
+```text
+syntax = PASS
+fact_resolution = FAIL
+```
+
+fact_permission evaluates only successfully resolved FACT tokens and
+is not forced to FAIL solely because F-999 did not resolve.
+
+Overall still FAILs.
+
+This avoids misleading cascade failures.
+
+### 23.39 FACT Python renderer
+
+After ALL fourteen post-validation checks PASS:
+
+For:
+
+```text
+CONFIRMED + YES
+```
+
+render every FACT token exactly as:
+
+```text
+The notice records: "<source_text>"
+```
+
+If source_page is not None append exactly:
+
+```text
+ (notice p. <source_page>)
+```
+
+Therefore full example shape:
+
+```text
+The notice records: "<source_text>" (notice p. 2)
+```
+
+For:
+
+```text
+ALLEGED + CONDITIONAL
+```
+
+render exactly:
+
+```text
+The department alleges: "<source_text>"
+```
+
+with the same optional page suffix.
+
+Do NOT:
+
+```text
+paraphrase source_text
+remove source_text punctuation
+convert allegation to fact
+add legal conclusion
+escape into a different semantic wrapper
+```
+
+Use stored source_text exactly inside the wrapper.
+
+### 23.40 Arithmetic Python renderer
+
+After PASS validation, render approved ARITH token exactly:
+
+```text
+Deterministic reconciliation output: <formula> = <result> <currency> (status: <status-value>).
+```
+
+Where:
+
+```text
+formula
+    exact ArithmeticResult.formula
+
+result
+    exact Decimal string
+
+currency
+    exact ArithmeticResult.currency
+
+status-value
+    ArithmeticResult.status.value
+```
+
+This renderer is allowed only for:
+
+```text
+PASS
+MISMATCH
+```
+
+It must never describe the number as:
+
+```text
+final liability
+admitted liability
+statutory penalty
+legally payable amount
+```
+
+No recomputation.
+
+### 23.41 Deadline Python renderer
+
+The CURRENT committed `DeadlineResult` dataclass (domain/models.py)
+has exactly eleven fields in this model order:
+
+```text
+1. notice_date                       Optional[date]
+2. service_date                      Optional[date]
+3. response_period_days              Optional[int]
+4. response_deadline                 Optional[date]
+5. deadline_confidence               DeadlineConfidence
+6. deadline_status                   DeadlineStatus
+7. days_remaining                    Optional[int]
+8. hearing_date                      Optional[date]
+9. hearing_status                    HearingStatus
+10. portal_verification_required     bool
+11. notes                            List[str]
+```
+
+Field classification for the DEADLINE renderer:
+
+```text
+deadline-specific (included):
+    notice_date
+    service_date
+    response_period_days
+    response_deadline
+    deadline_confidence
+    deadline_status
+    days_remaining
+    portal_verification_required
+    notes
+
+hearing-specific (EXCLUDED — HEARING owns them):
+    hearing_date
+    hearing_status
+```
+
+The DEADLINE renderer uses a deterministic machine-labelled format:
+
+```text
+Deterministic deadline output: <field>=<serialized-value>; <field>=<serialized-value>; ...
+```
+
+The EXACT resulting field sequence, pinned here after inspecting the
+committed model (included fields preserve DeadlineResult field order,
+then the preflight conflict status is appended):
+
+```text
+1. notice_date
+2. service_date
+3. response_period_days
+4. response_deadline
+5. deadline_confidence
+6. deadline_status
+7. days_remaining
+8. portal_verification_required
+9. notes
+10. preflight_deadline_conflict_status
+```
+
+Therefore the exact renderer shape is:
+
+```text
+Deterministic deadline output: notice_date=<serialized>; service_date=<serialized>; response_period_days=<serialized>; response_deadline=<serialized>; deadline_confidence=<serialized>; deadline_status=<serialized>; days_remaining=<serialized>; portal_verification_required=<serialized>; notes=<serialized>; preflight_deadline_conflict_status=<preflight_result.deadline_conflict_status.value>.
+```
+
+Serialization uses §21.15 scalar rules:
+
+```text
+Enum     enum.value
+date     ISO YYYY-MM-DD
+None     null
+bool     JSON true/false
+int      JSON integer
+str      exact string
+List     JSON array preserving source order (notes)
+```
+
+No recalculation. No legal-validity statement. No current date.
+
+### 23.42 Hearing Python renderer
+
+For a valid HEARING token render exactly:
+
+```text
+Deterministic hearing output: hearing_date=<YYYY-MM-DD>; hearing_status=<hearing-status-value>.
+```
+
+No inferred information. No additional deadline calculation.
+
+### 23.43 Token replacement order
+
+Rendering occurs only if:
+
+```text
+DraftPostValidationResult.overall_status == PASS
+```
+
+For each section independently:
+
+```text
+scan template_text left-to-right.
+```
+
+Replace each recognized reference token with its deterministic Python
+rendering.
+
+Repeated tokens are each rendered.
+
+Do not recursively parse tokens that might appear inside source_text
+or rendered output.
+
+Replacement is SINGLE-PASS over the original template_text.
+
+The resulting string becomes:
+
+```text
+DraftSection.rendered_text
+```
+
+template_text remains unchanged.
+
+### 23.44 No rendering on FAIL
+
+If ANY of the fourteen checks FAIL:
+
+Do NOT perform token rendering.
+
+Final SpecialistDraftResult:
+
+```text
+status =
+    DraftGenerationStatus.FAILED
+
+draft_eligibility =
+    existing validation_result.draft_eligibility
+
+sections =
+    []
+
+unresolved_requirements =
+    copied Python-owned metadata
+
+evidence_checklist =
+    copied Python-owned metadata
+
+review_requirements =
+    copied Python-owned metadata
+
+post_validation =
+    DraftPostValidationResult(
+        overall_status=ValidationStatus.FAIL,
+        checks=<all fourteen items in fixed order>,
+    )
+
+failure_code =
+    DraftFailureCode.POST_VALIDATION_FAILED
+
+error_message =
+    "Specialist draft failed deterministic post-generation validation."
+```
+
+No partial rendered section. No template sections exposed as usable
+specialist draft.
+
+### 23.45 Final success result
+
+If ALL fourteen checks PASS:
+
+return:
+
+```text
+SpecialistDraftResult(
+    status=DraftGenerationStatus.SUCCESS,
+    draft_eligibility=validation_result.draft_eligibility,
+    sections=<fresh rendered DraftSection list>,
+    unresolved_requirements=<fresh Python-owned metadata list>,
+    evidence_checklist=<fresh Python-owned metadata list>,
+    review_requirements=<fresh Python-owned metadata list>,
+    post_validation=DraftPostValidationResult(
+        overall_status=ValidationStatus.PASS,
+        checks=<fourteen PASS ValidationItems in fixed order>,
+    ),
+    failure_code=None,
+    error_message=None,
+)
+```
+
+Each final DraftSection contains:
+
+```text
+section_id
+    unchanged
+
+title
+    unchanged profile title
+
+template_text
+    unchanged normalized LLM template
+
+rendered_text
+    deterministic single-pass rendered output
+```
+
+This is the first Step-9 result that is structurally complete enough
+for later Step-10 presentation.
+
+It is STILL:
+
+```text
+CA working draft
+not filing approval
+not autonomous legal correctness
+```
+
+### 23.46 Response / section check related metadata
+
+For:
+
+```text
+draft.response.schema
+draft.sections.count
+draft.sections.ids
+draft.sections.order
+draft.sections.nonempty
+draft.tokens.syntax
+draft.tokens.deadline_resolution
+draft.tokens.hearing_resolution
+draft.prose.evidence_presence_language
+draft.prose.external_citation_surface
+```
+
+use:
+
+```text
+related_fact_ids = []
+related_calculation_types = []
+```
+
+Fact/arithmetic/raw-source checks use their dedicated rules above
+(§23.15, §23.17, §23.30).
+
+### 23.47 ValidationItem field contract
+
+Every Step-9.4 ValidationItem is constructed with all five existing
+fields:
+
+```text
+check_id
+status
+message
+related_fact_ids
+related_calculation_types
+```
+
+No defaults relied upon.
+
+Every returned list is fresh.
+
+### 23.48 Immutability
+
+Step 9.4 must not mutate:
+
+```text
+parsed/interim DraftSection objects
+classification
+extraction_result
+facts
+preflight_result
+arithmetic_results
+validation_result
+deadline_result
+workflow
+drafting_profile
+```
+
+Construct fresh final DraftSection objects.
+
+template_text value may be reused as immutable string.
+
+### 23.49 No LLM / network in post-validation
+
+Step 9.4 adds:
+
+```text
+ZERO new LLM calls.
+```
+
+The full Step-9 request still has maximum:
+
+```text
+exactly one drafting LLM call
+```
+
+from Step 9.3.
+
+Post-validation/rendering is pure deterministic Python.
+
+No network. No legal retrieval.
+
+### 23.50 Step-9.4 file ownership
+
+Authorize Step 9.4 to modify ONLY:
+
+```text
+domain/drafting_engine.py
+tests/test_drafting_engine.py
+```
+
+No model changes. No prompt changes. No profile changes. No
+validation-engine changes. No app integration.
+
+### 23.51 No app integration
+
+Even after Step 9.4:
+
+Do NOT modify:
+
+```text
+app.py
+modules/notice_explainer.py
+prompts/notice_prompt.txt
+```
+
+Step 10 owns production orchestration and UI rendering.
+
+---
+
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20; amended 2026-08-29 by Phase 2 Step 9B: authoritative Controlled Drafting Context + Prompt Assembly contract added as §21 (§21.1–§21.31); amended 2026-08-29 by Phase 2 Step 9C: authoritative Step-9.3 Generation/Parser Result-State Contract added as §22 (§22.1–§22.29); amended 2026-08-29 by Phase 2 Step 9D: authoritative Step-9.4 Deterministic Post-Validation + Rendering Catalog added as §23 (§23.1–§23.51). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
