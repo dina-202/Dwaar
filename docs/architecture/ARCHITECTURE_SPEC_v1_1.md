@@ -9643,6 +9643,781 @@ prompts/notice_prompt.txt
 
 Step 10 owns production orchestration and UI rendering.
 
+## 24. Step-10 Orchestration + Triage Contract (Phase 2 Step 10B — authoritative)
+
+This section owns the end-to-end orchestration contract required before
+Step-10 implementation. It pins the public orchestration API, the result
+envelope, the raw-text lifetime, the exact deadline/arithmetic input
+mappers, the branch behavior for DEEP / TRIAGE / UNKNOWN and for every
+FactExtractionStatus, the deterministic triage output, the LLM-call
+budget, and the app integration boundary. Nothing here is left to
+Step-10 implementation choice.
+
+### 24.1 Two-layer input boundary
+
+PDF parsing is an application/infrastructure concern, not a domain
+concern:
+
+```text
+modules/pdf_reader.extract_text(pdf_bytes) -> str
+```
+
+remains the sole extraction boundary. The Phase-2 orchestrator receives
+already-extracted text. It never accepts:
+
+```text
+pdf_bytes
+Streamlit parameters
+session_state
+uploaded-file metadata
+```
+
+The domain orchestrator is framework- and storage-agnostic so a future
+FastAPI/React surface reuses the same API.
+
+### 24.2 Public orchestration API and module
+
+Architecture-owned module path:
+
+```text
+domain/phase2_orchestrator.py
+```
+
+Architecture-owned public API:
+
+```python
+def run_phase2_analysis(raw_text: str, today: date) -> Phase2AnalysisResult:
+    ...
+```
+
+`today` is a required injected reference date (see §24.28).
+
+### 24.3 No legacy runtime fallback
+
+Legacy files remain physically untouched for regression/history
+(see §24.35):
+
+```text
+modules/notice_explainer.py
+prompts/notice_prompt.txt
+```
+
+But the Phase-2 runtime path MUST NEVER fall back to
+`explain_notice(...)`, `build_notice_prompt(...)` or
+`prompts/notice_prompt.txt` when Phase-2 experiences UNKNOWN,
+TRIAGE_ONLY, extraction FAILED/NO_INPUT, validation BLOCKED, LLM_ERROR,
+MALFORMED_RESPONSE, POST_VALIDATION_FAILED, or any other Phase-2
+failure. Failure remains visible as structured Phase-2 state. Legacy
+retention is not runtime fallback; there is no safety downgrade.
+
+### 24.4 Raw-text lifetime
+
+Within `run_phase2_analysis(raw_text, today)`, full `raw_text` may be
+passed ONLY to:
+
+```text
+classify_notice(raw_text)
+extract_facts_with_status(raw_text, classification)
+```
+
+After Fact Engine returns, `raw_text` MUST NOT be passed to any
+downstream Phase-2 function. Specifically prohibit `raw_text` from:
+deadline mapping, `calculate_deadline`, `run_preflight`, arithmetic
+request construction, `run_arithmetic`, `run_validation`,
+`generate_specialist_draft`, and the triage renderer. Deadline and
+arithmetic integration use structured facts only; the original notice
+body is never parsed again.
+
+### 24.5 `Phase2AnalysisResult`
+
+Add to `domain/models.py`. Exact field order (no defaults, no
+`default_factory`; every field caller-supplied):
+
+```python
+@dataclass
+class Phase2AnalysisResult:
+    classification: NoticeClassification
+    extraction_result: FactExtractionResult
+    deadline_result: DeadlineResult
+    preflight_result: PreflightResult
+    arithmetic_results: List[ArithmeticResult]
+    validation_result: ValidationEngineResult
+    draft_result: SpecialistDraftResult
+    triage_summary: Optional[TriageSummary]
+```
+
+Optionality is pinned, not left to implementation:
+
+```text
+classification        — always present (classify_notice always returns)
+extraction_result     — always present (extract_facts_with_status always returns)
+deadline_result       — always present (calculate_deadline returns UNKNOWN for missing inputs)
+preflight_result      — always present (run_preflight always returns)
+arithmetic_results    — always a list (may be empty)
+validation_result     — always present (run_validation always returns)
+draft_result          — always present, including BLOCKED results
+triage_summary        — Optional; present only on triage branches (§24.27)
+```
+
+Exactly one Optional field: `triage_summary`. The envelope MUST NOT
+contain `raw_text`, pdf bytes, a prompt, a provider response, the legacy
+`NoticeAnalysis`, or an arbitrary error dict.
+
+### 24.6 `TriageSummary`
+
+Add to `domain/models.py`. Exact field order (no defaults):
+
+```python
+@dataclass
+class TriageSummary:
+    proceeding_type: ProceedingType
+    notice_form: NoticeForm
+    support_level: SupportLevel
+    classification_confidence: ClassificationConfidence
+    extraction_status: FactExtractionStatus
+    portal_verification_required: bool
+    authority_verification_required: bool
+    communication_identifier_status: CommunicationIdentifierStatus
+    authority_details_status: AuthorityDetailsStatus
+    deadline_status: DeadlineStatus
+    hearing_status: HearingStatus
+    requested_document_fact_ids: List[str]
+    referenced_annexure_fact_ids: List[str]
+    message: str
+```
+
+Copy sources (verbatim, no transformation):
+
+```text
+proceeding_type               <- classification.proceeding_type
+notice_form                   <- classification.notice_form
+support_level                 <- classification.support_level
+classification_confidence     <- classification.confidence
+extraction_status             <- extraction_result.status
+portal_verification_required  <- preflight_result.portal_verification_required
+authority_verification_required <- preflight_result.authority_verification_required
+communication_identifier_status <- preflight_result.communication_identifier_status
+authority_details_status      <- preflight_result.authority_details_status
+deadline_status               <- deadline_result.deadline_status
+hearing_status                <- deadline_result.hearing_status
+requested_document_fact_ids   <- preflight_result.requested_document_fact_ids
+referenced_annexure_fact_ids  <- preflight_result.referenced_annexure_fact_ids
+```
+
+The committed PreflightResult field name is `referenced_annexure_fact_ids`
+(the concept previously labelled "annexure fact ids"). `message` is
+architecture-owned text from the closed catalog in §24.7 — never
+free-form LLM prose.
+
+### 24.7 Triage message catalog and precedence
+
+Exact deterministic messages (closed catalog):
+
+```text
+NO_INPUT    "No usable notice text was available for Phase-2 analysis."
+FAILED      "Fact extraction failed, so specialist drafting is blocked."
+UNKNOWN     "This notice could not be matched to an approved deep specialist workflow."
+TRIAGE_ONLY "This notice is recognized for triage, but no approved deep specialist workflow is available."
+```
+
+Exact precedence (highest first):
+
+```text
+1. NO_INPUT
+2. FAILED
+3. UNKNOWN
+4. TRIAGE_ONLY
+```
+
+`app.py` must not invent alternative machine/status messages.
+
+### 24.8 Classification call
+
+Exactly one classifier call, no orchestration retry, no fallback
+classifier, no direct workflow guessing:
+
+```python
+classification = classify_notice(raw_text)
+```
+
+`classify_notice` never raises; on malformed/unavailable output it
+returns a structured UNKNOWN classification (`support_level=UNKNOWN`,
+`proceeding_type=UNKNOWN`).
+
+### 24.9 Fact extraction call
+
+Exactly one Fact Engine call, no orchestration-layer semantic repair, no
+second call:
+
+```python
+extraction_result = extract_facts_with_status(raw_text, classification)
+```
+
+`extract_facts_with_status` never raises; it returns NO_INPUT for
+empty/whitespace text (zero LLM calls) and FAILED on a raised call or
+malformed response (facts=[]). Status semantics follow §18.1.
+
+### 24.10 Deadline input mapper — structured facts only
+
+Private deterministic Step-10 helper concept `_build_deadline_inputs`
+uses ONLY `extraction_result.facts` (and `today` only as the
+`calculate_deadline` reference date, never as notice-derived evidence).
+It MUST NOT use `raw_text`. For every mapped scalar, the source value is
+`fact.source_text` (never `fact.claim`; never a new substring extracted
+from `raw_text`; never semantic inference from an unrelated fact).
+
+### 24.11 Deadline fact status permission
+
+Facts eligible to populate deterministic deadline inputs must have:
+
+```text
+FactStatus.CONFIRMED
+FactStatus.ALLEGED
+```
+
+These represent what the notice records/alleges, not legal truth. Facts
+with `REQUIRES_VERIFICATION`, `UNKNOWN` or `INFERRED` are never silently
+converted into a trusted scalar. `DraftPermission` is NOT a deadline-input
+permission system and is not consulted here.
+
+### 24.12 Deadline zero / one / multiple
+
+For each scalar input:
+
+```text
+ZERO eligible facts   -> None
+EXACTLY ONE eligible  -> its exact source_text
+MORE THAN ONE         -> None (never an arbitrary first)
+```
+
+Duplicates are never resolved by page number, extraction order, longest
+text, newest date, or semantic guess. The resulting deterministic
+UNKNOWN deadline state (plus its notes) is the conflict surface; no new
+value is invented.
+
+### 24.13 Service date and response period
+
+There is no exact architecture-owned service-date FactType. Therefore:
+
+```text
+service_date = None   ALWAYS in Phase 2.
+```
+
+Never derive service date from notice date, upload date, current date,
+PDF metadata, or app timestamp.
+
+There is no exact architecture-owned response-period fact selector
+(`STATED_DUE_DATE` is a due date, not a period). Therefore:
+
+```text
+response_period_text = None   ALWAYS in Phase 2.
+```
+
+Never use the synthetic fixture's expected number directly, and never
+infer `7` / `21` / `30` from proceeding/workflow identity. There is no
+universal Section-129 seven-day rule and no static Section-73/74
+response period.
+
+### 24.14 Notice date and hearing date
+
+Notice date selector: `FactType.NOTICE_DATE`, `status in
+{CONFIRMED, ALLEGED}`, non-empty `source_text`.
+
+```text
+EXACTLY ONE eligible -> notice_date = _parse_date_text(fact.source_text)
+otherwise            -> notice_date = None
+```
+
+`calculate_deadline` takes `notice_date: Optional[date]`, so the
+orchestrator parses the selected fact's exact `source_text` before the
+call. There is EXACTLY ONE authorized parse path: the orchestrator
+imports and reuses the existing committed private deadline-engine date
+parser by its actual current function name:
+
+```python
+from domain.deadline_engine import _parse_date_text
+```
+
+This reuses the §4.2 first-numeric-date rule (dd-mm-yyyy / dd/mm/yyyy /
+dd.mm.yyyy, 2- or 4-digit year). The orchestrator MUST NOT duplicate the
+date regex, implement a second parser, introduce a shared helper, modify
+`domain/deadline_engine.py`, use `dateutil`, call `datetime.strptime`
+independently, or use an LLM. It passes the exact `fact.source_text` to
+`_parse_date_text` and uses the returned `date` or `None` exactly as
+returned — no fallback parse. A failed or ambiguous parse yields None,
+never a fabricated date.
+
+Hearing date selector: `FactType.HEARING_DETAILS`, `status in
+{CONFIRMED, ALLEGED}`, non-empty `source_text`.
+
+```text
+EXACTLY ONE eligible -> hearing_date_text = exact source_text (engine parses it)
+otherwise            -> hearing_date_text = None
+```
+
+`hearing_date_text` is the exact selected `source_text`, never
+pre-parsed by the orchestrator; `calculate_deadline` owns parsing that
+value internally.
+
+### 24.15 calculate_deadline call
+
+One deterministic call, no retry, no `date.today()` inside the
+orchestrator, no system-clock access:
+
+```python
+deadline_result = calculate_deadline(
+    notice_date=notice_date,
+    service_date=service_date,
+    response_period_text=response_period_text,
+    hearing_date_text=hearing_date_text,
+    today=today,
+)
+```
+
+### 24.16 Preflight call
+
+After `deadline_result`, exactly one deterministic call:
+
+```python
+preflight_result = run_preflight(
+    extraction_result, classification, deadline_result,
+)
+```
+
+No recomputation.
+
+### 24.17 Arithmetic request builder and calculation discovery
+
+Private deterministic Step-10 helper concept `_build_arithmetic_requests`
+uses ONLY `classification.proceeding_type`,
+`get_validation_profile(...)` and `extraction_result.facts`. It MUST NOT
+use `raw_text`, workflow free-text `special_rules`, the drafting prompt,
+an LLM, or requirement-text NLP.
+
+Arithmetic calculations are discovered ONLY from
+`WorkflowValidationProfile.requirement_specs` entries whose
+`kind == RequirementKind.DERIVED` and whose `calculation_type is not
+None`, in exact profile order. Duplicate `calculation_type` produces
+exactly ONE request (first occurrence wins). No calculation not
+requested by a DERIVED requirement. Profiles with no DERIVED requirement
+produce `arithmetic_results = []`.
+
+### 24.18 Arithmetic operand role mapping
+
+For every currently supported calculation type, transcribe the exact
+FactRole pair, operand order, FactType and accepted status (matching the
+committed validation-profile FACT requirement specs):
+
+```text
+ITC_DIFFERENCE        formula "GSTR-3B ITC - GSTR-2B ITC"
+    left  role  = FactRole.GSTR3B_ITC_CLAIMED_AMOUNT      (STATED_AMOUNT, CONFIRMED)
+    right role  = FactRole.GSTR2B_ITC_REFLECTED_AMOUNT    (STATED_AMOUNT, CONFIRMED)
+
+OUTPUT_TAX_DIFFERENCE formula "GSTR-1 liability - GSTR-3B liability"
+    left  role  = FactRole.GSTR1_LIABILITY_DECLARED_AMOUNT (STATED_AMOUNT, CONFIRMED)
+    right role  = FactRole.GSTR3B_LIABILITY_DISCHARGED_AMOUNT (STATED_AMOUNT, CONFIRMED)
+```
+
+Subtraction is directional: left − right. No new calculation types.
+
+### 24.19 Arithmetic fact selection
+
+For each required operand role, an eligible fact satisfies exactly:
+
+```text
+fact.fact_type == FactType.STATED_AMOUNT
+and fact.fact_role == <role>
+and fact.status == FactStatus.CONFIRMED
+```
+
+```text
+ZERO eligible facts  -> operand unresolvable
+MORE THAN ONE        -> operand unresolvable (no arbitrary first/largest/latest)
+EXACTLY ONE          -> operand = that fact
+```
+
+### 24.20 Arithmetic value_text construction
+
+Where an operand is validly selected (§24.19), `value_text` is the exact
+amount-token substring of the selected fact's `source_text` — never
+fabricated, never normalized, never re-typed through float or Decimal.
+The orchestrator recognizes amount tokens with the committed arithmetic
+engine's §18.20 amount grammar in search mode, with grouping-first
+alternatives so each token is maximal. The exact machine grammar is:
+
+```text
+(?<![A-Za-z0-9])(-?)(?:₹|rs\.?|inr)?\s*(?:\d{1,2}(?:,\d{2})*(?:,\d{3})(?:\.\d{1,2})?|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(?![A-Za-z0-9])
+```
+
+- Flags: exactly `re.IGNORECASE`.
+- Match API: exactly `re.finditer` over `source_text`.
+- Boundary: each match must be preceded by start-of-string or a character
+  NOT in `[A-Za-z0-9]`, and followed by end-of-string or a character NOT
+  in `[A-Za-z0-9]`, so digits embedded in identifiers/form codes (e.g.
+  "GSTR-3B") are never treated as amounts.
+- Core order: the three amount-core alternatives are grouped-first
+  (lakh/crore, then standard 3-digit grouping, then bare `\d+`) so a
+  grouped amount such as "1,50,000" is one token — never "1", "50",
+  "000".
+
+`value_text` is the FULL match span — `match.group(0)` — an exact
+substring of `source_text`, retaining verbatim: the optional leading
+minus sign, the optional currency marker (`₹` / `rs` / `rs.` / `inr` /
+`INR`), any whitespace between the currency marker and the digits, the
+comma grouping, and the optional one/two-digit decimal fraction. No
+leading or trailing whitespace is included (the token span begins at the
+sign/currency/first digit and ends at the final digit). The result is an
+exact substring of `source_text` that the committed arithmetic engine
+accepts as-is with no normalization.
+
+```text
+EXACTLY ONE match  -> value_text = match.group(0) verbatim
+ZERO matches       -> operand unresolvable -> §24.21 direct INSUFFICIENT_DATA
+MORE THAN ONE      -> operand unresolvable -> §24.21 direct INSUFFICIENT_DATA
+```
+
+No first-match-wins, no largest-number-wins, no currency stripping, no
+comma removal, no float conversion, no Decimal reconstruction, no claim
+parsing, no LLM choice.
+
+### 24.21 Arithmetic missing / ambiguous operand behavior
+
+When an operand is missing or ambiguous, do NOT fabricate an operand.
+The current `ArithmeticRequest` contract cannot represent a missing
+operand without inventing a `source_fact_id` / `value_text`, so the
+orchestrator does NOT call `run_arithmetic` for that calculation.
+Instead it directly constructs the deterministic INSUFFICIENT_DATA
+result:
+
+```text
+ArithmeticResult(
+    calculation_type = <discovered type>,
+    status           = ArithmeticStatus.INSUFFICIENT_DATA,
+    source_fact_ids  = [ordered candidate fact ids, possibly empty],
+    operand_values   = [],
+    result           = None,
+    formula          = <§18.23 formula string for that type>,
+    currency         = "INR",
+    allowed_in_draft = DraftPermission.CONDITIONAL,
+)
+```
+
+`source_fact_ids` is deterministic and architecture-owned. It is built in
+exactly this order:
+
+1. every candidate fact ID for the LEFT operand role, in their original
+   order of appearance in `extraction_result.facts`;
+2. followed by every candidate fact ID for the RIGHT operand role, in
+   their original order of appearance in `extraction_result.facts`;
+3. first-occurrence deduplication across the combined list.
+
+Operand side takes precedence over global extraction interleaving (LEFT
+candidates first, RIGHT candidates second), while extraction order is
+preserved within each side. Never sort alphabetically, numerically by
+fact_id, by `source_page`, by amount, or by status; never select only one
+ambiguous candidate; never reorder the extraction results. The empty,
+one-side, and both-side cases all follow from this rule: both empty →
+`[]`; only LEFT populated → those IDs in extraction order; only RIGHT
+populated → those IDs in extraction order. When both operands resolve
+cleanly, the orchestrator constructs the `ArithmeticRequest` and calls
+`run_arithmetic` normally.
+
+### 24.22 Arithmetic result ordering
+
+Arithmetic requests run in discovered DERIVED-requirement order.
+`arithmetic_results` order is architecture-significant because
+`[[ARITH:N]]` uses the original one-based result position. Never sort
+alphabetically, never reorder by calculation type, never filter or
+reindex after running.
+
+### 24.23 Validation call
+
+Validation runs for EVERY Phase-2 analysis after extraction/preflight,
+including TRIAGE_ONLY / UNKNOWN and FAILED / NO_INPUT / PARTIAL
+extraction, so support-gate results remain structured. The engine safely
+supports these branches (§19.44–§19.45, §19.111): for TRIAGE_ONLY /
+UNKNOWN the workflow/profile resolve to None, `requirements` and
+`evidence_checklist` are empty, and `draft_eligibility` is BLOCKED.
+
+```python
+validation_result = run_validation(
+    classification,
+    extraction_result,
+    preflight_result,
+    arithmetic_results,
+    deadline_result,
+)
+```
+
+### 24.24 Drafting call
+
+`generate_specialist_draft` is called for every completed validation
+result. The drafting engine owns the zero-LLM safety gate: DEEP-eligible
+cases may perform one drafting LLM call, while BLOCKED / TRIAGE /
+UNKNOWN / FAILED / NO_INPUT cases return deterministic BLOCKED results
+with zero drafting LLM calls. Do NOT conditionally skip merely to save a
+function call.
+
+```python
+draft_result = generate_specialist_draft(
+    classification,
+    extraction_result,
+    preflight_result,
+    arithmetic_results,
+    validation_result,
+    deadline_result,
+)
+```
+
+### 24.25 Support branch contract
+
+After classification and fact extraction:
+
+```text
+DEEP_WORKFLOW:
+    deadline, preflight, applicable arithmetic, validation, drafting gate
+    all execute.
+
+TRIAGE_ONLY:
+    deadline, preflight, arithmetic_results = [], validation support gate,
+    drafting through the deterministic blocked gate only, triage_summary
+    present, no specialist drafting LLM call.
+
+UNKNOWN support or ProceedingType.UNKNOWN:
+    same as TRIAGE_ONLY, with the UNKNOWN triage message.
+```
+
+No legacy fallback in any branch.
+
+### 24.26 Extraction status branching
+
+```text
+SUCCESS: normal branch.
+
+PARTIAL: continue through the deterministic engines; validation owns the
+    unresolved/review consequences; deep drafting may occur only if the
+    validation/drafting gates permit. PARTIAL + DEEP is NOT a triage
+    branch.
+
+FAILED: continue only through operations that safely accept the
+    empty/failed extraction result and produce deterministic
+    blocked/unknown state; no specialist LLM drafting call;
+    triage_summary message = the FAILED catalog message.
+
+NO_INPUT: same safety principle; no specialist LLM drafting call;
+    triage_summary message = the NO_INPUT catalog message.
+```
+
+No retry of fact extraction in any status.
+
+### 24.27 Triage summary creation and presence
+
+The triage summary is deterministic Python. No LLM, no `raw_text`, no
+arbitrary free-form explanation. It copies only the structured fields
+listed in §24.6. `ExtractedFact.claim` is never copied into free-form
+message text; extracted facts remain structured objects separate from
+the triage message.
+
+`triage_summary` is PRESENT when:
+
+```text
+extraction status is FAILED
+extraction status is NO_INPUT
+support level is TRIAGE_ONLY
+support level is UNKNOWN
+proceeding type is UNKNOWN
+```
+
+Otherwise `triage_summary = None`. When multiple conditions apply, use
+the exact §24.7 precedence (NO_INPUT > FAILED > UNKNOWN > TRIAGE_ONLY).
+
+### 24.28 Current-date ownership
+
+`run_phase2_analysis` requires `today: date`. The caller owns today's
+date. The orchestrator MUST NOT call `date.today()`, `datetime.now()` or
+`time.time()`. `app.py` may supply `date.today()` at the UI boundary;
+future APIs inject their own date. This keeps fixture tests
+deterministic.
+
+### 24.29 Orchestrator LLM budget
+
+Maximum LLM calls per run:
+
+```text
+DEEP, drafting gate passes: classifier 1 + Fact Engine 1 + drafting 1 = 3
+DEEP, drafting gate blocks: classifier 1 + Fact Engine 1 + drafting 0 = 2
+TRIAGE_ONLY:                classifier 1 + Fact Engine 1 + drafting 0 = 2
+UNKNOWN:                    classifier 1 + Fact Engine 1 + drafting 0 = 2
+NO_INPUT:                   classifier 1 + Fact Engine 0 + drafting 0 = 1
+```
+
+`extract_facts_with_status` makes zero LLM calls for NO_INPUT. No
+orchestration-layer retries. Infrastructure retries internal to
+`llm_client` remain outside this count.
+
+### 24.30 Exception / failure containment
+
+`classify_notice`, `extract_facts_with_status`, `calculate_deadline`,
+`run_preflight`, `run_arithmetic`, `run_validation` and
+`generate_specialist_draft` all return structured results and never raise
+to the orchestrator: the classifier returns a structured UNKNOWN
+classification; the Fact Engine returns FAILED / NO_INPUT (wrapping the
+LLM call); `run_arithmetic` returns INSUFFICIENT_DATA; the drafting gate
+returns LLM_ERROR / MALFORMED_RESPONSE / POST_VALIDATION_FAILED /
+BLOCKED. Therefore no orchestration-layer broad exception catcher and no
+new failure model/enum is required. No exception may trigger legacy
+fallback. PDF extraction failure (`RuntimeError` from
+`extract_text`) occurs before `run_phase2_analysis` and is an
+application-layer error.
+
+### 24.31 Result envelope raw-text prohibition
+
+`Phase2AnalysisResult` MUST NOT contain `raw_text`. The Streamlit shell
+may keep separately extracted raw text for its existing "Extracted Text"
+expander; that text is not part of the Phase-2 domain result. Step-10
+tests must prove `raw_text` is absent from the dataclass fields and never
+passed to the drafting engine.
+
+### 24.32 App integration contract
+
+Step 10.2 will make `app.py`:
+
+```text
+1. accept the uploaded PDF
+2. call extract_text(pdf_bytes)
+3. obtain today = date.today() at the UI boundary
+4. call run_phase2_analysis(raw_text, today)
+5. render the structured Phase2 outputs
+```
+
+After orchestration exists, `app.py` must NOT call the individual
+classifier, Fact Engine, deadline, preflight, arithmetic, validation or
+drafting engines directly. Streamlit stays thin.
+
+### 24.33 UI minimum rendering order
+
+Step 10.2 minimum functional rendering order:
+
+```text
+1.  classification / support
+2.  extraction status
+3.  preflight / deadline
+4.  arithmetic results when present
+5.  validation status
+6.  unresolved requirements
+7.  evidence checklist
+8.  review requirements
+9.  deterministic triage summary when present
+10. specialist rendered draft only when final drafting result is SUCCESS
+    AND post_validation is PASS
+11. drafting failure/block status otherwise
+12. optional extracted-text expander last
+```
+
+No visual redesign required.
+
+### 24.34 rendered_text-only display and export rule
+
+The app may display specialist prose ONLY from
+`DraftSection.rendered_text` — never `DraftSection.template_text`. Draft
+sections display only when ALL of:
+
+```text
+draft_result.status == DraftGenerationStatus.SUCCESS
+draft_result.post_validation is not None
+draft_result.post_validation.overall_status == ValidationStatus.PASS
+```
+
+Otherwise no specialist draft section is displayed. Any existing/future
+export consumes only `rendered_text` from a final PASS result; never
+`template_text`, MALFORMED_RESPONSE sections, POST_VALIDATION_FAILED
+sections, a BLOCKED draft, or legacy explanation as Phase-2 output. If
+the app has no active export, do not create one merely for Step 10.
+
+### 24.35 Legacy retention contract
+
+During Step 10, leave untouched:
+
+```text
+modules/notice_explainer.py
+prompts/notice_prompt.txt
+modules/domain_models.py
+legacy compatibility dataclasses in domain/models.py
+```
+
+But `app.py` must stop importing/calling `explain_notice` for the main
+Phase-2 runtime (no fallback). Legacy deletion is a separate later
+cleanup task after end-to-end verification.
+
+### 24.36 Step-10 implementation split
+
+Two controlled substeps:
+
+```text
+Step 10.1 — domain orchestration
+    domain/models.py
+    domain/phase2_orchestrator.py
+    tests/test_phase2_orchestrator.py
+    (+ architecture file only if implementation discovers an actual
+     contract contradiction requiring a separate amendment)
+    No app.py.
+
+Step 10.2 — Streamlit integration
+    app.py
+    tests/test_app_integration.py
+    No domain engine modifications.
+```
+
+This split proves orchestration independently before touching the UI.
+
+The Step-10.1 file list above is closed: importing the existing deadline
+parser (see §24.14) does NOT authorize modifying
+`domain/deadline_engine.py`, and does NOT add `shared/date_utils.py`, an
+arithmetic helper module, or an integration utils module.
+
+### 24.37 Four-reference notice test strategy
+
+For Step 10.1 tests, use the four repository PDF/reference fixtures only
+where deterministic; do NOT make live Gemini calls. Mock `classify_notice`
+and `extract_facts_with_status` (and the drafting call/provider boundary
+as appropriate) while allowing deterministic deadline, preflight,
+arithmetic, validation and post-validation to execute. Expected workflow
+mapping (exact ProceedingType names):
+
+```text
+NOTICE_1 -> ProceedingType.GST_SEC73_ITC
+NOTICE_2 -> ProceedingType.GST_SEC74_FRAUD
+NOTICE_3 -> ProceedingType.GST_SEC129_ENFORCE
+NOTICE_4 -> ProceedingType.GST_SEC73_RCM
+```
+
+Tests must not encode unsafe historical assumptions (a universal §129
+seven-day legal rule, a static 100% penalty). A fixture containing
+"7 days" is treated only as fixture-stated text if extracted as such,
+never as a legal rule.
+
+### 24.38 Contract counts and new Step-10 models
+
+Existing contracts remain:
+
+```text
+DraftGenerationStatus  = 3
+DraftFailureCode       = 6
+FactRole               = 22
+WorkflowRequirementSpecs = 29
+special-rule mappings  = 24
+validation profiles    = 5
+drafting profiles      = 5
+deep workflows         = 5
+```
+
+New Step-10 models (two dataclasses, no new enums):
+
+```text
+Phase2AnalysisResult   (§24.5)
+TriageSummary          (§24.6)
+```
+
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20; amended 2026-08-29 by Phase 2 Step 9B: authoritative Controlled Drafting Context + Prompt Assembly contract added as §21 (§21.1–§21.31); amended 2026-08-29 by Phase 2 Step 9C: authoritative Step-9.3 Generation/Parser Result-State Contract added as §22 (§22.1–§22.29); amended 2026-08-29 by Phase 2 Step 9D: authoritative Step-9.4 Deterministic Post-Validation + Rendering Catalog added as §23 (§23.1–§23.51). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20; amended 2026-08-29 by Phase 2 Step 9B: authoritative Controlled Drafting Context + Prompt Assembly contract added as §21 (§21.1–§21.31); amended 2026-08-29 by Phase 2 Step 9C: authoritative Step-9.3 Generation/Parser Result-State Contract added as §22 (§22.1–§22.29); amended 2026-08-29 by Phase 2 Step 9D: authoritative Step-9.4 Deterministic Post-Validation + Rendering Catalog added as §23 (§23.1–§23.51); amended 2026-08-30 by Phase 2 Step 10B: authoritative Step-10 Orchestration + Triage contract added as §24 (§24.1–§24.38). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
