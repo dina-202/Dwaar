@@ -823,3 +823,35 @@ class SpecialistDraftResult:
     post_validation: Optional[DraftPostValidationResult]
     failure_code: Optional[DraftFailureCode]
     error_message: Optional[str]
+
+
+# --- Phase 2 Step 10.1 dataclasses (ARCHITECTURE_SPEC_v1_1 §24.5–§24.6) ----
+
+@dataclass
+class TriageSummary:
+    proceeding_type: ProceedingType
+    notice_form: NoticeForm
+    support_level: SupportLevel
+    classification_confidence: ClassificationConfidence
+    extraction_status: FactExtractionStatus
+    portal_verification_required: bool
+    authority_verification_required: bool
+    communication_identifier_status: CommunicationIdentifierStatus
+    authority_details_status: AuthorityDetailsStatus
+    deadline_status: DeadlineStatus
+    hearing_status: HearingStatus
+    requested_document_fact_ids: List[str]
+    referenced_annexure_fact_ids: List[str]
+    message: str
+
+
+@dataclass
+class Phase2AnalysisResult:
+    classification: NoticeClassification
+    extraction_result: FactExtractionResult
+    deadline_result: DeadlineResult
+    preflight_result: PreflightResult
+    arithmetic_results: List[ArithmeticResult]
+    validation_result: ValidationEngineResult
+    draft_result: SpecialistDraftResult
+    triage_summary: Optional[TriageSummary]
