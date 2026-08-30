@@ -57,6 +57,9 @@ from domain.models import (
     DeadlineConflictStatus,
     DeadlineResult,
     DeadlineStatus,
+    DeadlineDraftBlock,
+    DraftBlockKind,
+    DraftCandidateSection,
     DraftEligibility,
     DraftFailureCode,
     DraftGenerationStatus,
@@ -80,6 +83,7 @@ from domain.models import (
     ReviewLevel,
     ReviewRequirement,
     SpecialistDraftResult,
+    StaticDraftBlock,
     SupportLevel,
     ValidationEngineResult,
     ValidationItem,
@@ -577,7 +581,8 @@ class ModuleSurfaceTests(unittest.TestCase):
     SOURCE = pathlib.Path(engine.__file__).read_text(encoding="utf-8")
 
     ALLOWED_IMPORT_ROOTS = (
-        "json", "pathlib", "re", "typing", "domain", "modules", "workflows",
+        "json", "pathlib", "re", "types", "typing", "domain", "modules",
+        "workflows",
     )
 
     def test_module_imports(self):
@@ -5195,6 +5200,104 @@ class Step94ZeroLlmTests(unittest.TestCase):
             inputs["preflight_result"],
         )
         self.assertEqual(interim, snapshot)
+
+
+class Step9E1DormantContractTests(unittest.TestCase):
+    """§25 Step 9E.1 registry/contracts are exact, private and dormant."""
+
+    EXPECTED_STATIC_TEMPLATES = {
+        "static.working_draft": (
+            "This is a CA working draft and requires professional review "
+            "before use."
+        ),
+        "static.notice_material": (
+            "The following notice-grounded material is relevant to this "
+            "section."
+        ),
+        "static.open_items": (
+            "The following matters remain open for verification."
+        ),
+        "static.taxpayer_verify": (
+            "The taxpayer should verify the relevant records before any "
+            "factual submission is made."
+        ),
+        "static.ca_confirm": (
+            "CA review should confirm the relevant factual and evidentiary "
+            "position."
+        ),
+        "static.records_if_available": (
+            "If the relevant records are available, they should be "
+            "reconciled against the notice-grounded material."
+        ),
+        "static.records_reconcile": (
+            "The relevant records should be reconciled before any factual "
+            "submission is made."
+        ),
+        "static.conditional_response": (
+            "Any response should remain conditional on verification of the "
+            "structured facts and records identified in this working draft."
+        ),
+        "static.legal_research_required": (
+            "CA legal research is required before relying on any legal "
+            "proposition not supplied by a verified legal-rule source."
+        ),
+        "static.no_legal_conclusion": (
+            "This working draft does not express filing approval or a final "
+            "legal conclusion."
+        ),
+    }
+
+    def test_exact_closed_static_template_registry(self):
+        self.assertEqual(len(engine._STATIC_TEMPLATE_REGISTRY), 10)
+        self.assertEqual(
+            dict(engine._STATIC_TEMPLATE_REGISTRY),
+            self.EXPECTED_STATIC_TEMPLATES,
+        )
+
+    def test_unknown_static_template_has_no_fallback(self):
+        with self.assertRaises(KeyError):
+            engine._STATIC_TEMPLATE_REGISTRY["static.unknown"]
+
+    def test_registry_is_immutable_and_non_parameterized(self):
+        with self.assertRaises(TypeError):
+            engine._STATIC_TEMPLATE_REGISTRY["static.dynamic"] = "dynamic"
+        for template_id, text in engine._STATIC_TEMPLATE_REGISTRY.items():
+            self.assertTrue(template_id.startswith("static."), template_id)
+            self.assertNotIn("{", text, template_id)
+            self.assertNotIn("}", text, template_id)
+            self.assertNotIn("[[", text, template_id)
+            self.assertNotIn("]]", text, template_id)
+
+    def test_contract_construction_and_registry_use_make_no_llm_call(self):
+        with mock.patch.object(engine, "call_gemini") as mocked:
+            section = DraftCandidateSection(
+                section_id="sec73_itc.s1",
+                blocks=(
+                    StaticDraftBlock(template_id="static.working_draft"),
+                    DeadlineDraftBlock(),
+                ),
+            )
+            self.assertIs(DraftBlockKind.STATIC, DraftBlockKind.STATIC)
+            self.assertEqual(
+                engine._STATIC_TEMPLATE_REGISTRY[
+                    section.blocks[0].template_id
+                ],
+                self.EXPECTED_STATIC_TEMPLATES["static.working_draft"],
+            )
+            mocked.assert_not_called()
+
+    def test_active_legacy_generation_behavior_is_unchanged(self):
+        result, mocked = run_draft()
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(
+            [section.template_text for section in result.sections],
+            DEFAULT_RESPONSE_BODIES,
+        )
+        self.assertEqual(
+            [section.rendered_text for section in result.sections],
+            DEFAULT_RESPONSE_BODIES,
+        )
 
 
 if __name__ == "__main__":

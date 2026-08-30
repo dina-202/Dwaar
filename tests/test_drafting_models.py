@@ -38,10 +38,15 @@ import pathlib
 import unittest
 from dataclasses import MISSING, fields, is_dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 from domain.models import (
+    ArithmeticDraftBlock,
+    DeadlineDraftBlock,
     DeadlineResult,
+    DraftBlockKind,
+    DraftCandidateBlock,
+    DraftCandidateSection,
     DraftEligibility,
     DraftFailureCode,
     DraftGenerationStatus,
@@ -49,21 +54,27 @@ from domain.models import (
     DraftPostValidationResult,
     DraftSection,
     DraftSectionSpec,
+    EvidenceDraftBlock,
     EvidenceChecklistItem,
     EvidenceGap,
     EvidenceStatus,
     ExtractedFact,
+    FactDraftBlock,
     FactRole,
     FactStatus,
     FactType,
+    HearingDraftBlock,
     NoticeAnalysis,
     PotentialDefence,
     ProceedingType,
+    RequirementDraftBlock,
     RequirementResult,
     RequirementStatus,
     ReviewLevel,
+    ReviewDraftBlock,
     ReviewRequirement,
     SpecialistDraftResult,
+    StaticDraftBlock,
     ValidationCheck,
     ValidationEngineResult,
     ValidationItem,
@@ -88,6 +99,17 @@ EXPECTED_DRAFT_FAILURE_CODES = {
     "LLM_ERROR": "llm_error",
     "MALFORMED_RESPONSE": "malformed_response",
     "POST_VALIDATION_FAILED": "post_validation_failed",
+}
+
+EXPECTED_DRAFT_BLOCK_KINDS = {
+    "STATIC": "static",
+    "FACT": "fact",
+    "ARITHMETIC": "arithmetic",
+    "DEADLINE": "deadline",
+    "HEARING": "hearing",
+    "REQUIREMENT": "requirement",
+    "EVIDENCE": "evidence",
+    "REVIEW": "review",
 }
 
 
@@ -179,6 +201,106 @@ class DraftFailureCodeTests(_EnumContractMixin, unittest.TestCase):
 
     def test_no_retry_exhausted_member(self):
         self.assertFalse(hasattr(DraftFailureCode, "RETRY_EXHAUSTED"))
+
+
+class DraftBlockKindTests(_EnumContractMixin, unittest.TestCase):
+    """§25.3: exact closed eight-member block-kind contract."""
+
+    enum_class = DraftBlockKind
+    expected_members = EXPECTED_DRAFT_BLOCK_KINDS
+
+    def test_has_exactly_8_members(self):
+        self.assertEqual(len(DraftBlockKind), 8)
+
+
+class DraftCandidateContractTests(unittest.TestCase):
+    """§25.4: identifier-only typed candidate contracts, still dormant."""
+
+    FIELD_CONTRACTS = {
+        StaticDraftBlock: [("template_id", str)],
+        FactDraftBlock: [("fact_id", str)],
+        ArithmeticDraftBlock: [("arithmetic_index", int)],
+        DeadlineDraftBlock: [],
+        HearingDraftBlock: [],
+        RequirementDraftBlock: [("requirement_id", str)],
+        EvidenceDraftBlock: [("evidence_id", str)],
+        ReviewDraftBlock: [("review_id", str)],
+    }
+
+    def test_exact_block_dataclass_fields_order_and_annotations(self):
+        for block_type, expected in self.FIELD_CONTRACTS.items():
+            self.assertTrue(is_dataclass(block_type), block_type.__name__)
+            self.assertEqual(
+                [(item.name, item.type) for item in fields(block_type)],
+                expected,
+                block_type.__name__,
+            )
+
+    def test_fieldful_blocks_have_no_defaults(self):
+        for block_type, expected in self.FIELD_CONTRACTS.items():
+            for item in fields(block_type):
+                self.assertIs(item.default, MISSING, item.name)
+                self.assertIs(item.default_factory, MISSING, item.name)
+            if expected:
+                with self.assertRaises(TypeError, msg=block_type.__name__):
+                    block_type()
+
+    def test_zero_field_blocks_accept_no_keys(self):
+        self.assertEqual(DeadlineDraftBlock(), DeadlineDraftBlock())
+        self.assertEqual(HearingDraftBlock(), HearingDraftBlock())
+        with self.assertRaises(TypeError):
+            DeadlineDraftBlock(text="not authorized")
+        with self.assertRaises(TypeError):
+            HearingDraftBlock(metadata={})
+
+    def test_candidate_union_is_exact_and_ordered(self):
+        self.assertEqual(
+            DraftCandidateBlock,
+            Union[
+                StaticDraftBlock,
+                FactDraftBlock,
+                ArithmeticDraftBlock,
+                DeadlineDraftBlock,
+                HearingDraftBlock,
+                RequirementDraftBlock,
+                EvidenceDraftBlock,
+                ReviewDraftBlock,
+            ],
+        )
+
+    def test_candidate_section_exact_contract(self):
+        self.assertTrue(is_dataclass(DraftCandidateSection))
+        self.assertEqual(
+            [(item.name, item.type) for item in fields(DraftCandidateSection)],
+            [
+                ("section_id", str),
+                ("blocks", Tuple[DraftCandidateBlock, ...]),
+            ],
+        )
+        for item in fields(DraftCandidateSection):
+            self.assertIs(item.default, MISSING, item.name)
+            self.assertIs(item.default_factory, MISSING, item.name)
+        with self.assertRaises(TypeError):
+            DraftCandidateSection()
+
+    def test_no_prose_bearing_or_arbitrary_payload_field(self):
+        forbidden = {
+            "text",
+            "prose",
+            "body",
+            "body_template",
+            "template_text",
+            "claim",
+            "explanation",
+            "reason",
+            "suffix",
+            "prefix",
+            "metadata",
+            "payload",
+        }
+        for block_type in self.FIELD_CONTRACTS:
+            names = {item.name for item in fields(block_type)}
+            self.assertTrue(names.isdisjoint(forbidden), block_type.__name__)
 
 
 class DraftSectionSpecTests(_NoDefaultMixin, unittest.TestCase):

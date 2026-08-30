@@ -48,7 +48,8 @@ and are NOT external machine contracts.
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from types import MappingProxyType
+from typing import Dict, List, Mapping, Optional, Tuple
 
 from domain.models import (
     ArithmeticResult,
@@ -92,6 +93,52 @@ _WORKFLOW_PROMPT_PATHS: Dict[str, Path] = {
     "sec74_fraud": _PROMPTS_DIR / "gst" / "sec74_fraud.txt",
     "sec129": _PROMPTS_DIR / "gst" / "sec129.txt",
 }
+
+# Closed §25.13 Python-owned static-template registry. Step 9E.1 keeps this
+# immutable and dormant; the active drafting path does not consult it.
+_STATIC_TEMPLATE_REGISTRY: Mapping[str, str] = MappingProxyType(
+    {
+        "static.working_draft": (
+            "This is a CA working draft and requires professional review "
+            "before use."
+        ),
+        "static.notice_material": (
+            "The following notice-grounded material is relevant to this "
+            "section."
+        ),
+        "static.open_items": (
+            "The following matters remain open for verification."
+        ),
+        "static.taxpayer_verify": (
+            "The taxpayer should verify the relevant records before any "
+            "factual submission is made."
+        ),
+        "static.ca_confirm": (
+            "CA review should confirm the relevant factual and evidentiary "
+            "position."
+        ),
+        "static.records_if_available": (
+            "If the relevant records are available, they should be "
+            "reconciled against the notice-grounded material."
+        ),
+        "static.records_reconcile": (
+            "The relevant records should be reconciled before any factual "
+            "submission is made."
+        ),
+        "static.conditional_response": (
+            "Any response should remain conditional on verification of the "
+            "structured facts and records identified in this working draft."
+        ),
+        "static.legal_research_required": (
+            "CA legal research is required before relying on any legal "
+            "proposition not supplied by a verified legal-rule source."
+        ),
+        "static.no_legal_conclusion": (
+            "This working draft does not express filing approval or a final "
+            "legal conclusion."
+        ),
+    }
+)
 
 _CONTEXT_BEGIN_MARKER = "CONTROLLED_CONTEXT_JSON_BEGIN"
 _CONTEXT_END_MARKER = "CONTROLLED_CONTEXT_JSON_END"

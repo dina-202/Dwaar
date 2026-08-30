@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 
 # --- 3.1 Enums ------------------------------------------------------------
@@ -747,6 +747,19 @@ class DraftFailureCode(Enum):
     POST_VALIDATION_FAILED = "post_validation_failed"
 
 
+class DraftBlockKind(Enum):
+    """Closed provenance-complete draft block kinds (§25.3)."""
+
+    STATIC = "static"
+    FACT = "fact"
+    ARITHMETIC = "arithmetic"
+    DEADLINE = "deadline"
+    HEARING = "hearing"
+    REQUIREMENT = "requirement"
+    EVIDENCE = "evidence"
+    REVIEW = "review"
+
+
 # --- Phase 2 Step 9.1 dataclasses (ARCHITECTURE_SPEC_v1_1 §20.20) -------------
 
 @dataclass
@@ -774,6 +787,66 @@ class WorkflowDraftingProfile:
     proceeding_type: ProceedingType
     sections: Tuple[DraftSectionSpec, ...]
     prompt_key: str
+
+
+# --- Phase 2 Step 9E.1 candidate contracts (ARCHITECTURE_SPEC_v1_1 §25) -------
+
+@dataclass
+class StaticDraftBlock:
+    template_id: str
+
+
+@dataclass
+class FactDraftBlock:
+    fact_id: str
+
+
+@dataclass
+class ArithmeticDraftBlock:
+    arithmetic_index: int
+
+
+@dataclass
+class DeadlineDraftBlock:
+    pass
+
+
+@dataclass
+class HearingDraftBlock:
+    pass
+
+
+@dataclass
+class RequirementDraftBlock:
+    requirement_id: str
+
+
+@dataclass
+class EvidenceDraftBlock:
+    evidence_id: str
+
+
+@dataclass
+class ReviewDraftBlock:
+    review_id: str
+
+
+DraftCandidateBlock = Union[
+    StaticDraftBlock,
+    FactDraftBlock,
+    ArithmeticDraftBlock,
+    DeadlineDraftBlock,
+    HearingDraftBlock,
+    RequirementDraftBlock,
+    EvidenceDraftBlock,
+    ReviewDraftBlock,
+]
+
+
+@dataclass
+class DraftCandidateSection:
+    section_id: str
+    blocks: Tuple[DraftCandidateBlock, ...]
 
 
 @dataclass
