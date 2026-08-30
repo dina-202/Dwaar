@@ -62,7 +62,7 @@ SOURCE = APP_PATH.read_text(encoding="utf-8")
 PDF_BYTES = b"%PDF uploaded sentinel"
 RAW_TEXT = "RAW NOTICE TEXT SENTINEL"
 TODAY = date(2026, 8, 30)
-TEMPLATE_SENTINEL = "TEMPLATE TEXT MUST NEVER RENDER"
+RAW_CANDIDATE_SENTINEL = "RAW PROVIDER CANDIDATE MUST NEVER RENDER"
 RENDERED_ONE = "Rendered specialist section one."
 RENDERED_TWO = "Rendered specialist section two."
 CLAIM_SENTINEL = "EXTRACTED CLAIM MUST NOT BECOME DRAFT PROSE"
@@ -314,13 +314,11 @@ def make_result(
             DraftSection(
                 section_id="s1",
                 title="Section one",
-                template_text=TEMPLATE_SENTINEL,
                 rendered_text=RENDERED_ONE,
             ),
             DraftSection(
                 section_id="s2",
                 title="Section two",
-                template_text=f"{TEMPLATE_SENTINEL} TWO",
                 rendered_text=RENDERED_TWO,
             ),
         ],
@@ -698,7 +696,39 @@ class DraftSafetyTests(unittest.TestCase):
         self.assertEqual(markdown, [RENDERED_ONE, RENDERED_TWO])
         subheaders = [args[0] for _, args, _ in calls_named(fake, "subheader")]
         self.assertEqual(subheaders[-2:], ["Section one", "Section two"])
-        self.assertNotIn(TEMPLATE_SENTINEL, log_text(fake))
+        self.assertNotIn(RAW_CANDIDATE_SENTINEL, log_text(fake))
+
+    def test_final_sections_require_no_legacy_or_candidate_fields(self):
+        result = make_result()
+        self.assertEqual(
+            list(DraftSection.__dataclass_fields__),
+            ["section_id", "title", "rendered_text"],
+        )
+        for section in result.draft_result.sections:
+            self.assertFalse(hasattr(section, "template_text"))
+            self.assertFalse(hasattr(section, "body_template"))
+            self.assertFalse(hasattr(section, "candidate_blocks"))
+            self.assertFalse(hasattr(section, "provider_json"))
+        fake, *_ = run_app(result=result)
+        self.assertEqual(
+            [args[0] for _, args, _ in calls_named(fake, "markdown")],
+            [RENDERED_ONE, RENDERED_TWO],
+        )
+
+    def test_raw_provider_candidate_attributes_are_never_rendered(self):
+        result = make_result()
+        result.draft_result.sections[0].candidate_blocks = (
+            RAW_CANDIDATE_SENTINEL
+        )
+        result.draft_result.sections[0].provider_json = (
+            RAW_CANDIDATE_SENTINEL
+        )
+        fake, *_ = run_app(result=result)
+        self.assertEqual(
+            [args[0] for _, args, _ in calls_named(fake, "markdown")],
+            [RENDERED_ONE, RENDERED_TWO],
+        )
+        self.assertNotIn(RAW_CANDIDATE_SENTINEL, log_text(fake))
 
     def test_review_required_safe_final_draft_is_displayable(self):
         result = make_result(draft_eligibility=DraftEligibility.REVIEW_REQUIRED)
@@ -751,7 +781,7 @@ class DraftSafetyTests(unittest.TestCase):
                 self.assertIn("Drafting status", headers(fake))
                 self.assertNotIn(RENDERED_ONE, text)
                 self.assertNotIn(RENDERED_TWO, text)
-                self.assertNotIn(TEMPLATE_SENTINEL, text)
+                self.assertNotIn(RAW_CANDIDATE_SENTINEL, text)
 
     def test_failure_state_and_post_validation_diagnostics_are_structured(self):
         result = make_result(
