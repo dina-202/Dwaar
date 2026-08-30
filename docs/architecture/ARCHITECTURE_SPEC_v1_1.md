@@ -10420,4 +10420,989 @@ TriageSummary          (§24.6)
 
 ---
 
-*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20; amended 2026-08-29 by Phase 2 Step 9B: authoritative Controlled Drafting Context + Prompt Assembly contract added as §21 (§21.1–§21.31); amended 2026-08-29 by Phase 2 Step 9C: authoritative Step-9.3 Generation/Parser Result-State Contract added as §22 (§22.1–§22.29); amended 2026-08-29 by Phase 2 Step 9D: authoritative Step-9.4 Deterministic Post-Validation + Rendering Catalog added as §23 (§23.1–§23.51); amended 2026-08-30 by Phase 2 Step 10B: authoritative Step-10 Orchestration + Triage contract added as §24 (§24.1–§24.38). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
+## 25. Provenance-Complete Specialist Draft Representation (Phase 2 Step 9E — authoritative)
+
+This section closes the P0 safety gap discovered after Step 10.2. A
+specialist draft for `GST_SEC73_RCM` passed the closed Step-9.4 lexical
+catalog and displayed:
+
+```text
+"The Noticee is in the process of compiling vendor ledgers and agreements."
+```
+
+No `ExtractedFact`, `RequirementResult`, `EvidenceChecklistItem` or other
+structured input established that taxpayer activity. The sentence entered
+as unrestricted LLM-authored `body_template`, used no reference token,
+passed FACT checks vacuously and was copied unchanged into `rendered_text`.
+
+Sections 20–23 remain the machine contract implemented through Step 10.2.
+When Step 9E.1–Step 9E.4 are implemented, this section SUPERSEDES these
+successful-candidate surfaces:
+
+```text
+§20.20 DraftSection.template_text field
+§20.23 body_template response contract
+§20.27 unrestricted argument/working-draft prose role
+§20.28 tokens as the successful candidate representation
+§20.29 current fourteen-item post-draft check catalog
+§20.31–§20.33 lexical checks as the primary safety boundary
+§21.18 body_template/token output instructions
+§22.13–§22.22 body_template parser/interim-section contract
+§23 token/template validation and token-substitution rendering contract
+```
+
+The Step-9 public API, DraftEligibility gate, exactly-one drafting LLM
+call, failure codes, metadata copying, all-or-nothing failure suppression
+and Step-10 display gate remain authoritative. This amendment does NOT
+authorize implementation during the architecture task.
+
+### 25.1 Core provenance invariant
+
+EVERY user-visible case-specific assertion in a successful specialist
+draft MUST have machine-readable provenance before rendering.
+
+This includes assertions concerning:
+
+```text
+taxpayer identity, state or action
+records maintained, prepared, gathered or compiled
+evidence possession, availability, preparation, enclosure or submission
+payments and filings
+reconciliations and factual compliance conduct
+department allegations
+dates, amounts and arithmetic
+deadlines and hearings
+procedural events
+any other case-specific circumstance
+```
+
+An unrestricted LLM-authored string is NOT provenance. Free-form prose
+must not create a new case-specific premise. One valid reference elsewhere
+in a section, block or sentence does not ground an unreferenced premise.
+
+Prompt instructions, phrase lists and lexical scans are defense-in-depth
+only. They are not the authoritative grounding mechanism and cannot make
+untyped prose provenance-complete.
+
+### 25.2 Python-owned final rendering boundary
+
+No arbitrary LLM-authored sentence may be copied into final
+`rendered_text` when it can carry case-specific factual or legal meaning.
+
+A successful `rendered_text` is assembled by Python only from:
+
+1. exact text in the closed architecture-owned static template registry
+   (§25.13); and
+2. exact Python renderer output for a validated typed structured-reference
+   block (§25.14–§25.20).
+
+The LLM may select and order approved blocks. It does not author the final
+sentence for any block. Python joins rendered blocks in candidate order
+using exactly two newline characters (`"\n\n"`). Section titles continue
+to come from `WorkflowDraftingProfile`, never from the provider.
+
+Every successfully rendered block is attributable to a closed template ID
+or one resolved structured object. There is no residual provider-authored
+substring in final output.
+
+### 25.3 Closed block kinds
+
+Authorize the exact enum:
+
+```text
+class DraftBlockKind(Enum):
+    STATIC = "static"
+    FACT = "fact"
+    ARITHMETIC = "arithmetic"
+    DEADLINE = "deadline"
+    HEARING = "hearing"
+    REQUIREMENT = "requirement"
+    EVIDENCE = "evidence"
+    REVIEW = "review"
+```
+
+No generic `PROSE`, `TEXT`, `ARGUMENT`, `OTHER`, `CUSTOM` or unknown block
+kind exists in Phase 2. A new kind requires a later architecture amendment
+defining its structured source, permissions, validator and Python renderer.
+
+### 25.4 Typed candidate models
+
+Authorize these exact internal candidate dataclasses and field order:
+
+```text
+StaticDraftBlock:
+    template_id: str
+
+FactDraftBlock:
+    fact_id: str
+
+ArithmeticDraftBlock:
+    arithmetic_index: int
+
+DeadlineDraftBlock:
+    (no fields)
+
+HearingDraftBlock:
+    (no fields)
+
+RequirementDraftBlock:
+    requirement_id: str
+
+EvidenceDraftBlock:
+    evidence_id: str
+
+ReviewDraftBlock:
+    review_id: str
+
+DraftCandidateBlock = Union[
+    StaticDraftBlock,
+    FactDraftBlock,
+    ArithmeticDraftBlock,
+    DeadlineDraftBlock,
+    HearingDraftBlock,
+    RequirementDraftBlock,
+    EvidenceDraftBlock,
+    ReviewDraftBlock,
+]
+
+DraftCandidateSection:
+    section_id: str
+    blocks: Tuple[DraftCandidateBlock, ...]
+```
+
+Every listed field is required and has no default. Zero-field block types
+accept no keys. Constructors and the strict parser reject omitted,
+additional or differently typed fields rather than preserving them as
+metadata.
+
+These strict parsed-candidate objects carry identifiers only. They have no
+arbitrary text, premise, claim, explanation, body, suffix, prefix,
+qualifier, notes, arguments or metadata field. They are internal to
+generation, post-validation and rendering; they are never displayed or
+included in `SpecialistDraftResult`.
+
+### 25.5 Final DraftSection contract after migration
+
+When Step 9E implementation becomes active, supersede the §20.20
+four-field `DraftSection` with exactly:
+
+```text
+DraftSection:
+    section_id: str
+    title: str
+    rendered_text: str
+```
+
+There is no `template_text`, `body_template`, raw candidate or provider
+response field in a successful final section. `SpecialistDraftResult`
+keeps its existing nine fields and `sections: List[DraftSection]`.
+
+### 25.6 Strict LLM response schema
+
+The Step-9E provider response remains exactly one strict JSON object:
+
+```json
+{
+  "sections": [
+    {
+      "section_id": "<exact profile section_id>",
+      "blocks": [
+        {"kind": "static", "template_id": "<closed template id>"},
+        {"kind": "fact", "fact_id": "<exact fact id>"},
+        {"kind": "arithmetic", "arithmetic_index": 1},
+        {"kind": "deadline"},
+        {"kind": "hearing"},
+        {"kind": "requirement", "requirement_id": "<exact requirement id>"},
+        {"kind": "evidence", "evidence_id": "<exact evidence id>"},
+        {"kind": "review", "review_id": "<exact review id>"}
+      ]
+    }
+  ]
+}
+```
+
+The example shows every block shape; a real section selects only useful
+blocks. The root has exactly the key `sections`. Every section has exactly
+`section_id` and `blocks`. Section count, IDs and order equal the drafting
+profile exactly. `blocks` is a non-empty list.
+
+Every block object has exactly the keys shown for its kind; no missing or
+extra key, coercion or alternate representation. `arithmetic_index` is a
+positive JSON integer and never a string, boolean, zero or negative value.
+Every identifier is a non-empty string matched case-sensitively. There is
+no provider-authored prose field anywhere in this schema.
+
+### 25.7 Block schema table
+
+Exact JSON object keys per kind:
+
+```text
+static       kind, template_id
+fact         kind, fact_id
+arithmetic   kind, arithmetic_index
+deadline     kind
+hearing      kind
+requirement  kind, requirement_id
+evidence     kind, evidence_id
+review       kind, review_id
+```
+
+Unknown kinds, unknown keys, text fields, nested arbitrary objects, arrays
+inside blocks, null identifiers and aliases are `MALFORMED_RESPONSE`. One
+malformed block fails the whole response; no partial candidate is retained.
+
+### 25.8 LLM role after Step 9E
+
+The LLM may:
+
+```text
+select approved block kinds
+select identifiers visible in the controlled context
+select closed static template IDs supplied in the controlled context
+choose permitted block order within each fixed profile section
+omit blocks that are not useful
+produce this machine-readable drafting intent in one strict response
+```
+
+The LLM may NOT:
+
+```text
+create a new case fact or factual premise
+create or change an evidence state
+create a taxpayer activity or state
+change FactStatus or DraftPermission
+invent a calculation, deadline or hearing
+invent a legal source, legal rule or statutory quotation
+author the final wording for a block
+add free-form connective, argumentative, factual or legal prose
+```
+
+Useful model reasoning remains selection and organization of trusted
+building blocks. It is not treated as factual truth.
+
+#### 25.8.1 Controlled-context migration
+
+Step 9E supersedes the §21.2 context key order with exactly:
+
+```text
+1.  schema_version
+2.  proceeding_type
+3.  draft_eligibility
+4.  sections
+5.  static_template_ids
+6.  facts
+7.  arithmetic
+8.  preflight
+9.  deadline
+10. requirements
+11. evidence_checklist
+12. review_requirements
+13. validation_warnings
+```
+
+Exact `schema_version`:
+
+```text
+"phase2.step9e.v1"
+```
+
+`static_template_ids` is the §25.13 registry IDs in registry order, with no
+template text. `requirements` contains every
+`validation_result.requirements` item in stored order using the existing
+five-field §21.11 serialization, including `SATISFIED`, `DERIVED`,
+`MISSING`, `UNKNOWN` and `REQUIRES_VERIFICATION`. This full list is the
+selection surface for `RequirementDraftBlock`.
+
+The final `SpecialistDraftResult.unresolved_requirements` metadata remains
+unchanged: it still contains only `MISSING`, `UNKNOWN` and
+`REQUIRES_VERIFICATION`. All other context fields retain their existing
+§21 serialization and filtering rules. No raw notice, `ExtractedFact.claim`,
+DraftPermission.NO source text, workflow free text, arbitrary legal
+research or provider-supplied context is added.
+
+### 25.9 Structured source-family matrix
+
+Every non-static block references exactly one approved structured source:
+
+```text
+FACT         -> exactly one ExtractedFact by fact_id
+ARITHMETIC   -> exactly one ArithmeticResult by original one-based position
+DEADLINE     -> the supplied DeadlineResult
+HEARING      -> hearing fields/status in the supplied DeadlineResult
+REQUIREMENT  -> exactly one RequirementResult by requirement_id
+EVIDENCE     -> exactly one EvidenceChecklistItem by evidence_id
+REVIEW       -> exactly one ReviewRequirement by review_id
+```
+
+STATIC resolves exactly one architecture-owned registry entry by
+`template_id`; it is not a case-specific source and accepts no dynamic
+value. Zero matches, multiple matches, a wrong family, ineligible status,
+incompatible permission or unsupported combination is deterministic FAIL.
+No fuzzy matching, semantic matching, fallback selection or repair.
+
+### 25.10 Fact permission and taxpayer-action/state rule
+
+A `FactDraftBlock` resolves only against `extraction_result.facts`.
+Permitted pairs remain exactly:
+
+```text
+FactStatus.CONFIRMED + DraftPermission.YES
+FactStatus.ALLEGED + DraftPermission.CONDITIONAL
+```
+
+`REQUIRES_VERIFICATION + NO`, `UNKNOWN`, an unexpected `INFERRED` notice
+fact and any mismatched pair cannot render as an affirmative premise.
+
+A taxpayer action or state may be rendered affirmatively ONLY when an
+eligible structured source explicitly establishes that exact case premise.
+Without such a source, these meanings are prohibited regardless of
+paraphrase, tense, voice, subject name or synonym:
+
+```text
+is compiling
+has prepared
+has submitted
+has reconciled
+maintains
+has paid
+has filed
+has provided
+records are available
+documents are ready
+```
+
+These are explanatory examples, NOT a phrase blacklist. The guarantee is
+the absence of an arbitrary premise field plus Python-only rendering.
+
+When state is unresolved, only a closed STATIC, REQUIREMENT or EVIDENCE
+template expressing verification, an open item or conditional action may
+render. It must not imply that an action is occurring or complete.
+
+### 25.11 Evidence semantic contract
+
+`EvidenceStatus.UNKNOWN` means all of these are not established:
+
+```text
+availability
+possession
+preparation
+collection or compilation
+enclosure
+submission
+verification
+```
+
+A current Phase-2 `EvidenceDraftBlock` is permitted only when its exact
+`evidence_id` resolves once and status is `UNKNOWN`. Python renders §25.18.
+It may request a check; it cannot affirm evidence existence, availability,
+preparation, compilation, enclosure, submission or verification.
+
+Although `EvidenceStatus` defines other members, current Phase 2 has no
+trusted uploaded-document metadata. `PRESENT`, `MISSING` and
+`REQUIRES_VERIFICATION` evidence blocks are not renderable under this
+initial contract. Supporting them requires a later architecture amendment
+defining input authority and rendering.
+
+The legacy §23.31 patterns may remain temporarily as defense-in-depth for
+rejected legacy/malformed responses. They do not authorize a candidate,
+establish provenance or provide the primary evidence guarantee.
+
+### 25.12 Legal and argumentative-language boundary
+
+Current Phase 2 has no verified legal-rule or legal-research source from
+which unrestricted authoritative legal propositions can be grounded.
+Therefore Step 9E authorizes no free-form legal/argumentative block.
+
+The initial provenance-complete output is a conservative structured CA
+working paper. Legal or argumentative language may enter only as:
+
+```text
+notice-grounded statutory material rendered from an eligible FACT block
+exact closed STATIC text from §25.13
+deterministic validation/requirement/evidence/review text under this section
+```
+
+No invented case law, statutory citation, statutory quotation, external
+URL or unverified legal proposition may be represented as authoritative
+current law. `FUTURE_LEGAL_RULE` warnings and mandatory review remain
+visible through existing Python-owned surfaces. General legal correctness
+and filing decisions remain outside Phase 2.
+
+Adding provider-authored argumentative prose later requires a separate
+architecture amendment with a verified legal-rule source and a
+machine-enforceable provenance model. It must not reuse an unrestricted
+string field.
+
+### 25.13 Closed static template registry
+
+The initial architecture-owned registry contains exactly these IDs and
+exact text. Every entry is non-case-specific and allowed in any current
+specialist profile section:
+
+```text
+static.working_draft
+    "This is a CA working draft and requires professional review before use."
+
+static.notice_material
+    "The following notice-grounded material is relevant to this section."
+
+static.open_items
+    "The following matters remain open for verification."
+
+static.taxpayer_verify
+    "The taxpayer should verify the relevant records before any factual submission is made."
+
+static.ca_confirm
+    "CA review should confirm the relevant factual and evidentiary position."
+
+static.records_if_available
+    "If the relevant records are available, they should be reconciled against the notice-grounded material."
+
+static.records_reconcile
+    "The relevant records should be reconciled before any factual submission is made."
+
+static.conditional_response
+    "Any response should remain conditional on verification of the structured facts and records identified in this working draft."
+
+static.legal_research_required
+    "CA legal research is required before relying on any legal proposition not supplied by a verified legal-rule source."
+
+static.no_legal_conclusion
+    "This working draft does not express filing approval or a final legal conclusion."
+```
+
+The controlled context supplies the closed `template_id` list, not its
+text. The provider may select an ID but cannot alter, parameterize, prefix,
+suffix or interpolate text. Unknown IDs fail post-validation. Registry
+changes are architecture changes, not prompt-only changes.
+
+### 25.14 FACT Python renderer
+
+For `CONFIRMED + YES`, render exactly:
+
+```text
+The notice records: "<source_text>"
+```
+
+For `ALLEGED + CONDITIONAL`, render exactly:
+
+```text
+The department alleges: "<source_text>"
+```
+
+When `source_page is not None`, append exactly:
+
+```text
+ (notice p. <source_page>)
+```
+
+Use `source_text` exactly. The LLM does not choose the wrapper. A
+`DEPARTMENT_ALLEGATION` / `ALLEGED` fact can never render as a taxpayer
+fact, admitted fact or established liability.
+
+### 25.15 Arithmetic Python renderer
+
+An `ArithmeticDraftBlock` uses the original one-based result position and
+is valid only when all five existing Step-8 structural checks are present
+and PASS, status is `PASS` or `MISMATCH`, and `result is not None`.
+`INSUFFICIENT_DATA` is not affirmatively renderable.
+
+Reuse the exact §23.40 Python rendering:
+
+```text
+Deterministic reconciliation output: <formula> = <result> <currency> (status: <status-value>).
+```
+
+No recomputation and no liability, admission, penalty or final-payable
+characterization.
+
+### 25.16 Deadline and hearing Python renderers
+
+A `DeadlineDraftBlock` requires a supplied `DeadlineResult` and reuses the
+exact §23.41 ten-field deterministic renderer. It performs no date
+calculation and states no finally binding legal deadline.
+
+A `HearingDraftBlock` requires a supplied `DeadlineResult`, non-null
+`hearing_date`, and `HearingStatus` in `UPCOMING`, `TODAY`, `PASSED`. It
+reuses the exact §23.42 renderer:
+
+```text
+Deterministic hearing output: hearing_date=<YYYY-MM-DD>; hearing_status=<hearing-status-value>.
+```
+
+`NOT_SCHEDULED` or missing hearing information is not renderable as a
+hearing block. No inferred hearing.
+
+### 25.17 Requirement Python renderer
+
+A `RequirementDraftBlock` resolves exactly one item in
+`validation_result.requirements`. Python selects the exact renderer from
+the stored `RequirementStatus`; the LLM supplies no status or template ID:
+
+```text
+SATISFIED
+    "Requirement status — satisfied: <requirement_text>"
+
+DERIVED
+    "Requirement status — derived from approved deterministic arithmetic: <requirement_text>"
+
+MISSING
+    "Open item — missing from a successful extraction: <requirement_text>"
+
+UNKNOWN
+    "Open item — status not established: <requirement_text>"
+
+REQUIRES_VERIFICATION
+    "Verification required: <requirement_text>"
+```
+
+Insert the exact stored `requirement_text` once. `MISSING`, `UNKNOWN` and
+`REQUIRES_VERIFICATION` never render as satisfied/resolved facts. `DERIVED`
+remains tied to approved deterministic arithmetic and does not become a
+legal-liability conclusion.
+
+### 25.18 Evidence Python renderer
+
+For the only currently permitted evidence status, `UNKNOWN`, render
+exactly:
+
+```text
+Evidence check required; availability, possession, preparation, compilation, enclosure, submission and verification are not established: <requirement_text>
+```
+
+Insert the exact stored `requirement_text` once. The block asserts only the
+Python-owned UNKNOWN state. It does not assert that evidence is missing and
+does not create an `EvidenceGap`.
+
+### 25.19 Review Python renderer
+
+A `ReviewDraftBlock` resolves exactly one item in
+`validation_result.review_requirements` whose `mandatory is True`. Render
+exactly:
+
+```text
+Mandatory <level-value> review: <reason>
+```
+
+`level-value` is exact `ReviewLevel.value`; `reason` is the exact stored
+reason. A non-mandatory, missing or duplicate-ID reference fails. The LLM
+cannot omit or soften the Python-owned review metadata, which the UI
+continues to render separately before specialist sections.
+
+### 25.20 Static-template renderer
+
+A `StaticDraftBlock` resolves exactly one §25.13 registry entry and emits
+its exact text. It accepts no case-specific parameter. It cannot interpolate
+a fact, identifier, value, requirement, evidence item, review reason or
+provider string.
+
+### 25.21 Deterministic post-validation catalog
+
+After Step 9E is active, supersede the §23.3 fourteen-item candidate
+catalog with exactly these checks in order. This catalog applies only after
+the strict Step-9E parser has successfully constructed the approved typed
+candidate representation. Strict-parser rejection does not enter this
+post-validation stage.
+
+```text
+1.  draft.response.schema
+2.  draft.sections.count
+3.  draft.sections.ids
+4.  draft.sections.order
+5.  draft.sections.nonempty
+6.  draft.blocks.kind
+7.  draft.blocks.schema
+8.  draft.blocks.static_template
+9.  draft.blocks.fact_resolution
+10. draft.blocks.fact_permission
+11. draft.blocks.arithmetic_resolution
+12. draft.blocks.deadline_resolution
+13. draft.blocks.hearing_resolution
+14. draft.blocks.requirement_resolution
+15. draft.blocks.requirement_status
+16. draft.blocks.evidence_resolution
+17. draft.blocks.evidence_status
+18. draft.blocks.review_resolution
+19. draft.blocks.no_freeform
+20. draft.rendering.completeness
+21. draft.rendering.python_owned
+```
+
+For every successfully parsed typed candidate that enters deterministic
+post-validation, exactly one `ValidationItem` is emitted per ID. Status is
+PASS or FAIL only. Any FAIL produces overall FAIL. No
+implementation-owned suffix.
+
+Exact messages:
+
+```text
+draft.response.schema
+ PASS "Draft candidate schema is structurally valid."
+ FAIL "Draft candidate schema is not structurally valid."
+
+draft.sections.count
+ PASS "Draft section count matches the drafting profile."
+ FAIL "Draft section count does not match the drafting profile."
+
+draft.sections.ids
+ PASS "Draft section IDs match the drafting profile."
+ FAIL "Draft section IDs do not match the drafting profile."
+
+draft.sections.order
+ PASS "Draft section order matches the drafting profile."
+ FAIL "Draft section order does not match the drafting profile."
+
+draft.sections.nonempty
+ PASS "Every draft section contains at least one typed block."
+ FAIL "One or more draft sections contain no typed block."
+
+draft.blocks.kind
+ PASS "Every draft block kind is architecture-approved."
+ FAIL "One or more draft block kinds are not architecture-approved."
+
+draft.blocks.schema
+ PASS "Every draft block matches its exact typed schema."
+ FAIL "One or more draft blocks do not match their exact typed schema."
+
+draft.blocks.static_template
+ PASS "All static blocks resolve to the closed template registry."
+ FAIL "One or more static blocks do not resolve to the closed template registry."
+
+draft.blocks.fact_resolution
+ PASS "All fact blocks resolve to exactly one eligible ExtractedFact."
+ FAIL "One or more fact blocks do not resolve to exactly one eligible ExtractedFact."
+
+draft.blocks.fact_permission
+ PASS "All resolved fact blocks satisfy FactStatus and DraftPermission invariants."
+ FAIL "One or more resolved fact blocks violate FactStatus or DraftPermission invariants."
+
+draft.blocks.arithmetic_resolution
+ PASS "All arithmetic blocks resolve to approved deterministic arithmetic results."
+ FAIL "One or more arithmetic blocks do not resolve to approved deterministic arithmetic results."
+
+draft.blocks.deadline_resolution
+ PASS "All deadline blocks resolve to the supplied deterministic deadline result."
+ FAIL "One or more deadline blocks cannot resolve to the supplied deterministic deadline result."
+
+draft.blocks.hearing_resolution
+ PASS "All hearing blocks resolve to supplied deterministic hearing information."
+ FAIL "One or more hearing blocks cannot resolve to supplied deterministic hearing information."
+
+draft.blocks.requirement_resolution
+ PASS "All requirement blocks resolve to exactly one RequirementResult."
+ FAIL "One or more requirement blocks do not resolve to exactly one RequirementResult."
+
+draft.blocks.requirement_status
+ PASS "All requirement blocks use the deterministic template authorized for their status."
+ FAIL "One or more requirement blocks cannot use a deterministic template authorized for their status."
+
+draft.blocks.evidence_resolution
+ PASS "All evidence blocks resolve to exactly one EvidenceChecklistItem."
+ FAIL "One or more evidence blocks do not resolve to exactly one EvidenceChecklistItem."
+
+draft.blocks.evidence_status
+ PASS "All evidence blocks preserve the architecture-authorized evidence status."
+ FAIL "One or more evidence blocks would assert an unauthorized evidence state."
+
+draft.blocks.review_resolution
+ PASS "All review blocks resolve to exactly one mandatory ReviewRequirement."
+ FAIL "One or more review blocks do not resolve to exactly one mandatory ReviewRequirement."
+
+draft.blocks.no_freeform
+ PASS "Draft candidate contains no provider-authored free-form prose field."
+ FAIL "Draft candidate contains a provider-authored free-form prose field."
+
+draft.rendering.completeness
+ PASS "Every accepted draft block was rendered exactly once in candidate order."
+ FAIL "One or more accepted draft blocks were not rendered exactly once in candidate order."
+
+draft.rendering.python_owned
+ PASS "Final specialist text is assembled only from Python-owned renderers and closed templates."
+ FAIL "Final specialist text contains output not produced by an authorized Python renderer or closed template."
+```
+
+If any check among 1-19 FAILS, Python MUST NOT invoke any block renderer,
+produce a rendered fragment or assemble final `rendered_text`. Checks 20
+and 21 are still emitted, using these exact architecture-owned alternate
+FAIL messages for that pre-render failure condition:
+
+```text
+draft.rendering.completeness
+ FAIL "Rendering completeness was not established because pre-render validation failed."
+
+draft.rendering.python_owned
+ FAIL "Python-owned final rendering was not established because pre-render validation failed."
+```
+
+If all checks 1-19 PASS, Python performs the private rendering procedure
+and checks 20-21 use the ordinary PASS/FAIL messages defined in the main
+catalog above. Python must not render after a pre-render failure merely to
+populate those checks.
+
+Resolution/status checks for a source family PASS vacuously when the
+candidate contains no block of that family. This cannot authorize factual
+prose: the exact schema, closed block-kind, no-freeform and Python-owned
+rendering checks still apply to every candidate and every emitted fragment.
+
+Checks 1-19 run before rendering. Only if they all PASS may Python dispatch
+each accepted block to its single authorized renderer in sections
+25.14-25.20 and hold the resulting fragments privately. In that branch,
+check 20 compares fragment count, section membership and order against the
+accepted block sequence. Check 21 passes only when every fragment was
+returned by that closed dispatcher and final assembly contains only those
+fragments plus the fixed `"\n\n"` separator. Candidate/provider strings
+are never an input to that assembly.
+
+### 25.22 Meaning of successful post-validation
+
+A PASS post-validation proves at least:
+
+1. candidate and section schemas are exact;
+2. every block kind is from the closed catalog;
+3. every structured reference resolves exactly as required;
+4. every referenced object is permitted for its block kind;
+5. `FactStatus` / `DraftPermission` combinations are valid;
+6. allegation attribution is selected and rendered by Python;
+7. UNKNOWN evidence cannot render affirmatively;
+8. unresolved requirements cannot render as resolved;
+9. arithmetic, deadline and hearing blocks use valid supplied objects;
+10. no unsupported block or raw free-form premise exists;
+11. Python rendered every final case-specific assertion; and
+12. every accepted block was rendered exactly once in candidate order.
+
+The validator no longer pretends to semantically verify arbitrary prose,
+because arbitrary prose is absent from the successful candidate surface.
+It does not prove autonomous legal correctness, filing approval or legal
+liability.
+
+### 25.23 Rendering and result transition
+
+Post-validation, including the private rendering checks in §25.21, occurs
+before any final section is exposed. If any check FAILS:
+
+```text
+status = DraftGenerationStatus.FAILED
+failure_code = DraftFailureCode.POST_VALIDATION_FAILED
+sections = []
+post_validation.overall_status = ValidationStatus.FAIL
+error_message = "Specialist draft failed deterministic post-generation validation."
+```
+
+Preserve Python-owned metadata exactly as §23.44. No partial rendering,
+candidate blocks or provider output are returned as usable sections.
+
+If checks 1-19 pass, Python privately renders every block exactly once as
+specified above. If checks 20-21 also pass, Python joins block text with
+`"\n\n"` and constructs a fresh three-field `DraftSection`. Final result
+status is SUCCESS with PASS post-validation, existing metadata, no failure
+code and no error message.
+
+### 25.24 Legacy body_template migration
+
+Once Step 9E.3 activates the provenance-complete runtime, any response
+containing the former unrestricted:
+
+```text
+body_template
+template_text
+```
+
+or any other prose-bearing candidate field is a schema violation and
+returns:
+
+```text
+DraftGenerationStatus.FAILED
+DraftFailureCode.MALFORMED_RESPONSE
+sections = []
+post_validation = None
+error_message = "Specialist drafting response did not match the required schema."
+```
+
+The same strict-parser result applies to invalid JSON, a wrong root shape,
+or any invalid section/block schema that prevents construction of the
+strict typed candidate. These parser-level malformed responses do not
+enter the 21-check stage and never create a `post_validation` object.
+`draft.response.schema` remains defense-in-depth validation of an already
+parsed in-memory candidate/section structure; it does not replace strict
+parser rejection.
+
+There is no compatibility parser, legacy-success mode, token-to-block
+conversion, best-effort salvage or fallback to the old draft path. The old
+representation can never produce SUCCESS after activation.
+
+### 25.25 Step-10 display and export gate
+
+Preserve §24.34 exactly:
+
+```text
+draft_result.status == DraftGenerationStatus.SUCCESS
+AND draft_result.post_validation is not None
+AND draft_result.post_validation.overall_status == ValidationStatus.PASS
+```
+
+Only then may `DraftSection.rendered_text` be displayed or exported. After
+Step 9E implementation, that value contains only provenance-complete
+Python-rendered output. The UI never displays candidate blocks, template
+IDs, raw provider JSON, legacy `body_template` or any intermediate form.
+
+### 25.26 Phrase and lexical checks
+
+The §23 raw-literal, evidence-language and citation patterns may remain
+temporarily only as defense-in-depth for malformed/legacy diagnostics.
+They are not required to establish provenance for a valid typed candidate,
+cannot turn an invalid candidate into a valid one and cannot alone justify
+accepting taxpayer-action, evidence or legal claims.
+
+Do not expand phrase lists as the P0 fix. The authoritative guarantee is
+the closed no-freeform schema plus typed reference resolution and
+Python-owned rendering.
+
+### 25.27 Mandatory P0 regression contract
+
+Future implementation tests MUST pin the exact incident and semantic
+equivalents. An output equivalent in meaning to:
+
+```text
+"The Noticee is in the process of compiling vendor ledgers and agreements."
+```
+
+must not reach SUCCESS merely because it avoids protected literals or old
+evidence phrases. Under the Step-9E schema there is no legal candidate
+encoding for that affirmative premise unless an eligible structured source
+explicitly establishes the exact action/state and the corresponding typed
+block resolves to it.
+
+Mandatory cases include unsupported assertions that records/documents are:
+
+```text
+prepared
+being compiled
+submitted
+provided or available
+ready
+reconciled
+```
+
+and unsupported taxpayer assertions concerning:
+
+```text
+payment
+filing
+record maintenance
+factual compliance conduct
+```
+
+Tests must prove schema/reference rejection and absence of a legal typed
+encoding, not only regex or word-list detection. They must also prove that
+architecture-owned conditional/open-item templates remain renderable and
+do not assert completion.
+
+### 25.28 Narrow implementation split
+
+Implement in four separately testable and separately committed units:
+
+```text
+Step 9E.1 — typed contracts and template registry
+    domain/models.py
+    domain/drafting_engine.py (registry/private construction only)
+    tests/test_drafting_models.py
+    tests/test_drafting_engine.py
+    Add DraftBlockKind, typed candidate block/section contracts,
+    and the exact closed Python template registry as additive contracts.
+    Preserve the active four-field DraftSection and active drafting path.
+    ZERO prompt/provider/parser/rendering migration or behavior change.
+
+Step 9E.2 — versioned candidate schema and strict parser preparation
+    domain/drafting_engine.py
+    prompts/drafting/provenance_v1/base_rules.txt
+    prompts/drafting/provenance_v1/gst/sec73_itc.txt
+    prompts/drafting/provenance_v1/gst/sec73_general.txt
+    prompts/drafting/provenance_v1/gst/sec73_rcm.txt
+    prompts/drafting/provenance_v1/gst/sec74_fraud.txt
+    prompts/drafting/provenance_v1/gst/sec129.txt
+    tests/test_drafting_engine.py
+    Prepare versioned typed-block prompt assets, deterministic prompt/schema
+    construction, the strict typed-response parser and inactive private
+    replacement helpers. Test them directly with controlled/mocked responses
+    and no live provider call. generate_specialist_draft(...) continues to
+    use ONLY the active pre-9E production path. The prepared path is not a
+    second public drafting callable, fallback, selectable production mode,
+    alternate provider path or second production LLM call. Every public
+    request still makes at most exactly one drafting-layer LLM call.
+
+Step 9E.3 — atomic provenance-complete activation
+    domain/models.py
+    domain/drafting_engine.py
+    tests/test_drafting_models.py
+    tests/test_drafting_engine.py
+    Atomically switch the active prompt/parser to the prepared typed path,
+    implement §25.21 checks and §25.14–§25.20 renderers, and migrate the
+    final DraftSection to its three-field contract. From this activation,
+    legacy body_template is MALFORMED_RESPONSE and has no fallback.
+    Preserve POST_VALIDATION_FAILED suppression and add mandatory P0
+    semantic-family regressions without relying on phrase lists.
+
+Step 9E.4 — orchestration/application regression and live replay
+    domain/phase2_orchestrator.py only if the final DraftSection migration
+        requires a direct type-shape adjustment; otherwise leave untouched
+    app.py only if the final DraftSection migration requires a direct
+        display-shape adjustment; otherwise leave untouched
+    tests/test_phase2_orchestrator.py
+    tests/test_app_integration.py
+    Run the controlled NOTICE_4 live replay only in this final substep.
+    Preserve the display predicate and rendered_text-only rule.
+```
+
+Each substep begins from a clean tree, modifies only its listed files and
+is committed independently. The inactive Step 9E.2 path is not a legacy
+compatibility or SUCCESS path; it is activation-ready scaffolding tested
+without changing production output. Step 9E.3 is the single runtime cutover,
+changing the existing active public generation path from the legacy
+`body_template` schema to the provenance-complete typed-block schema. The
+public path still makes exactly one drafting-layer LLM call after cutover;
+no production request ever invokes both paths. No fallback. Therefore no
+committed intermediate state pairs typed candidates with the legacy renderer
+or the final section shape with the legacy candidate. Do not combine runtime
+activation with the final live replay.
+
+### 25.29 Scope preservation
+
+Step 9E does not redesign or change:
+
+```text
+classification
+Fact Engine
+FactRole
+preflight
+deadline engine
+arithmetic engine
+Step-8 workflow validation
+29 workflow requirements
+24 special-rule mappings
+DraftEligibility rules
+Step-9 validation gate
+evidence upload completeness
+zero legal-validity conclusions
+zero filing-approval implication
+Step-10 UI architecture
+```
+
+The redesign is confined to the Step-9 specialist candidate, strict parser,
+post-validation and final rendering boundary.
+
+### 25.30 Separate validation-ID contract-integrity issue
+
+The dormant implementation identifier:
+
+```text
+workflow.<PREFIX>.special_rule.<I>.unknown_handling
+```
+
+is not authorized by the closed §19.66 validation check-ID catalog. Step 9E
+does NOT authorize or fix it. It requires a separate contract-integrity
+task and later commit scoped to Step-8 validation implementation and tests.
+The existing §19 catalog remains unchanged.
+
+---
+
+*Document version: 1.1 — FINAL (2026-08-28), amended 2026-08-29 by Phase 2 Step 5A: authoritative five-workflow contracts added to §10 (§10.1 current-law safety decisions, §10.2 contract rules, §10.3 five contracts), Section-74A guardrail §15(16), current-law workflow verification notes §16.1, Step 4 Section-74A follow-up note and §12 mapping row; amended 2026-08-29 by Phase 2 Step 6A: authoritative Fact Engine contract added as §17; amended 2026-08-29 by Phase 2 Step 7A: authoritative Preflight + Arithmetic contract added as §18, additive fact-extraction outcome channel introduced in §17.4; amended 2026-08-29 by Phase 2 Step 8A: authoritative Validation + Workflow Completeness contract added as §19, FactType.DOCUMENT_DETAIL and the five-field Fact Engine candidate JSON added to §17.1/§17.5/§17.6, ExtractedFact.fact_role added to §17.2, Step-9 gate pointer added to §13; amended 2026-08-29 by Phase 2 Step 8B: machine-contract check-ID / review-ID catalog and staged Step-8.2 behavior added to §19 (§19.56–§19.87), with the final staging consistency patch defining Step-8.2 execution semantics for the five deterministic special-check mappings (§19.81–§19.87); amended 2026-08-29 by Phase 2 Step 8C: Step-8.3 workflow-requirement machine contracts finalized in §19 (§19.88–§19.117); amended 2026-08-29 by Phase 2 Step 9A: authoritative Controlled Specialist Drafting contract added as §20 (§20.1–§20.43), refined by the Step 9A final machine-value patch: exact serialized Enum values and the explicit-construction dataclass policy pinned in §20.20; amended 2026-08-29 by Phase 2 Step 9B: authoritative Controlled Drafting Context + Prompt Assembly contract added as §21 (§21.1–§21.31); amended 2026-08-29 by Phase 2 Step 9C: authoritative Step-9.3 Generation/Parser Result-State Contract added as §22 (§22.1–§22.29); amended 2026-08-29 by Phase 2 Step 9D: authoritative Step-9.4 Deterministic Post-Validation + Rendering Catalog added as §23 (§23.1–§23.51); amended 2026-08-30 by Phase 2 Step 10B: authoritative Step-10 Orchestration + Triage contract added as §24 (§24.1–§24.38); amended 2026-08-30 by Phase 2 Step 9E: provenance-complete typed specialist draft candidates, closed templates, structured-reference validation, Python-only final rendering, legacy body_template rejection, P0 regression requirements and staged implementation added as §25 (§25.1–§25.30). Authoritative for Phase 2 work from Step 2.5 onward. v1.0 remains historical and is not merged into this document.*
