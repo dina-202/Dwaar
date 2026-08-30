@@ -48,6 +48,7 @@ from unittest import mock
 import domain.drafting_engine as engine
 from domain.models import (
     ArithmeticCalculationType,
+    ArithmeticDraftBlock,
     ArithmeticResult,
     ArithmeticStatus,
     AuthorityDetailsStatus,
@@ -65,22 +66,27 @@ from domain.models import (
     DraftGenerationStatus,
     DraftPermission,
     DraftSection,
+    EvidenceDraftBlock,
     EvidenceChecklistItem,
     EvidenceStatus,
     FactExtractionResult,
+    FactDraftBlock,
     FactExtractionStatus,
     FactRole,
     FactStatus,
     FactType,
     HearingStatus,
+    HearingDraftBlock,
     NoticeClassification,
     NoticeFamily,
     NoticeForm,
     PreflightResult,
     ProceedingType,
     RequirementResult,
+    RequirementDraftBlock,
     RequirementStatus,
     ReviewLevel,
+    ReviewDraftBlock,
     ReviewRequirement,
     SpecialistDraftResult,
     StaticDraftBlock,
@@ -2007,10 +2013,11 @@ class PromptAssetTests(unittest.TestCase):
         "gst/sec129.txt",
     }
 
-    def test_exactly_six_authorized_prompt_files_exist(self):
+    def test_exactly_six_active_prompt_files_exist(self):
         found = {
             path.relative_to(engine._PROMPTS_DIR).as_posix()
             for path in engine._PROMPTS_DIR.rglob("*.txt")
+            if "provenance_v1" not in path.parts
         }
         self.assertEqual(found, self.EXPECTED_RELATIVE_PATHS)
 
@@ -5297,6 +5304,371 @@ class Step9E1DormantContractTests(unittest.TestCase):
         self.assertEqual(
             [section.rendered_text for section in result.sections],
             DEFAULT_RESPONSE_BODIES,
+        )
+
+
+class Step9E2InactiveProvenanceTests(unittest.TestCase):
+    """§25 Step 9E.2 context, prompt and parser remain private/inactive."""
+
+    CONTEXT_KEYS = [
+        "schema_version",
+        "proceeding_type",
+        "draft_eligibility",
+        "sections",
+        "static_template_ids",
+        "facts",
+        "arithmetic",
+        "preflight",
+        "deadline",
+        "requirements",
+        "evidence_checklist",
+        "review_requirements",
+        "validation_warnings",
+    ]
+    P0_SENTENCE = (
+        "The Noticee is in the process of compiling vendor ledgers and "
+        "agreements."
+    )
+
+    def _profile(self):
+        return get_drafting_profile(ProceedingType.GST_SEC73_ITC)
+
+    def _context_inputs(self):
+        arithmetic = make_arithmetic(
+            operand_values=(Decimal("999.90"), Decimal("111.10")),
+            result=Decimal("888.80"),
+        )
+        return {
+            "classification": make_classification(),
+            "extraction_result": make_extraction(
+                facts=[
+                    make_fact(
+                        fact_id="F-YES",
+                        claim="CLAIM_MUST_NOT_APPEAR",
+                        source_text="Allowed source text.",
+                    ),
+                    make_fact(
+                        fact_id="F-NO",
+                        claim="NO_CLAIM_MUST_NOT_APPEAR",
+                        source_text="NO_SOURCE_MUST_NOT_APPEAR",
+                        status=FactStatus.REQUIRES_VERIFICATION,
+                        allowed_in_draft=DraftPermission.NO,
+                    ),
+                ]
+            ),
+            "preflight_result": make_preflight(),
+            "arithmetic_results": [arithmetic],
+            "validation_result": make_rich_validation(
+                checks=checks_for_arithmetic([arithmetic])
+            ),
+            "deadline_result": make_deadline(),
+        }
+
+    def _build_context(self):
+        inputs = self._context_inputs()
+        return engine._build_provenance_controlled_context(
+            **inputs,
+            drafting_profile=self._profile(),
+        )
+
+    def _valid_payload(self):
+        ids = [spec.section_id for spec in self._profile().sections]
+        return {
+            "sections": [
+                {
+                    "section_id": ids[0],
+                    "blocks": [
+                        {
+                            "kind": "static",
+                            "template_id": "static.working_draft",
+                        },
+                        {"kind": "fact", "fact_id": "F-YES"},
+                        {"kind": "arithmetic", "arithmetic_index": 1},
+                        {"kind": "deadline"},
+                        {"kind": "hearing"},
+                        {"kind": "requirement", "requirement_id": "req.s"},
+                        {"kind": "evidence", "evidence_id": "ev.e1"},
+                        {"kind": "review", "review_id": "rev.r1"},
+                    ],
+                },
+                {
+                    "section_id": ids[1],
+                    "blocks": [
+                        {"kind": "static", "template_id": "static.open_items"}
+                    ],
+                },
+                {
+                    "section_id": ids[2],
+                    "blocks": [
+                        {"kind": "fact", "fact_id": "F-YES"}
+                    ],
+                },
+            ]
+        }
+
+    def _parse(self, payload):
+        response = payload if isinstance(payload, str) else json.dumps(payload)
+        return engine._parse_provenance_response(
+            response,
+            self._profile().sections,
+        )
+
+    def test_exact_provenance_context_keys_and_schema(self):
+        context = self._build_context()
+        self.assertEqual(list(context.keys()), self.CONTEXT_KEYS)
+        self.assertEqual(context["schema_version"], "phase2.step9e.v1")
+        self.assertEqual(
+            context["static_template_ids"],
+            list(engine._STATIC_TEMPLATE_REGISTRY.keys()),
+        )
+        self.assertEqual(
+            [item["requirement_id"] for item in context["requirements"]],
+            ["req.s", "req.m", "req.u", "req.d", "req.v"],
+        )
+        self.assertEqual(
+            [item["status"] for item in context["requirements"]],
+            [
+                "satisfied",
+                "missing",
+                "unknown",
+                "derived",
+                "requires_verification",
+            ],
+        )
+
+    def test_prohibited_data_absent_from_context(self):
+        serialized = engine._serialize_context_json(self._build_context())
+        self.assertNotIn("CLAIM_MUST_NOT_APPEAR", serialized)
+        self.assertNotIn("NO_CLAIM_MUST_NOT_APPEAR", serialized)
+        self.assertNotIn("NO_SOURCE_MUST_NOT_APPEAR", serialized)
+        self.assertNotIn('"claim"', serialized)
+        self.assertNotIn('"raw_notice"', serialized)
+        self.assertNotIn('"special_rules"', serialized)
+        self.assertNotIn('"current_date"', serialized)
+        self.assertNotIn(
+            engine._STATIC_TEMPLATE_REGISTRY["static.working_draft"],
+            serialized,
+        )
+        self.assertEqual(
+            [item["fact_id"] for item in self._build_context()["facts"]],
+            ["F-YES"],
+        )
+
+    def test_provenance_context_serialization_is_deterministic(self):
+        first = engine._serialize_context_json(self._build_context())
+        second = engine._serialize_context_json(self._build_context())
+        self.assertEqual(first, second)
+        self.assertEqual(list(json.loads(first).keys()), self.CONTEXT_KEYS)
+        self.assertIn('"888.80"', first)
+        self.assertIn('"2025-03-10"', first)
+
+    def test_versioned_prompt_assets_are_exact_closed_paths(self):
+        self.assertEqual(
+            engine._PROVENANCE_BASE_PROMPT_PATH,
+            engine._PROMPTS_DIR / "provenance_v1" / "base_rules.txt",
+        )
+        self.assertEqual(
+            list(engine._PROVENANCE_WORKFLOW_PROMPT_PATHS.keys()),
+            ["sec73_itc", "sec73_general", "sec73_rcm", "sec74_fraud", "sec129"],
+        )
+        for path in engine._PROVENANCE_WORKFLOW_PROMPT_PATHS.values():
+            self.assertTrue(path.is_file(), path)
+            self.assertIn("provenance_v1", path.parts)
+        found = {
+            path.relative_to(engine._PROVENANCE_PROMPTS_DIR).as_posix()
+            for path in engine._PROVENANCE_PROMPTS_DIR.rglob("*.txt")
+        }
+        self.assertEqual(
+            found,
+            {
+                "base_rules.txt",
+                "gst/sec73_itc.txt",
+                "gst/sec73_general.txt",
+                "gst/sec73_rcm.txt",
+                "gst/sec74_fraud.txt",
+                "gst/sec129.txt",
+            },
+        )
+
+    def test_exact_versioned_prompt_assembly_and_zero_llm_calls(self):
+        inputs = self._context_inputs()
+        with mock.patch.object(engine, "call_gemini") as mocked:
+            prompt = engine._build_provenance_prompt(**inputs)
+            mocked.assert_not_called()
+        assets = engine._load_provenance_prompt_assets("sec73_itc")
+        context = engine._build_provenance_controlled_context(
+            **inputs,
+            drafting_profile=self._profile(),
+        )
+        expected = engine._assemble_prompt(
+            assets[0], assets[1], engine._serialize_context_json(context)
+        )
+        self.assertEqual(prompt, expected)
+        self.assertEqual(prompt, engine._build_provenance_prompt(**inputs))
+
+    def test_prompt_requests_only_typed_blocks_and_python_wording(self):
+        base = engine._load_provenance_prompt_assets("sec73_itc")[0]
+        self.assertIn('"blocks": [', base)
+        self.assertIn("Python owns all final wording and rendering.", base)
+        for field_name in (
+            "body_template",
+            "template_text",
+            "text",
+            "prose",
+            "body",
+            "claim",
+            "explanation",
+            "metadata",
+            "payload",
+        ):
+            self.assertNotIn(f'"{field_name}":', base, field_name)
+
+    def test_valid_response_builds_every_exact_block_dataclass_in_order(self):
+        sections = self._parse(self._valid_payload())
+        self.assertEqual(
+            [type(block) for block in sections[0].blocks],
+            [
+                StaticDraftBlock,
+                FactDraftBlock,
+                ArithmeticDraftBlock,
+                DeadlineDraftBlock,
+                HearingDraftBlock,
+                RequirementDraftBlock,
+                EvidenceDraftBlock,
+                ReviewDraftBlock,
+            ],
+        )
+        self.assertEqual(
+            [section.section_id for section in sections],
+            [spec.section_id for spec in self._profile().sections],
+        )
+        self.assertEqual(sections[0].blocks[1].fact_id, "F-YES")
+
+    def test_unknown_static_id_is_typed_without_fallback_or_text(self):
+        payload = self._valid_payload()
+        payload["sections"][0]["blocks"] = [
+            {"kind": "static", "template_id": "static.unknown"}
+        ]
+        sections = self._parse(payload)
+        self.assertEqual(
+            sections[0].blocks,
+            (StaticDraftBlock(template_id="static.unknown"),),
+        )
+        self.assertNotIn("static.unknown", engine._STATIC_TEMPLATE_REGISTRY)
+
+    def test_unknown_block_kind_rejected(self):
+        payload = self._valid_payload()
+        payload["sections"][0]["blocks"][0] = {"kind": "prose"}
+        self.assertIsNone(self._parse(payload))
+
+    def test_extra_root_section_and_block_fields_rejected(self):
+        root = self._valid_payload()
+        root["extra"] = True
+        self.assertIsNone(self._parse(root))
+        section = self._valid_payload()
+        section["sections"][0]["extra"] = True
+        self.assertIsNone(self._parse(section))
+        block = self._valid_payload()
+        block["sections"][0]["blocks"][0]["extra"] = True
+        self.assertIsNone(self._parse(block))
+
+    def test_legacy_and_prose_fields_reject_exact_p0_sentence(self):
+        legacy_section = self._valid_payload()
+        legacy_section["sections"][0] = {
+            "section_id": self._profile().sections[0].section_id,
+            "body_template": self.P0_SENTENCE,
+        }
+        self.assertIsNone(self._parse(legacy_section))
+        for field_name in (
+            "body_template",
+            "template_text",
+            "text",
+            "prose",
+            "body",
+            "claim",
+            "explanation",
+            "metadata",
+            "payload",
+        ):
+            with self.subTest(field_name=field_name):
+                payload = self._valid_payload()
+                payload["sections"][0]["blocks"][0][field_name] = (
+                    self.P0_SENTENCE
+                )
+                self.assertIsNone(self._parse(payload))
+
+    def test_missing_and_wrong_reference_fields_rejected(self):
+        for block in (
+            {"kind": "static"},
+            {"kind": "fact"},
+            {"kind": "arithmetic"},
+            {"kind": "requirement"},
+            {"kind": "evidence"},
+            {"kind": "review"},
+            {"kind": "fact", "fact_id": 1},
+            {"kind": "arithmetic", "arithmetic_index": True},
+            {"kind": "arithmetic", "arithmetic_index": 0},
+        ):
+            with self.subTest(block=block):
+                payload = self._valid_payload()
+                payload["sections"][0]["blocks"][0] = block
+                self.assertIsNone(self._parse(payload))
+
+    def test_malformed_json_provider_error_and_nonstring_rejected(self):
+        for response in ("{", "Error: provider failed", "", "[]"):
+            with self.subTest(response=response):
+                self.assertIsNone(self._parse(response))
+        self.assertIsNone(
+            engine._parse_provenance_response(3, self._profile().sections)
+        )
+
+    def test_section_count_id_and_order_violations_rejected(self):
+        count = self._valid_payload()
+        count["sections"].pop()
+        self.assertIsNone(self._parse(count))
+        wrong_id = self._valid_payload()
+        wrong_id["sections"][0]["section_id"] = "wrong"
+        self.assertIsNone(self._parse(wrong_id))
+        reordered = self._valid_payload()
+        reordered["sections"][0], reordered["sections"][1] = (
+            reordered["sections"][1],
+            reordered["sections"][0],
+        )
+        self.assertIsNone(self._parse(reordered))
+
+    def test_empty_blocks_duplicate_keys_and_partial_salvage_rejected(self):
+        empty = self._valid_payload()
+        empty["sections"][0]["blocks"] = []
+        self.assertIsNone(self._parse(empty))
+        duplicate = (
+            '{"sections": [], "sections": []}'
+        )
+        self.assertIsNone(self._parse(duplicate))
+        partial = self._valid_payload()
+        partial["sections"][2]["blocks"] = [
+            {"kind": "fact", "fact_id": "F-YES", "text": self.P0_SENTENCE}
+        ]
+        self.assertIsNone(self._parse(partial))
+
+    def test_prepared_parser_performs_no_rendering_or_postvalidation(self):
+        sections = self._parse(self._valid_payload())
+        self.assertTrue(all(isinstance(item, DraftCandidateSection) for item in sections))
+        self.assertTrue(all(not hasattr(item, "rendered_text") for item in sections))
+        source = inspect.getsource(engine._parse_provenance_response)
+        self.assertNotIn("DraftSection(", source)
+        self.assertNotIn("_render", source)
+        self.assertNotIn("_post_validate", source)
+
+    def test_public_generation_remains_legacy_single_call_path(self):
+        source = inspect.getsource(engine.generate_specialist_draft)
+        self.assertNotIn("provenance", source.lower())
+        self.assertEqual(source.count("call_gemini("), 1)
+        result, mocked = run_draft()
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(
+            list(DraftSection.__dataclass_fields__.keys()),
+            ["section_id", "title", "template_text", "rendered_text"],
         )
 
 

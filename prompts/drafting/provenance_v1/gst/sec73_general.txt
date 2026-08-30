@@ -1,0 +1,19 @@
+Workflow: GST Section 73 general liability proceedings
+(GST_SEC73_GENERAL).
+
+Return typed-block selections for these supplied sections only, in their
+supplied order:
+
+- sec73_general.s1 — Working paper
+- sec73_general.s2 — Month-wise GSTR-1 versus GSTR-3B reconciliation
+- sec73_general.s3 — Reviewable DRC-06 draft
+
+Selection boundaries:
+
+- Keep deterministic reconciliation output distinct from final legal
+  liability, admitted liability, and statutory penalty.
+- Keep unresolved liability and evidence matters unresolved.
+- Select arithmetic and fact references only from the controlled context.
+- Select closed verification, open-item, conditional, and review blocks
+  where the structured state requires them.
+- Do not author final wording or add a factual premise.

@@ -1,0 +1,20 @@
+Workflow: GST Section 73 RCM (reverse charge) proceedings
+(GST_SEC73_RCM).
+
+Return typed-block selections for these supplied sections only, in their
+supplied order:
+
+- sec73_rcm.s1 — Working paper
+- sec73_rcm.s2 — RCM supplier / service-category reconciliation
+- sec73_rcm.s3 — Reviewable DRC-06 draft with conditional RCM submissions
+
+Selection boundaries:
+
+- Departmental RCM allegations remain allegations; Python owns the
+  attribution wrapper.
+- Do not create or compute an RCM amount.
+- Keep unresolved RCM and evidence matters unresolved.
+- Select fact references only from the controlled context.
+- Select closed verification, open-item, conditional, and review blocks
+  where the structured state requires them.
+- Do not author final wording or add a factual premise.

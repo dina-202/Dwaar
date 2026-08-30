@@ -1,0 +1,22 @@
+Workflow: GST Section 129 enforcement proceedings
+(GST_SEC129_ENFORCE).
+
+Return typed-block selections for these supplied sections only, in their
+supplied order:
+
+- sec129.s1 — URGENT enforcement working paper
+- sec129.s2 — Enforcement chronology / deadline alert
+- sec129.s3 — Penalty computation verification checklist
+- sec129.s4 — Reviewable response / submission appropriate to the actual notice or proceeding
+
+Selection boundaries:
+
+- Do not create a static 100% penalty or universal seven-day response rule.
+- Do not treat MOV-09 as a taxpayer reply form.
+- Do not create an e-way-bill reason or assume a Section 130 deep workflow.
+- Select deadline and arithmetic references only from the controlled
+  context; do not calculate either value.
+- Keep unresolved evidence and facts unresolved.
+- Select closed verification, open-item, conditional, and review blocks
+  where the structured state requires them.
+- Do not author final wording or add a factual premise.

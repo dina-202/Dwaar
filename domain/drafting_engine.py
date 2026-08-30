@@ -52,23 +52,33 @@ from types import MappingProxyType
 from typing import Dict, List, Mapping, Optional, Tuple
 
 from domain.models import (
+    ArithmeticDraftBlock,
     ArithmeticResult,
     ArithmeticStatus,
+    DeadlineDraftBlock,
     DeadlineResult,
+    DraftCandidateBlock,
+    DraftCandidateSection,
     DraftEligibility,
     DraftFailureCode,
     DraftGenerationStatus,
     DraftPermission,
     DraftPostValidationResult,
     DraftSection,
+    EvidenceDraftBlock,
     FactExtractionResult,
+    FactDraftBlock,
     FactStatus,
     HearingStatus,
+    HearingDraftBlock,
     NoticeClassification,
     PreflightResult,
     ProceedingType,
     RequirementStatus,
+    RequirementDraftBlock,
+    ReviewDraftBlock,
     SpecialistDraftResult,
+    StaticDraftBlock,
     SupportLevel,
     ValidationEngineResult,
     ValidationItem,
@@ -92,6 +102,19 @@ _WORKFLOW_PROMPT_PATHS: Dict[str, Path] = {
     "sec73_rcm": _PROMPTS_DIR / "gst" / "sec73_rcm.txt",
     "sec74_fraud": _PROMPTS_DIR / "gst" / "sec74_fraud.txt",
     "sec129": _PROMPTS_DIR / "gst" / "sec129.txt",
+}
+
+_PROVENANCE_SCHEMA_VERSION = "phase2.step9e.v1"
+_PROVENANCE_PROMPTS_DIR = _PROMPTS_DIR / "provenance_v1"
+_PROVENANCE_BASE_PROMPT_PATH = _PROVENANCE_PROMPTS_DIR / "base_rules.txt"
+_PROVENANCE_WORKFLOW_PROMPT_PATHS: Dict[str, Path] = {
+    "sec73_itc": _PROVENANCE_PROMPTS_DIR / "gst" / "sec73_itc.txt",
+    "sec73_general": (
+        _PROVENANCE_PROMPTS_DIR / "gst" / "sec73_general.txt"
+    ),
+    "sec73_rcm": _PROVENANCE_PROMPTS_DIR / "gst" / "sec73_rcm.txt",
+    "sec74_fraud": _PROVENANCE_PROMPTS_DIR / "gst" / "sec74_fraud.txt",
+    "sec129": _PROVENANCE_PROMPTS_DIR / "gst" / "sec129.txt",
 }
 
 # Closed §25.13 Python-owned static-template registry. Step 9E.1 keeps this
@@ -530,6 +553,255 @@ def _build_specialist_prompt(
     return _assemble_prompt(
         assets[0], assets[1], _serialize_context_json(context)
     )
+
+
+# --- Phase 2 Step 9E.2: inactive provenance-v1 preparation (§25) -------------
+
+def _build_provenance_controlled_context(
+    classification: NoticeClassification,
+    extraction_result: FactExtractionResult,
+    preflight_result: PreflightResult,
+    arithmetic_results: List[ArithmeticResult],
+    validation_result: ValidationEngineResult,
+    deadline_result: Optional[DeadlineResult],
+    drafting_profile: WorkflowDraftingProfile,
+) -> Optional[Dict]:
+    """Build the exact dormant §25.8.1 provenance-v1 context.
+
+    This helper is not called by generate_specialist_draft during Step
+    9E.2. It performs no LLM call, parsing, validation or rendering.
+    """
+    if any(
+        item.status is ValidationStatus.FAIL
+        for item in validation_result.checks
+    ):
+        return None
+
+    context = {}
+    context["schema_version"] = _PROVENANCE_SCHEMA_VERSION
+    context["proceeding_type"] = classification.proceeding_type.value
+    context["draft_eligibility"] = validation_result.draft_eligibility.value
+    context["sections"] = [
+        {"section_id": spec.section_id, "title": spec.title}
+        for spec in drafting_profile.sections
+    ]
+    context["static_template_ids"] = list(_STATIC_TEMPLATE_REGISTRY.keys())
+    context["facts"] = [
+        _serialize_fact(fact)
+        for fact in extraction_result.facts
+        if fact.allowed_in_draft
+        in (DraftPermission.YES, DraftPermission.CONDITIONAL)
+    ]
+    context["arithmetic"] = _build_arithmetic_context(
+        arithmetic_results, validation_result.checks
+    )
+    context["preflight"] = _serialize_preflight(preflight_result)
+    context["deadline"] = (
+        None
+        if deadline_result is None
+        else _serialize_deadline(deadline_result)
+    )
+    context["requirements"] = [
+        _serialize_requirement(requirement)
+        for requirement in validation_result.requirements
+    ]
+    context["evidence_checklist"] = [
+        _serialize_evidence(item)
+        for item in validation_result.evidence_checklist
+    ]
+    context["review_requirements"] = [
+        _serialize_review(item)
+        for item in validation_result.review_requirements
+    ]
+    context["validation_warnings"] = [
+        _serialize_warning(item)
+        for item in validation_result.checks
+        if item.status is ValidationStatus.WARNING
+    ]
+    return context
+
+
+def _load_provenance_prompt_assets(
+    prompt_key: str,
+) -> Optional[Tuple[str, str]]:
+    """Load only the fixed dormant provenance-v1 prompt assets."""
+    try:
+        base_text = _PROVENANCE_BASE_PROMPT_PATH.read_text(
+            encoding="utf-8"
+        ).strip()
+    except OSError:
+        return None
+    if not base_text:
+        return None
+    path = _PROVENANCE_WORKFLOW_PROMPT_PATHS.get(prompt_key)
+    if path is None:
+        return None
+    try:
+        workflow_text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not workflow_text:
+        return None
+    return base_text, workflow_text
+
+
+def _build_provenance_prompt(
+    classification: NoticeClassification,
+    extraction_result: FactExtractionResult,
+    preflight_result: PreflightResult,
+    arithmetic_results: List[ArithmeticResult],
+    validation_result: ValidationEngineResult,
+    deadline_result: Optional[DeadlineResult] = None,
+) -> Optional[str]:
+    """Prepare the deterministic dormant provenance-v1 prompt.
+
+    No provider is called. Step 9E.3 alone may activate this replacement.
+    """
+    workflow = get_workflow(classification.proceeding_type)
+    drafting_profile = get_drafting_profile(classification.proceeding_type)
+    if not _gate_permitted(
+        classification, validation_result, workflow, drafting_profile
+    ):
+        return None
+    assets = _load_provenance_prompt_assets(drafting_profile.prompt_key)
+    if assets is None:
+        return None
+    context = _build_provenance_controlled_context(
+        classification,
+        extraction_result,
+        preflight_result,
+        arithmetic_results,
+        validation_result,
+        deadline_result,
+        drafting_profile,
+    )
+    if context is None:
+        return None
+    return _assemble_prompt(
+        assets[0], assets[1], _serialize_context_json(context)
+    )
+
+
+def _strict_json_object(pairs):
+    """Reject duplicate JSON object keys in the provenance-v1 parser."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _parse_provenance_block(raw_block) -> Optional[DraftCandidateBlock]:
+    """Construct one exact §25.6 typed block, or reject it."""
+    if not isinstance(raw_block, dict):
+        return None
+    kind = raw_block.get("kind")
+    if kind == "static":
+        if set(raw_block.keys()) != {"kind", "template_id"}:
+            return None
+        value = raw_block["template_id"]
+        if not isinstance(value, str) or value == "":
+            return None
+        return StaticDraftBlock(template_id=value)
+    if kind == "fact":
+        if set(raw_block.keys()) != {"kind", "fact_id"}:
+            return None
+        value = raw_block["fact_id"]
+        if not isinstance(value, str) or value == "":
+            return None
+        return FactDraftBlock(fact_id=value)
+    if kind == "arithmetic":
+        if set(raw_block.keys()) != {"kind", "arithmetic_index"}:
+            return None
+        value = raw_block["arithmetic_index"]
+        if type(value) is not int or value <= 0:
+            return None
+        return ArithmeticDraftBlock(arithmetic_index=value)
+    if kind == "deadline":
+        if set(raw_block.keys()) != {"kind"}:
+            return None
+        return DeadlineDraftBlock()
+    if kind == "hearing":
+        if set(raw_block.keys()) != {"kind"}:
+            return None
+        return HearingDraftBlock()
+    if kind == "requirement":
+        if set(raw_block.keys()) != {"kind", "requirement_id"}:
+            return None
+        value = raw_block["requirement_id"]
+        if not isinstance(value, str) or value == "":
+            return None
+        return RequirementDraftBlock(requirement_id=value)
+    if kind == "evidence":
+        if set(raw_block.keys()) != {"kind", "evidence_id"}:
+            return None
+        value = raw_block["evidence_id"]
+        if not isinstance(value, str) or value == "":
+            return None
+        return EvidenceDraftBlock(evidence_id=value)
+    if kind == "review":
+        if set(raw_block.keys()) != {"kind", "review_id"}:
+            return None
+        value = raw_block["review_id"]
+        if not isinstance(value, str) or value == "":
+            return None
+        return ReviewDraftBlock(review_id=value)
+    return None
+
+
+def _parse_provenance_response(
+    response,
+    profile_sections,
+) -> Optional[List[DraftCandidateSection]]:
+    """Strict inactive §25.6 typed-response parser; no partial salvage."""
+    if not isinstance(response, str):
+        return None
+    response_trimmed = response.strip()
+    if response_trimmed == "":
+        return None
+    try:
+        parsed = json.loads(
+            response_trimmed,
+            object_pairs_hook=_strict_json_object,
+        )
+    except Exception:
+        return None
+    if not isinstance(parsed, dict) or set(parsed.keys()) != {"sections"}:
+        return None
+    raw_sections = parsed["sections"]
+    if not isinstance(raw_sections, list):
+        return None
+    if len(raw_sections) != len(profile_sections):
+        return None
+
+    candidate_sections = []
+    for index, raw_section in enumerate(raw_sections):
+        if not isinstance(raw_section, dict):
+            return None
+        if set(raw_section.keys()) != {"section_id", "blocks"}:
+            return None
+        returned_id = raw_section["section_id"]
+        if not isinstance(returned_id, str):
+            return None
+        if returned_id != profile_sections[index].section_id:
+            return None
+        raw_blocks = raw_section["blocks"]
+        if not isinstance(raw_blocks, list) or len(raw_blocks) == 0:
+            return None
+        blocks = []
+        for raw_block in raw_blocks:
+            block = _parse_provenance_block(raw_block)
+            if block is None:
+                return None
+            blocks.append(block)
+        candidate_sections.append(
+            DraftCandidateSection(
+                section_id=returned_id,
+                blocks=tuple(blocks),
+            )
+        )
+    return candidate_sections
 
 
 # --- Phase 2 Step 9.3: generation / parser result-state (§22) -----------------

@@ -1,0 +1,18 @@
+Workflow: GST Section 73 ITC proceedings (GST_SEC73_ITC).
+
+Return typed-block selections for these supplied sections only, in their
+supplied order:
+
+- sec73_itc.s1 — Working paper
+- sec73_itc.s2 — ITC reconciliation table
+- sec73_itc.s3 — Reviewable DRC-06 draft
+
+Selection boundaries:
+
+- Keep deterministic ITC reconciliation output distinct from final legal
+  liability, admitted liability, and statutory penalty.
+- Keep unresolved ITC and evidence matters unresolved.
+- Select arithmetic and fact references only from the controlled context.
+- Select closed verification, open-item, conditional, and review blocks
+  where the structured state requires them.
+- Do not author final wording or add a factual premise.

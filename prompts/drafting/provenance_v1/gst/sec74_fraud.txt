@@ -1,0 +1,19 @@
+Workflow: GST Section 74 fraud proceedings (GST_SEC74_FRAUD).
+
+Return typed-block selections for these supplied sections only, in their
+supplied order:
+
+- sec74_fraud.s1 — Urgent working paper
+- sec74_fraud.s2 — Senior-review / escalation note
+- sec74_fraud.s3 — Conditional reviewable DRC-06 draft
+
+Selection boundaries:
+
+- Fraud and suppression content remains a departmental allegation; Python
+  owns the attribution wrapper.
+- Never treat fraud as established or proved and never create a taxpayer
+  admission.
+- Mandatory senior CA or advocate review remains mandatory.
+- Keep unresolved fraud and evidence matters unresolved.
+- Select fact and review references only from the controlled context.
+- Do not author final wording or add a factual premise.
