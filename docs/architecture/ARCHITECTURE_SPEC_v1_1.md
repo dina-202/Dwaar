@@ -2454,6 +2454,72 @@ OTHER_NOTICE_FACT                                  → REQUIRES_VERIFICATION
 
 A role cannot upgrade an allegation into `CONFIRMED`.
 
+### 19.6a `FactRole` source-grounding invariant (Phase 2 safety patch)
+
+Role/type compatibility (§19.5) alone does NOT prove that the exact
+`source_text` itself contains enough semantic evidence to justify the
+assigned `FactRole`. Pin the following invariant:
+
+> A non-`NONE` `FactRole` is permitted only when the exact `source_text`
+> itself contains explicit semantic evidence sufficient to identify that
+> role.
+
+1. `FactRole` remains LLM-proposed but architecture-constrained. Python
+   continues to enforce the existing closed `FactRole` ↔ `FactType`
+   compatibility catalog (§19.5).
+
+2. The extraction prompt MUST require: assign a non-`NONE` `FactRole` ONLY
+   when the exact `source_text` itself contains explicit semantic evidence
+   sufficient to identify that role.
+
+3. The following MUST NOT be used as substitutes for source-span evidence:
+
+   ```text
+   proceeding classification
+   workflow identity
+   neighboring facts
+   notice-level inference
+   expected workflow fields
+   arithmetic expectations
+   downstream requirement needs
+   ```
+
+4. Classification/workflow context may guide retrieval and search, but
+   cannot disambiguate an otherwise ambiguous selected `source_text`.
+
+5. If `source_text` could reasonably correspond to more than one compatible
+   role: `fact_role = FactRole.NONE`.
+
+6. If `source_text` contains only an amount, date, identifier, or generic
+   statement without a role label or sufficiently explicit relationship:
+   `fact_role = FactRole.NONE`.
+
+7. Never guess a role.
+
+8. `FactRole.NONE` preserves the fact. It does NOT reject the fact, change
+   `FactStatus`, or change `DraftPermission` by itself.
+
+9. `FactRole.NONE` cannot satisfy a specialized role-specific requirement
+   or an arithmetic provenance check that requires a concrete role.
+
+10. No deterministic semantic NLP is introduced in Phase 2. Python is NOT
+    required to interpret arbitrary English to prove role meaning. The hard
+    deterministic checks remain:
+
+    ```text
+    exact provenance substring (§17.9)
+    closed type/role compatibility (§19.5)
+    status / draft-permission invariants (§17.6, §17.8)
+    ```
+
+    The semantic source-grounding requirement is enforced at the controlled
+    Fact Engine extraction-prompt boundary and tested with explicit
+    ambiguity fixtures.
+
+Python must NOT rewrite `NONE` → a specific role based on workflow context,
+and must NOT rewrite one compatible concrete role to another concrete role.
+Existing deterministic compatibility rejection (§19.5) remains unchanged.
+
 ### 19.7 Step 8 public input contract
 
 ```text

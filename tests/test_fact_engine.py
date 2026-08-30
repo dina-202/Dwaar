@@ -97,6 +97,12 @@ RICH_NOTICE = (
 
 DEFAULT_SOURCE = "Reference No. ZD2608260012345"
 
+# Canonical ambiguity fixture for the FactRole source-grounding safety patch
+# (§19.6a): a bare amount with no role label. A non-NONE role must NOT be
+# inferred from this span; role/type compatibility alone does not prove the
+# span supports a specific role.
+BARE_AMOUNT_NOTICE = "₹ 5,00,000"
+
 # The §19.5 compatibility groups, spelled from the spec (not derived from
 # the engine's table) so the tests independently verify the contract.
 STATED_AMOUNT_ROLES = (
@@ -1397,6 +1403,228 @@ class PromptRoleContractTests(unittest.TestCase):
             "Do not infer taxpayer facts from departmental allegations",
             prompt,
         )
+
+
+class PromptSourceGroundingTests(unittest.TestCase):
+    """§19.6a: the extraction prompt carries the FactRole source-grounding
+    rule — workflow/proceeding context cannot substitute for source-text
+    evidence, ambiguity and bare spans use NONE, and roles are never
+    guessed."""
+
+    def test_prompt_contains_source_grounding_rule(self):
+        prompt = capture_prompt(DEFAULT_SOURCE)
+        self.assertIn("SOURCE-GROUNDING", prompt)
+        self.assertIn("explicitly establishes that semantic role", prompt)
+
+    def test_prompt_says_workflow_context_cannot_substitute_for_source_text(self):
+        prompt = capture_prompt(DEFAULT_SOURCE)
+        self.assertIn(
+            "Do not infer a role merely from the proceeding, workflow",
+            prompt,
+        )
+        self.assertIn("or another extracted fact", prompt)
+
+    def test_prompt_says_ambiguous_role_returns_none(self):
+        prompt = capture_prompt(DEFAULT_SOURCE)
+        self.assertIn("ambiguous between compatible roles", prompt)
+        self.assertIn("return none", prompt)
+
+    def test_prompt_says_bare_amount_date_identifier_returns_none(self):
+        prompt = capture_prompt(DEFAULT_SOURCE)
+        self.assertIn("merely a number, amount, date", prompt)
+        self.assertIn("identifier, or generic statement", prompt)
+
+    def test_prompt_says_never_guess(self):
+        prompt = capture_prompt(DEFAULT_SOURCE)
+        self.assertIn("Never guess a fact_role", prompt)
+
+
+class FactRoleSourceGroundingBehaviorTests(unittest.TestCase):
+    """§19.6a ambiguity fixtures: an ambiguous/bare span stays NONE, a
+    concrete role is accepted only when the source_text itself names it,
+    and NONE never changes Python-owned status/permission."""
+
+    def test_bare_amount_with_none_role_is_accepted(self):
+        result, fake = run_extraction(
+            BARE_AMOUNT_NOTICE,
+            facts_response(
+                candidate(
+                    fact_type="stated_amount",
+                    fact_role="none",
+                    claim="Notice states an amount of ₹ 5,00,000",
+                    source_text="₹ 5,00,000",
+                )
+            ),
+        )
+        self.assertEqual(len(result), 1)
+        fact = result[0]
+        self.assertIs(fact.fact_type, FactType.STATED_AMOUNT)
+        self.assertIs(fact.fact_role, FactRole.NONE)
+        self.assertIs(fact.status, FactStatus.CONFIRMED)
+        self.assertIs(fact.allowed_in_draft, DraftPermission.YES)
+        self.assertEqual(fake.call_count, 1)
+
+    def test_explicit_role_source_text_with_compatible_role_accepted(self):
+        # "ITC in GSTR-3B" in the span itself names the role, so the
+        # compatible concrete role is grounded and accepted.
+        result, _ = run_extraction(
+            RICH_NOTICE,
+            facts_response(
+                candidate(
+                    fact_type="stated_amount",
+                    fact_role="gstr3b_itc_claimed_amount",
+                    claim="ITC in GSTR-3B is Rs. 10,00,000",
+                    source_text="ITC in GSTR-3B: Rs. 10,00,000",
+                )
+            ),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIs(
+            result[0].fact_role, FactRole.GSTR3B_ITC_CLAIMED_AMOUNT
+        )
+        self.assertIs(result[0].fact_type, FactType.STATED_AMOUNT)
+
+    def test_none_role_is_never_upgraded_to_specific_role(self):
+        # Even under a DEEP_WORKFLOW ITC classification, Python must NOT
+        # rewrite NONE into a concrete amount role (§19.6a).
+        result, _ = run_extraction(
+            BARE_AMOUNT_NOTICE,
+            facts_response(
+                candidate(
+                    fact_type="stated_amount",
+                    fact_role="none",
+                    claim="Notice states an amount of ₹ 5,00,000",
+                    source_text="₹ 5,00,000",
+                )
+            ),
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_ITC,
+                support_level=SupportLevel.DEEP_WORKFLOW,
+            ),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIs(result[0].fact_role, FactRole.NONE)
+        self.assertIsNot(
+            result[0].fact_role, FactRole.GSTR3B_ITC_CLAIMED_AMOUNT
+        )
+
+    def test_concrete_role_is_not_rewritten_to_another_role(self):
+        result, _ = run_extraction(
+            RICH_NOTICE,
+            facts_response(
+                candidate(
+                    fact_type="stated_amount",
+                    fact_role="gstr3b_itc_claimed_amount",
+                    claim="ITC in GSTR-3B is Rs. 10,00,000",
+                    source_text="ITC in GSTR-3B: Rs. 10,00,000",
+                )
+            ),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIs(
+            result[0].fact_role, FactRole.GSTR3B_ITC_CLAIMED_AMOUNT
+        )
+        self.assertIsNot(
+            result[0].fact_role, FactRole.GSTR2B_ITC_REFLECTED_AMOUNT
+        )
+
+    def test_workflow_context_does_not_override_none_role(self):
+        # The same ambiguous bare amount yields NONE regardless of
+        # proceeding — no workflow-based role override exists.
+        item = candidate(
+            fact_type="stated_amount",
+            fact_role="none",
+            claim="Notice states an amount of ₹ 5,00,000",
+            source_text="₹ 5,00,000",
+        )
+        deep = run_extraction(
+            BARE_AMOUNT_NOTICE,
+            facts_response(item),
+            classification=make_classification(
+                proceeding_type=ProceedingType.GST_SEC73_ITC,
+                support_level=SupportLevel.DEEP_WORKFLOW,
+            ),
+        )[0]
+        unknown = run_extraction(
+            BARE_AMOUNT_NOTICE,
+            facts_response(item),
+            classification=make_classification(
+                proceeding_type=ProceedingType.UNKNOWN,
+                support_level=SupportLevel.UNKNOWN,
+            ),
+        )[0]
+        self.assertIs(deep[0].fact_role, FactRole.NONE)
+        self.assertIs(unknown[0].fact_role, FactRole.NONE)
+
+    def test_incompatible_concrete_role_still_rejected(self):
+        # §19.5 rejection is unchanged: a concrete role with the wrong
+        # FactType is rejected regardless of any workflow context.
+        assert_rejected_selectively(
+            self,
+            candidate(
+                fact_type="stated_amount",
+                fact_role="rcm_category_alleged",
+                claim="bad combination",
+                source_text="ITC in GSTR-3B: Rs. 10,00,000",
+            ),
+        )
+
+    def test_bare_amount_exact_substring_provenance_still_required(self):
+        # NONE does not relax §17.9 exact provenance: the bare amount must
+        # still be an exact substring of the supplied raw text.
+        result, _ = run_extraction(
+            "A notice with a different amount",
+            facts_response(
+                candidate(
+                    fact_type="stated_amount",
+                    fact_role="none",
+                    claim="Notice states an amount of ₹ 5,00,000",
+                    source_text="₹ 5,00,000",
+                )
+            ),
+        )
+        self.assertEqual(result, [])
+
+    def test_none_role_preserves_fact_type_owned_status_and_permission(self):
+        # FactRole.NONE by itself never changes FactStatus or
+        # DraftPermission (§19.6, §19.6a item 8).
+        result, _ = run_extraction(
+            RICH_NOTICE,
+            facts_response(
+                candidate(
+                    fact_type="other_notice_fact",
+                    fact_role="none",
+                    claim="Notice mentions Case ID",
+                    source_text="Case ID: CASE-2026-99",
+                )
+            ),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIs(result[0].fact_role, FactRole.NONE)
+        self.assertIs(result[0].status, FactStatus.REQUIRES_VERIFICATION)
+        self.assertIs(result[0].allowed_in_draft, DraftPermission.NO)
+
+
+class NoRoleGuessingImplementationTests(unittest.TestCase):
+    """§19.6a item 10: no deterministic semantic-NLP role guessing lives in
+    Python — no keyword/synonym/embedding/regex mapper, no workflow-based
+    role override, and exactly one LLM call site."""
+
+    @classmethod
+    def _source(cls) -> str:
+        return pathlib.Path(fact_engine.__file__).read_text(
+            encoding="utf-8"
+        )
+
+    def test_no_keyword_synonym_embedding_regex_mapper_tokens(self):
+        source = self._source()
+        for token in ("keyword", "synonym", "embedding", "regex"):
+            self.assertNotIn(token, source, f"role-guessing token {token!r}")
+
+    def test_exactly_one_llm_call_site_in_source(self):
+        # No second semantic-validation LLM call: exactly one call_gemini
+        # invocation site exists in the engine source.
+        self.assertEqual(self._source().count("call_gemini("), 1)
 
 
 class ModulePurityTests(unittest.TestCase):

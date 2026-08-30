@@ -113,6 +113,12 @@ def _build_extraction_prompt(
     five fields (fact_role added), the closed FactRole vocabulary and the
     role -> FactType compatibility rules are stated in full. Python
     remains authoritative and rejects any invalid output.
+
+    Source-grounding amendment (§19.6a): the prompt additionally requires
+    a non-NONE fact_role only when the selected source_text itself
+    explicitly establishes that role — workflow/proceeding context may
+    guide search but never substitute for source-span evidence, and an
+    ambiguous or bare span must use "none".
     """
     allowed_types = ", ".join(member.value for member in FactType)
     allowed_roles = ", ".join(member.value for member in FactRole)
@@ -160,6 +166,19 @@ def _build_extraction_prompt(
         "- explicit_procedural_date -> fact_type stated_due_date, "
         "hearing_details or document_detail\n"
         "- none -> any fact_type\n"
+        "\n"
+        "FACT ROLE SOURCE-GROUNDING RULE:\n"
+        "- Assign a non-NONE fact_role ONLY when the selected source_text "
+        "itself explicitly establishes that semantic role.\n"
+        "- Do not infer a role merely from the proceeding, workflow, "
+        "surrounding notice context, expected field, or another extracted "
+        "fact.\n"
+        "- If the selected source_text is ambiguous between compatible "
+        "roles, return none.\n"
+        "- If the selected source_text is merely a number, amount, date, "
+        "identifier, or generic statement that does not itself identify the "
+        "role, return none.\n"
+        "- Never guess a fact_role.\n"
         "\n"
         "Rules:\n"
         "- Extract only information actually present in the notice text.\n"
