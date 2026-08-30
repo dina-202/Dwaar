@@ -383,7 +383,7 @@ class WorkflowDraftingProfileTests(_NoDefaultMixin, unittest.TestCase):
 
 
 class DraftSectionTests(_NoDefaultMixin, unittest.TestCase):
-    """§20.20: exact four-field contract; no defaults, no extra fields."""
+    """§25.5: exact three-field contract; no candidate/prose surface."""
 
     dataclass_type = DraftSection
 
@@ -393,27 +393,27 @@ class DraftSectionTests(_NoDefaultMixin, unittest.TestCase):
     def test_field_names_and_order_exact(self):
         self.assertEqual(
             [f.name for f in fields(DraftSection)],
-            ["section_id", "title", "template_text", "rendered_text"],
+            ["section_id", "title", "rendered_text"],
         )
 
     def test_no_extra_fields(self):
-        self.assertEqual(len(fields(DraftSection)), 4)
+        self.assertEqual(len(fields(DraftSection)), 3)
 
     def test_field_annotations_exact(self):
         by_name = {f.name: f for f in fields(DraftSection)}
-        for name in ("section_id", "title", "template_text", "rendered_text"):
+        for name in ("section_id", "title", "rendered_text"):
             self.assertIs(by_name[name].type, str, name)
+        self.assertNotIn("template_text", by_name)
+        self.assertNotIn("body_template", by_name)
 
     def test_supplied_values_preserved(self):
         section = DraftSection(
             section_id="sec73_itc.s1",
             title="Working paper",
-            template_text="Computed difference: [[ARITH:1]].",
             rendered_text="Computed difference: Rs 5,000 (calculated).",
         )
         self.assertEqual(section.section_id, "sec73_itc.s1")
         self.assertEqual(section.title, "Working paper")
-        self.assertEqual(section.template_text, "Computed difference: [[ARITH:1]].")
         self.assertEqual(
             section.rendered_text, "Computed difference: Rs 5,000 (calculated)."
         )
@@ -551,7 +551,6 @@ class SpecialistDraftResultTests(_NoDefaultMixin, unittest.TestCase):
         section = DraftSection(
             section_id="sec73_itc.s1",
             title="Working paper",
-            template_text="[[ARITH:1]]",
             rendered_text="deterministic text",
         )
         requirement = RequirementResult(
@@ -871,10 +870,10 @@ class DataclassEqualityTests(unittest.TestCase):
     def test_draft_section_equality(self):
         self.assertEqual(
             DraftSection(
-                section_id="s1", title="t", template_text="a", rendered_text="b"
+                section_id="s1", title="t", rendered_text="b"
             ),
             DraftSection(
-                section_id="s1", title="t", template_text="a", rendered_text="b"
+                section_id="s1", title="t", rendered_text="b"
             ),
         )
 

@@ -851,15 +851,10 @@ class DraftCandidateSection:
 
 @dataclass
 class DraftSection:
-    """One rendered specialist draft section (ARCHITECTURE_SPEC_v1_1 §20.20).
-
-    template_text holds the LLM body_template; rendered_text holds the
-    Python-owned token-resolved final text.
-    """
+    """One provenance-complete rendered draft section (§25.5)."""
 
     section_id: str
     title: str
-    template_text: str
     rendered_text: str
 
 

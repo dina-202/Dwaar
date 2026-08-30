@@ -1,33 +1,13 @@
-"""Unit tests for the Step-9.2 controlled drafting-context builder and
-deterministic prompt assembly, and the Step-9.3 generation/parser state
-machine (ARCHITECTURE_SPEC_v1_1 §21, §22).
+"""Offline unit tests for controlled and provenance-complete drafting.
 
-Fully offline and deterministic. The Step-9.3 LLM boundary is always
+The drafting LLM boundary is always
 mocked via engine.call_gemini: no live LLM calls, no network, no
 fixtures.
 
-Verifies:
-
-  - module surface: only private underscore helpers exist, no public
-    drafting API yet, no LLM/provider/network/engine imports (§21.26,
-    §21.27);
-  - the Step-9.2 gate: DEEP + REVIEW_REQUIRED/ALLOWED permits, every
-    other state refuses, no fallbacks (§20.3, §21.28);
-  - the controlled context: exact 12 top-level keys in exact order,
-    section/fact/arithmetic/preflight/deadline/requirement/evidence/
-    review/warning serialization exactly as §21.2–§21.16 pin it;
-  - forbidden context surfaces (§21.16);
-  - deterministic JSON encoding: indent=2, ensure_ascii=False, no
-    alphabetical sort, byte-for-byte identical for identical inputs
-    (§21.24);
-  - the six static prompt assets, the closed prompt-key mapping and the
-    base/workflow prompt content contracts (§21.17–§21.20);
-  - exact prompt assembly order with the BEGIN/END markers (§21.23);
-  - staging: no LLM call, no parser, no post-validation, no token
-    resolution, no integration (§21.29–§21.30).
-
-Tests may exercise private helpers directly (§21.27: private helper
-names are implementation-local, not external machine contracts).
+Coverage includes the retained deterministic §21 context contracts, the
+public gate/result-state behavior, the active §25 provenance-v1 prompt and
+strict parser, all 21 post-validation checks, the eight closed Python
+renderers, legacy-prose rejection, and the mandatory P0 regressions.
 
 Runnable with Python's standard library unittest only:
     python -m unittest tests/test_drafting_engine.py -v
@@ -512,11 +492,29 @@ def make_response_json(sections=None):
     return json.dumps({"sections": sections})
 
 
+def make_provenance_response_json(sections=None):
+    """Schema-valid §25 typed response for the ITC profile."""
+    if sections is None:
+        sections = [
+            {
+                "section_id": sid,
+                "blocks": [
+                    {
+                        "kind": "static",
+                        "template_id": "static.working_draft",
+                    }
+                ],
+            }
+            for sid in ITC_SECTION_IDS
+        ]
+    return json.dumps({"sections": sections})
+
+
 def run_draft(response=None, **overrides):
     """Call generate_specialist_draft with engine.call_gemini patched to
     return `response`. Returns (result, mocked_call)."""
     if response is None:
-        response = make_response_json()
+        response = make_provenance_response_json()
     defaults = dict(
         classification=make_classification(),
         extraction_result=make_extraction(),
@@ -575,6 +573,13 @@ def make_rich_validation(
 def engine_source():
     """Raw engine module source text for surface assertions."""
     return pathlib.Path(engine.__file__).read_text(encoding="utf-8")
+
+
+def check_by_id(result, check_id):
+    for item in result.checks:
+        if item.check_id == check_id:
+            return item
+    raise KeyError(check_id)
 
 
 # --- 1. module surface (items 1–10) -------------------------------------------
@@ -2500,29 +2505,46 @@ class StagingTests(unittest.TestCase):
     def test_specialist_draft_result_creation_present(self):
         self.assertIn("SpecialistDraftResult(", self.SOURCE)
 
-    def test_token_resolver_present(self):
-        for token in ("[[FACT", "[[ARITH", "[[DEADLINE]]", "[[HEARING]]"):
-            self.assertIn(token, self.SOURCE, token)
+    def test_closed_typed_dispatcher_present(self):
+        source = inspect.getsource(engine._render_provenance_block)
+        for block_type in (
+            "StaticDraftBlock",
+            "FactDraftBlock",
+            "ArithmeticDraftBlock",
+            "DeadlineDraftBlock",
+            "HearingDraftBlock",
+            "RequirementDraftBlock",
+            "EvidenceDraftBlock",
+            "ReviewDraftBlock",
+        ):
+            self.assertIn(block_type, source, block_type)
 
-    def test_only_interim_rendered_text_construction(self):
-        self.assertIn('rendered_text=""', self.SOURCE)
+    def test_final_rendered_text_construction_present(self):
+        source = inspect.getsource(
+            engine._post_validate_and_render_provenance
+        )
+        self.assertIn("rendered_text=rendered_text", source)
+        self.assertNotIn("template_text", source)
 
     def test_draft_post_validation_result_present(self):
         self.assertIn("DraftPostValidationResult", self.SOURCE)
 
-    def test_post_draft_check_ids_emitted(self):
-        for token in (
-            "draft.response",
-            "draft.sections",
-            "draft.tokens",
-            "draft.prose",
-        ):
-            self.assertIn(token, self.SOURCE, token)
+    def test_provenance_check_catalog_emitted(self):
+        self.assertEqual(len(engine._PROVENANCE_CHECK_IDS), 21)
+        self.assertEqual(
+            engine._PROVENANCE_CHECK_IDS[-2:],
+            (
+                "draft.rendering.completeness",
+                "draft.rendering.python_owned",
+            ),
+        )
 
-    def test_deterministic_regex_present(self):
-        self.assertIn("import re", self.SOURCE)
-        for token in ("re.compile", ".search(", ".sub("):
-            self.assertIn(token, self.SOURCE, token)
+    def test_no_lexical_primary_gate(self):
+        source = inspect.getsource(
+            engine._run_provenance_pre_render_validation
+        )
+        self.assertNotIn("re.", source)
+        self.assertNotIn(".lower(", source)
 
     def test_no_app_integration(self):
         self.assertNotIn("app.py", self.SOURCE)
@@ -2681,7 +2703,7 @@ class FailurePrecedenceTests(unittest.TestCase):
 
     def test_blocked_beats_prompt_refusal(self):
         with mock.patch.object(
-            engine, "_build_specialist_prompt"
+            engine, "_build_provenance_prompt"
         ) as builder:
             result, mocked = run_draft(
                 classification=make_classification(
@@ -2858,7 +2880,7 @@ class WorkflowUnavailableTests(unittest.TestCase):
 
     def test_prompt_builder_refusal_maps_to_workflow_unavailable(self):
         with mock.patch.object(
-            engine, "_build_specialist_prompt", return_value=None
+            engine, "_build_provenance_prompt", return_value=None
         ):
             result, mocked = run_draft()
         self.assertIs(
@@ -2873,7 +2895,9 @@ class WorkflowUnavailableTests(unittest.TestCase):
             empty_path = handle.name
         try:
             with mock.patch.object(
-                engine, "_BASE_PROMPT_PATH", pathlib.Path(empty_path)
+                engine,
+                "_PROVENANCE_BASE_PROMPT_PATH",
+                pathlib.Path(empty_path),
             ):
                 result, mocked = run_draft()
         finally:
@@ -3113,9 +3137,11 @@ class OneCallTests(unittest.TestCase):
 
     def test_call_receives_exact_build_prompt_output(self):
         inputs = make_permitted_inputs()
-        expected_prompt = engine._build_specialist_prompt(**inputs)
+        expected_prompt = engine._build_provenance_prompt(**inputs)
         with mock.patch.object(
-            engine, "call_gemini", return_value=make_response_json()
+            engine,
+            "call_gemini",
+            return_value=make_provenance_response_json(),
         ) as mocked:
             engine.generate_specialist_draft(**inputs)
         self.assertEqual(mocked.call_count, 1)
@@ -3252,734 +3278,6 @@ class ProviderFailureTests(unittest.TestCase):
 # --- 29. empty / invalid JSON responses (items 80–88) ---------------------------
 
 
-class EmptyInvalidJsonTests(unittest.TestCase):
-    MALFORMED_MESSAGE = (
-        "Specialist drafting response did not match the required schema."
-    )
-
-    def test_whitespace_only_malformed(self):
-        result, _ = run_draft(response="   \n\t  ")
-        self.assertIs(result.status, DraftGenerationStatus.FAILED)
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-        self.assertEqual(result.error_message, self.MALFORMED_MESSAGE)
-
-    def test_empty_string_malformed(self):
-        result, _ = run_draft(response="")
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_whitespace_malformed_sections_empty(self):
-        result, _ = run_draft(response="   ")
-        self.assertEqual(result.sections, [])
-
-    def test_prose_rejected(self):
-        result, _ = run_draft(response="not json at all")
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_markdown_fenced_json_rejected(self):
-        result, _ = run_draft(
-            response="```json\n" + make_response_json() + "\n```"
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_prose_wrapped_json_rejected(self):
-        result, _ = run_draft(
-            response="Here is your draft: " + make_response_json()
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_python_dict_repr_rejected(self):
-        result, _ = run_draft(
-            response="{'sections': [{'section_id': 'x', "
-            "'body_template': 'y'}]}"
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_truncated_json_rejected(self):
-        result, _ = run_draft(response='{"sections": [')
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_malformed_message_exact(self):
-        result, _ = run_draft(response="{bad json")
-        self.assertEqual(result.error_message, self.MALFORMED_MESSAGE)
-
-
-# --- 30. root schema (items 89–95) ----------------------------------------------
-
-
-class RootSchemaTests(unittest.TestCase):
-    def _malformed(self, response):
-        result, _ = run_draft(response=response)
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-        return result
-
-    def test_root_must_be_dict(self):
-        self._malformed('"just a string"')
-
-    def test_root_list_rejected(self):
-        self._malformed("[]")
-
-    def test_root_number_rejected(self):
-        self._malformed("42")
-
-    def test_exactly_one_root_key(self):
-        self._malformed('{"sections": [], "meta": {}}')
-
-    def test_missing_sections_key(self):
-        self._malformed("{}")
-
-    def test_extra_root_key_rejected(self):
-        self._malformed('{"notes": 1, "sections": []}')
-
-    def test_sections_must_be_list(self):
-        self._malformed('{"sections": {}}')
-
-    def test_sections_string_rejected(self):
-        self._malformed('{"sections": "x"}')
-
-
-# --- 31. section schema (items 96–101) ------------------------------------------
-
-
-class SectionSchemaTests(unittest.TestCase):
-    def _section_json(self, section):
-        return make_response_json(
-            sections=[
-                {
-                    "section_id": "sec73_itc.s1",
-                    "body_template": "One.",
-                },
-                {
-                    "section_id": "sec73_itc.s2",
-                    "body_template": "Two.",
-                },
-                section,
-            ]
-        )
-
-    def test_section_must_be_dict(self):
-        result, _ = run_draft(
-            response=self._section_json(["not", "a", "dict"])
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_exactly_two_section_keys(self):
-        result, _ = run_draft(
-            response=self._section_json(
-                {
-                    "section_id": "sec73_itc.s3",
-                    "body_template": "Three.",
-                    "extra": True,
-                }
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_missing_section_id_key(self):
-        result, _ = run_draft(
-            response=self._section_json({"body_template": "Three."})
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_missing_body_template_key(self):
-        result, _ = run_draft(
-            response=self._section_json(
-                {"section_id": "sec73_itc.s3"}
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_non_string_section_id(self):
-        result, _ = run_draft(
-            response=self._section_json(
-                {"section_id": 3, "body_template": "Three."}
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_non_string_body_template(self):
-        result, _ = run_draft(
-            response=self._section_json(
-                {"section_id": "sec73_itc.s3", "body_template": ["text"]}
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-
-# --- 32. section count / ID / order (items 102–109) -----------------------------
-
-
-class CountIdOrderTests(unittest.TestCase):
-    def test_too_few_sections_malformed(self):
-        result, _ = run_draft(
-            response=make_response_json(
-                sections=[
-                    {
-                        "section_id": "sec73_itc.s1",
-                        "body_template": "One.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s2",
-                        "body_template": "Two.",
-                    },
-                ]
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_too_many_sections_malformed(self):
-        sections = [
-            {"section_id": sid, "body_template": "Text."}
-            for sid in ITC_SECTION_IDS
-        ]
-        sections.append(
-            {"section_id": "sec73_itc.s4", "body_template": "Extra."}
-        )
-        result, _ = run_draft(
-            response=make_response_json(sections=sections)
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_wrong_section_id_malformed(self):
-        result, _ = run_draft(
-            response=make_response_json(
-                sections=[
-                    {
-                        "section_id": "sec73_itc.s2",
-                        "body_template": "A.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s1",
-                        "body_template": "B.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s3",
-                        "body_template": "C.",
-                    },
-                ]
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_case_mismatch_malformed(self):
-        result, _ = run_draft(
-            response=make_response_json(
-                sections=[
-                    {
-                        "section_id": "SEC73_ITC.S1",
-                        "body_template": "A.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s2",
-                        "body_template": "B.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s3",
-                        "body_template": "C.",
-                    },
-                ]
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_reordered_sections_rejected(self):
-        result, _ = run_draft(
-            response=make_response_json(
-                sections=[
-                    {
-                        "section_id": "sec73_itc.s2",
-                        "body_template": "B.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s3",
-                        "body_template": "C.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s1",
-                        "body_template": "A.",
-                    },
-                ]
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_duplicate_section_ids_rejected(self):
-        result, _ = run_draft(
-            response=make_response_json(
-                sections=[
-                    {
-                        "section_id": "sec73_itc.s1",
-                        "body_template": "A.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s1",
-                        "body_template": "B.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s3",
-                        "body_template": "C.",
-                    },
-                ]
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_profile_order_success(self):
-        result, _ = run_draft()
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
-        self.assertEqual(
-            [s.section_id for s in result.sections], ITC_SECTION_IDS
-        )
-
-    def test_section_id_comes_from_profile(self):
-        result, _ = run_draft()
-        profile = get_drafting_profile(ProceedingType.GST_SEC73_ITC)
-        self.assertEqual(
-            [s.section_id for s in result.sections],
-            [spec.section_id for spec in profile.sections],
-        )
-
-
-# --- 33. body normalization (items 110–115) -------------------------------------
-
-
-class BodyNormalizationTests(unittest.TestCase):
-    def _bodies(self, bodies):
-        return make_response_json(
-            sections=[
-                {"section_id": sid, "body_template": body}
-                for sid, body in zip(ITC_SECTION_IDS, bodies)
-            ]
-        )
-
-    def test_leading_trailing_whitespace_stripped(self):
-        result, _ = run_draft(
-            response=self._bodies(["  One.  ", "  Two.  ", "  Three.  "])
-        )
-        self.assertEqual(
-            [s.template_text for s in result.sections],
-            ["One.", "Two.", "Three."],
-        )
-
-    def test_internal_whitespace_preserved(self):
-        result, _ = run_draft(
-            response=self._bodies(
-                ["Line  one.", "Line\ttwo.", "Line  three."]
-            )
-        )
-        self.assertEqual(
-            [s.template_text for s in result.sections],
-            ["Line  one.", "Line\ttwo.", "Line  three."],
-        )
-
-    def test_newlines_inside_preserved(self):
-        result, _ = run_draft(
-            response=self._bodies(
-                ["One\nline.", "Two\nlines.", "Three\nlines."]
-            )
-        )
-        self.assertEqual(
-            result.sections[0].template_text, "One\nline."
-        )
-
-    def test_whitespace_only_body_malformed(self):
-        result, _ = run_draft(
-            response=self._bodies(["One.", "   ", "Three."])
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_empty_body_malformed(self):
-        result, _ = run_draft(
-            response=self._bodies(["One.", "", "Three."])
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-
-    def test_strip_applied_once_no_normalization_inside(self):
-        result, _ = run_draft(
-            response=self._bodies(["\t\n One \t\n", "Two.", "Three."])
-        )
-        self.assertEqual(result.sections[0].template_text, "One")
-
-
-# --- 34. parse-success result (items 116–128) -----------------------------------
-
-
-class SuccessResultTests(unittest.TestCase):
-    ITC_TITLES = [
-        "Working paper",
-        "ITC reconciliation table",
-        "Reviewable DRC-06 draft",
-    ]
-
-    def test_success_status(self):
-        result, _ = run_draft()
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
-
-    def test_success_failure_code_none(self):
-        result, _ = run_draft()
-        self.assertIsNone(result.failure_code)
-
-    def test_success_error_message_none(self):
-        result, _ = run_draft()
-        self.assertIsNone(result.error_message)
-
-    def test_success_eligibility_review_required_copied(self):
-        result, _ = run_draft(
-            validation_result=make_validation_result(
-                draft_eligibility=DraftEligibility.REVIEW_REQUIRED
-            )
-        )
-        self.assertIs(
-            result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED
-        )
-
-    def test_success_eligibility_allowed_copied(self):
-        result, _ = run_draft(
-            validation_result=make_validation_result(
-                draft_eligibility=DraftEligibility.ALLOWED
-            )
-        )
-        self.assertIs(result.draft_eligibility, DraftEligibility.ALLOWED)
-
-    def test_success_section_count_matches_profile(self):
-        result, _ = run_draft()
-        self.assertEqual(len(result.sections), len(ITC_SECTION_IDS))
-
-    def test_success_section_ids_from_profile(self):
-        result, _ = run_draft()
-        self.assertEqual(
-            [s.section_id for s in result.sections], ITC_SECTION_IDS
-        )
-
-    def test_success_titles_from_profile(self):
-        result, _ = run_draft()
-        self.assertEqual(
-            [s.title for s in result.sections], self.ITC_TITLES
-        )
-
-    def test_success_template_text_normalized(self):
-        result, _ = run_draft()
-        self.assertEqual(
-            [s.template_text for s in result.sections],
-            DEFAULT_RESPONSE_BODIES,
-        )
-
-    def test_success_rendered_text_matches_template(self):
-        result, _ = run_draft()
-        for section in result.sections:
-            self.assertEqual(section.rendered_text, section.template_text)
-
-    def test_success_post_validation_pass(self):
-        result, _ = run_draft()
-        self.assertIsNotNone(result.post_validation)
-        self.assertIs(
-            result.post_validation.overall_status, ValidationStatus.PASS
-        )
-        self.assertEqual(len(result.post_validation.checks), 14)
-
-    def test_success_metadata_copied(self):
-        validation = make_rich_validation()
-        result, _ = run_draft(validation_result=validation)
-        self.assertEqual(
-            result.evidence_checklist, validation.evidence_checklist
-        )
-        self.assertEqual(
-            result.review_requirements, validation.review_requirements
-        )
-
-    def test_success_sections_list_is_fresh(self):
-        first, _ = run_draft()
-        second, _ = run_draft()
-        self.assertIsNot(first.sections, second.sections)
-
-    def test_result_has_exactly_nine_fields(self):
-        self.assertEqual(
-            list(SpecialistDraftResult.__dataclass_fields__.keys()),
-            [
-                "status",
-                "draft_eligibility",
-                "sections",
-                "unresolved_requirements",
-                "evidence_checklist",
-                "review_requirements",
-                "post_validation",
-                "failure_code",
-                "error_message",
-            ],
-        )
-
-
-# --- 35. no partial success (items 129–131) -------------------------------------
-
-
-class NoPartialSuccessTests(unittest.TestCase):
-    def _one_bad_section(self, bad_section):
-        return make_response_json(
-            sections=[
-                {
-                    "section_id": "sec73_itc.s1",
-                    "body_template": "One.",
-                },
-                {
-                    "section_id": "sec73_itc.s2",
-                    "body_template": "Two.",
-                },
-                bad_section,
-            ]
-        )
-
-    def test_one_bad_section_fails_whole_result(self):
-        result, _ = run_draft(
-            response=self._one_bad_section(
-                {"section_id": "wrong.id", "body_template": "Three."}
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-        self.assertIs(result.status, DraftGenerationStatus.FAILED)
-
-    def test_one_bad_section_yields_no_sections(self):
-        result, _ = run_draft(
-            response=self._one_bad_section(
-                {"section_id": "wrong.id", "body_template": "Three."}
-            )
-        )
-        self.assertEqual(result.sections, [])
-
-    def test_non_dict_last_section_fails_whole_result(self):
-        result, _ = run_draft(
-            response=self._one_bad_section(["not", "a", "dict"])
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
-        )
-        self.assertEqual(result.sections, [])
-
-
-# --- 36. Step-9.3 vs Step-9.4 boundary (items 132–140) --------------------------
-
-
-class Step94BoundaryTests(unittest.TestCase):
-    """Step 9.4 boundary: unsupported/malformed surface now fails
-    post-validation rather than passing through (§23.11, §23.44)."""
-
-    def _run_unsafe_bodies(self, bodies):
-        return run_draft(
-            response=make_response_json(
-                sections=[
-                    {"section_id": sid, "body_template": body}
-                    for sid, body in zip(ITC_SECTION_IDS, bodies)
-                ]
-            )
-        )
-
-    def _assert_post_validation_failed(self, result):
-        self.assertIs(result.status, DraftGenerationStatus.FAILED)
-        self.assertIs(
-            result.failure_code, DraftFailureCode.POST_VALIDATION_FAILED
-        )
-        self.assertEqual(result.sections, [])
-        self.assertEqual(
-            result.error_message,
-            "Specialist draft failed deterministic post-generation validation.",
-        )
-        self.assertIs(
-            result.post_validation.overall_status, ValidationStatus.FAIL
-        )
-        self.assertEqual(len(result.post_validation.checks), 14)
-
-    def test_unknown_token_fails(self):
-        result, _ = self._run_unsafe_bodies(
-            ["Has [[BAD:TOKEN]].", "Two.", "Three."]
-        )
-        self._assert_post_validation_failed(result)
-
-    def test_unresolved_fact_token_fails(self):
-        result, _ = self._run_unsafe_bodies(
-            ["Refers [[FACT:F-999]].", "Two.", "Three."]
-        )
-        self._assert_post_validation_failed(result)
-
-    def test_invalid_arithmetic_index_fails(self):
-        result, _ = self._run_unsafe_bodies(
-            ["Uses [[ARITH:999]].", "Two.", "Three."]
-        )
-        self._assert_post_validation_failed(result)
-
-    def test_attached_word_fails(self):
-        result, _ = self._run_unsafe_bodies(
-            ["Please find the annexure attached.", "Two.", "Three."]
-        )
-        self._assert_post_validation_failed(result)
-
-    def test_urls_and_citations_fail(self):
-        result, _ = self._run_unsafe_bodies(
-            [
-                "See https://example.com/page and (2025) 1 SCC 100.",
-                "Two.",
-                "Three.",
-            ]
-        )
-        self._assert_post_validation_failed(result)
-
-    def test_rendered_text_populated_on_success(self):
-        result, _ = run_draft()
-        for section in result.sections:
-            self.assertEqual(section.rendered_text, section.template_text)
-
-    def test_post_validation_populated_on_success(self):
-        result, _ = run_draft()
-        self.assertIsNotNone(result.post_validation)
-
-    def test_draft_post_validation_result_in_engine(self):
-        self.assertIn("DraftPostValidationResult", engine_source())
-
-    def test_step_9_4_check_ids_in_engine(self):
-        source = engine_source()
-        for token in (
-            "draft.response",
-            "draft.sections",
-            "draft.tokens",
-            "draft.prose",
-        ):
-            self.assertIn(token, source, token)
-
-
-# --- 37. status / failure-code consistency (items 141–144) ----------------------
-
-
-class StatusConsistencyTests(unittest.TestCase):
-    def test_success_implies_no_failure_code_or_error(self):
-        result, _ = run_draft()
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
-        self.assertIsNone(result.failure_code)
-        self.assertIsNone(result.error_message)
-
-    def test_blocked_implies_blocked_failure_codes_only(self):
-        blocked_codes = {
-            DraftFailureCode.VALIDATION_REQUIRED,
-            DraftFailureCode.DRAFT_BLOCKED,
-            DraftFailureCode.WORKFLOW_UNAVAILABLE,
-        }
-        scenarios = [
-            run_draft(validation_result=None),
-            run_draft(
-                classification=make_classification(
-                    support_level=SupportLevel.TRIAGE_ONLY
-                )
-            ),
-            run_draft(
-                validation_result=make_validation_result(
-                    checks=[
-                        make_item(
-                            "generic.fail", ValidationStatus.FAIL
-                        )
-                    ]
-                )
-            ),
-        ]
-        with mock.patch.object(engine, "get_workflow", return_value=None):
-            scenarios.append(run_draft())
-        for result, _ in scenarios:
-            self.assertIs(result.status, DraftGenerationStatus.BLOCKED)
-            self.assertIn(result.failure_code, blocked_codes)
-
-    def test_failed_implies_failed_failure_codes_only(self):
-        failed_codes = {
-            DraftFailureCode.LLM_ERROR,
-            DraftFailureCode.MALFORMED_RESPONSE,
-        }
-        for response in (
-            "Error: provider exploded",
-            "   ",
-            "{bad json",
-            make_response_json(
-                sections=[
-                    {
-                        "section_id": "sec73_itc.s1",
-                        "body_template": "A.",
-                    },
-                    {
-                        "section_id": "sec73_itc.s2",
-                        "body_template": "B.",
-                    },
-                    {"section_id": "wrong", "body_template": "C."},
-                ]
-            ),
-            {"sections": []},
-        ):
-            result, _ = run_draft(response=response)
-            self.assertIs(result.status, DraftGenerationStatus.FAILED)
-            self.assertIn(result.failure_code, failed_codes)
-
-    def test_post_validation_failed_produced(self):
-        self.assertIn("POST_VALIDATION_FAILED", engine_source())
-        result, _ = run_draft(
-            response=make_response_json(
-                sections=[
-                    {
-                        "section_id": "sec73_itc.s1",
-                        "body_template": "Has [[BAD:TOKEN]].",
-                    },
-                    {"section_id": "sec73_itc.s2", "body_template": "Two."},
-                    {"section_id": "sec73_itc.s3", "body_template": "Three."},
-                ]
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.POST_VALIDATION_FAILED
-        )
-        self.assertIs(result.status, DraftGenerationStatus.FAILED)
-        self.assertEqual(result.sections, [])
-        self.assertIs(
-            result.post_validation.overall_status, ValidationStatus.FAIL
-        )
-
-
 # --- 38. purity / scope (items 145–160) -----------------------------------------
 
 
@@ -4008,10 +3306,12 @@ class PurityScopeTests(unittest.TestCase):
     def test_no_notice_prompt_reference(self):
         self.assertNotIn("notice_prompt", engine_source())
 
-    def test_regex_implementation_present(self):
-        source = engine_source()
-        self.assertIn("import re", source)
-        self.assertIn("re.compile", source)
+    def test_provenance_validation_has_no_phrase_classifier(self):
+        source = inspect.getsource(
+            engine._run_provenance_pre_render_validation
+        )
+        self.assertNotIn("re.", source)
+        self.assertNotIn(".lower(", source)
 
     def test_no_leakage_scanners(self):
         self.assertNotIn("leakage", engine_source().lower())
@@ -4088,1125 +3388,6 @@ class PurityScopeTests(unittest.TestCase):
     def test_step_9_4_symbols_in_engine(self):
         source = engine_source()
         self.assertIn("DraftPostValidationResult", source)
-
-
-# --- 39. Phase 2 Step 9.4: post-validation + resolution + rendering ------------
-# (§23, authoritative)
-
-
-def make_interim_sections(bodies):
-    """Interim DraftSections (rendered_text == "") for the ITC profile."""
-    profile = get_drafting_profile(ProceedingType.GST_SEC73_ITC)
-    return [
-        DraftSection(
-            section_id=spec.section_id,
-            title=spec.title,
-            template_text=body,
-            rendered_text="",
-        )
-        for spec, body in zip(profile.sections, bodies)
-    ]
-
-
-def check_by_id(result, check_id):
-    for item in result.checks:
-        if item.check_id == check_id:
-            return item
-    raise KeyError(check_id)
-
-
-def run_post_validation(bodies, **overrides):
-    """engine._run_post_validation over ITC interim sections built from
-    three bodies."""
-    defaults = dict(
-        drafting_profile=get_drafting_profile(
-            ProceedingType.GST_SEC73_ITC
-        ),
-        extraction_result=make_extraction(),
-        arithmetic_results=[],
-        validation_result=make_validation_result(),
-        preflight_result=make_preflight(),
-        deadline_result=None,
-    )
-    defaults.update(overrides)
-    return engine._run_post_validation(
-        make_interim_sections(bodies), **defaults
-    )
-
-
-def make_step94_happy_inputs(**overrides):
-    """A fully resolvable permitted input set for end-to-end Step-9.4."""
-    fact = make_fact(
-        fact_id="F-001",
-        status=FactStatus.CONFIRMED,
-        source_text="The taxpayer claimed input tax credit.",
-        source_page=2,
-        allowed_in_draft=DraftPermission.YES,
-    )
-    arith = make_arithmetic(
-        calculation_type=ArithmeticCalculationType.ITC_DIFFERENCE,
-        status=ArithmeticStatus.PASS,
-        result=Decimal("888.80"),
-        formula="left - right",
-        currency="INR",
-        allowed_in_draft=DraftPermission.YES,
-    )
-    deadline = make_deadline(
-        notice_date=date(2025, 3, 10),
-        service_date=date(2025, 3, 12),
-        response_period_days=30,
-        response_deadline=date(2025, 4, 11),
-        deadline_confidence=DeadlineConfidence.CONFIRMED,
-        deadline_status=DeadlineStatus.UPCOMING,
-        days_remaining=20,
-        hearing_date=date(2025, 5, 1),
-        hearing_status=HearingStatus.UPCOMING,
-        portal_verification_required=False,
-        notes=["note a"],
-    )
-    inputs = dict(
-        classification=make_classification(),
-        extraction_result=make_extraction(facts=[fact]),
-        preflight_result=make_preflight(),
-        arithmetic_results=[arith],
-        validation_result=make_validation_result(
-            draft_eligibility=DraftEligibility.REVIEW_REQUIRED,
-            checks=checks_for_arithmetic([arith]),
-        ),
-        deadline_result=deadline,
-    )
-    inputs.update(overrides)
-    return inputs
-
-
-HAPPY_BODIES = [
-    "Working paper [[FACT:F-001]].",
-    "Table [[ARITH:1]]",
-    "Draft [[DEADLINE]] and [[HEARING]]",
-]
-
-
-def render_happy_sections(bodies=HAPPY_BODIES):
-    inputs = make_step94_happy_inputs()
-    return engine._render_sections(
-        make_interim_sections(bodies),
-        inputs["extraction_result"],
-        inputs["arithmetic_results"],
-        inputs["validation_result"],
-        inputs["deadline_result"],
-        inputs["preflight_result"],
-    )
-
-
-class PostValidationCheckOrderTests(unittest.TestCase):
-    """The exact fourteen §23.3 checks, fixed order, PASS/FAIL only."""
-
-    def test_exactly_fourteen_checks(self):
-        result = run_post_validation(["One.", "Two.", "Three."])
-        self.assertEqual(len(result.checks), 14)
-
-    def test_exact_check_id_order(self):
-        result = run_post_validation(["One.", "Two.", "Three."])
-        self.assertEqual(
-            [item.check_id for item in result.checks],
-            list(engine._POST_VALIDATION_CHECK_IDS),
-        )
-
-    def test_vacuous_pass_overall_status(self):
-        result = run_post_validation(["One.", "Two.", "Three."])
-        self.assertIs(result.overall_status, ValidationStatus.PASS)
-
-    def test_all_statuses_are_pass_or_fail(self):
-        result = run_post_validation(["One.", "Two.", "Three."])
-        for item in result.checks:
-            self.assertIn(
-                item.status,
-                (ValidationStatus.PASS, ValidationStatus.FAIL),
-            )
-
-    def test_no_warning_status_anywhere(self):
-        result = run_post_validation(["One.", "Two.", "Three."])
-        for item in result.checks:
-            self.assertIsNot(item.status, ValidationStatus.WARNING)
-
-    def test_pass_messages_match_catalog(self):
-        result = run_post_validation(["One.", "Two.", "Three."])
-        for item in result.checks:
-            self.assertIs(item.status, ValidationStatus.PASS)
-            self.assertEqual(
-                item.message,
-                engine._POST_VALIDATION_MESSAGES[item.check_id][0],
-            )
-
-    def test_schema_fail_message(self):
-        result = run_post_validation(
-            ["One.", "Two.", "Three."],
-            drafting_profile=get_drafting_profile(
-                ProceedingType.GST_SEC73_ITC
-            ),
-        )
-        bad = engine._run_post_validation(
-            ["not", "a", "list"],
-            get_drafting_profile(ProceedingType.GST_SEC73_ITC),
-            make_extraction(),
-            [],
-            make_validation_result(),
-            make_preflight(),
-            None,
-        )
-        schema_item = check_by_id(bad, "draft.response.schema")
-        self.assertIs(schema_item.status, ValidationStatus.FAIL)
-        self.assertEqual(
-            schema_item.message,
-            "Draft response schema is not structurally valid.",
-        )
-
-    def test_structural_checks_have_no_related_ids(self):
-        result = run_post_validation(["One.", "Two.", "Three."])
-        for check_id in (
-            "draft.response.schema",
-            "draft.sections.count",
-            "draft.sections.ids",
-            "draft.sections.order",
-            "draft.sections.nonempty",
-            "draft.tokens.syntax",
-        ):
-            item = check_by_id(result, check_id)
-            self.assertEqual(item.related_fact_ids, [])
-            self.assertEqual(item.related_calculation_types, [])
-
-
-class PostValidationStructuralTests(unittest.TestCase):
-    """Checks 1–5: schema / count / ids / order / nonempty (§23.6)."""
-
-    def _pv(self, sections):
-        return engine._run_post_validation(
-            sections,
-            get_drafting_profile(ProceedingType.GST_SEC73_ITC),
-            make_extraction(),
-            [],
-            make_validation_result(),
-            make_preflight(),
-            None,
-        )
-
-    def test_schema_pass(self):
-        result = self._pv(make_interim_sections(["One.", "Two.", "Three."]))
-        self.assertIs(
-            check_by_id(result, "draft.response.schema").status,
-            ValidationStatus.PASS,
-        )
-
-    def test_schema_fail_non_draft_section(self):
-        sections = make_interim_sections(["One.", "Two.", "Three."])
-        sections[0] = "not a DraftSection"
-        self.assertIs(
-            check_by_id(
-                self._pv(sections), "draft.response.schema"
-            ).status,
-            ValidationStatus.FAIL,
-        )
-
-    def test_count_pass(self):
-        result = self._pv(make_interim_sections(["One.", "Two.", "Three."]))
-        self.assertIs(
-            check_by_id(result, "draft.sections.count").status,
-            ValidationStatus.PASS,
-        )
-
-    def test_count_fail(self):
-        result = self._pv(
-            make_interim_sections(["One.", "Two.", "Three."])[:2]
-        )
-        self.assertIs(
-            check_by_id(result, "draft.sections.count").status,
-            ValidationStatus.FAIL,
-        )
-
-    def test_ids_pass(self):
-        result = self._pv(make_interim_sections(["One.", "Two.", "Three."]))
-        self.assertIs(
-            check_by_id(result, "draft.sections.ids").status,
-            ValidationStatus.PASS,
-        )
-
-    def test_ids_fail_wrong_id(self):
-        sections = make_interim_sections(["One.", "Two.", "Three."])
-        sections[1] = DraftSection(
-            section_id="wrong.id", title="x", template_text="Two.", rendered_text=""
-        )
-        self.assertIs(
-            check_by_id(self._pv(sections), "draft.sections.ids").status,
-            ValidationStatus.FAIL,
-        )
-
-    def test_order_fail_swapped(self):
-        profile = get_drafting_profile(ProceedingType.GST_SEC73_ITC)
-        ids = [spec.section_id for spec in profile.sections]
-        swapped = [ids[0], ids[2], ids[1]]
-        sections = [
-            DraftSection(section_id=sid, title="t", template_text="x", rendered_text="")
-            for sid in swapped
-        ]
-        self.assertIs(
-            check_by_id(self._pv(sections), "draft.sections.order").status,
-            ValidationStatus.FAIL,
-        )
-
-    def test_nonempty_pass(self):
-        result = self._pv(make_interim_sections(["One.", "Two.", "Three."]))
-        self.assertIs(
-            check_by_id(result, "draft.sections.nonempty").status,
-            ValidationStatus.PASS,
-        )
-
-    def test_nonempty_fail_blank(self):
-        sections = make_interim_sections(["One.", "   ", "Three."])
-        self.assertIs(
-            check_by_id(self._pv(sections), "draft.sections.nonempty").status,
-            ValidationStatus.FAIL,
-        )
-
-
-class TokenSyntaxTests(unittest.TestCase):
-    """Check 6: closed token syntax + boundary-safe + lookalike (§23.11)."""
-
-    def _syntax(self, body):
-        result = run_post_validation([body, "Two.", "Three."])
-        return check_by_id(result, "draft.tokens.syntax").status
-
-    def test_fact_token_valid(self):
-        self.assertIs(self._syntax("[[FACT:F-001]]"), ValidationStatus.PASS)
-
-    def test_arith_token_valid(self):
-        self.assertIs(self._syntax("[[ARITH:1]]"), ValidationStatus.PASS)
-
-    def test_deadline_token_valid(self):
-        self.assertIs(self._syntax("[[DEADLINE]]"), ValidationStatus.PASS)
-
-    def test_hearing_token_valid(self):
-        self.assertIs(self._syntax("[[HEARING]]"), ValidationStatus.PASS)
-
-    def test_prose_around_tokens_valid(self):
-        self.assertIs(
-            self._syntax("before [[FACT:F-001]] and [[ARITH:1]] after"),
-            ValidationStatus.PASS,
-        )
-
-    def test_adjacent_tokens_valid(self):
-        self.assertIs(
-            self._syntax("[[FACT:F-001]][[DEADLINE]]"),
-            ValidationStatus.PASS,
-        )
-
-    def test_fact_id_allowed_chars_valid(self):
-        self.assertIs(
-            self._syntax("[[FACT:A.B-C_D.0]]"), ValidationStatus.PASS
-        )
-
-    def test_empty_text_vacuous_pass(self):
-        result = run_post_validation(["", "Two.", "Three."])
-        # empty first section also fails nonempty; syntax still passes.
-        self.assertIs(
-            check_by_id(result, "draft.tokens.syntax").status,
-            ValidationStatus.PASS,
-        )
-
-    def test_unknown_token_fails(self):
-        self.assertIs(self._syntax("[[BAD:TOKEN]]"), ValidationStatus.FAIL)
-
-    def test_over_run_three_open_fails(self):
-        self.assertIs(
-            self._syntax("[[[FACT:F-001]]]"), ValidationStatus.FAIL
-        )
-
-    def test_over_run_three_close_fails(self):
-        self.assertIs(
-            self._syntax("[[FACT:F-001]]]"), ValidationStatus.FAIL
-        )
-
-    def test_single_bracket_fact_lookalike_fails(self):
-        self.assertIs(self._syntax("[FACT:F-001]"), ValidationStatus.FAIL)
-
-    def test_single_bracket_arith_lookalike_fails(self):
-        self.assertIs(self._syntax("[ARITH:1]"), ValidationStatus.FAIL)
-
-    def test_single_bracket_deadline_lookalike_fails(self):
-        self.assertIs(self._syntax("[DEADLINE]"), ValidationStatus.FAIL)
-
-    def test_single_bracket_hearing_lookalike_fails(self):
-        self.assertIs(self._syntax("[HEARING]"), ValidationStatus.FAIL)
-
-    def test_lowercase_lookalike_fails(self):
-        self.assertIs(self._syntax("[fact:F-001]"), ValidationStatus.FAIL)
-
-    def test_empty_fact_id_fails(self):
-        self.assertIs(self._syntax("[[FACT:]]"), ValidationStatus.FAIL)
-
-    def test_arith_zero_fails(self):
-        self.assertIs(self._syntax("[[ARITH:0]]"), ValidationStatus.FAIL)
-
-    def test_arith_leading_zero_fails(self):
-        self.assertIs(self._syntax("[[ARITH:01]]"), ValidationStatus.FAIL)
-
-    def test_leftover_double_open_fails(self):
-        self.assertIs(self._syntax("unclosed [[ text"), ValidationStatus.FAIL)
-
-
-class FactResolutionTests(unittest.TestCase):
-    """Check 7: exactly one eligible FACT match (§23.13)."""
-
-    def _resolution(self, body, facts):
-        result = run_post_validation(
-            [body, "Two.", "Three."],
-            extraction_result=make_extraction(facts=facts),
-        )
-        return check_by_id(result, "draft.tokens.fact_resolution").status
-
-    def test_resolves_single_eligible(self):
-        facts = [make_fact(fact_id="F-001", allowed_in_draft=DraftPermission.YES)]
-        self.assertIs(
-            self._resolution("[[FACT:F-001]]", facts), ValidationStatus.PASS
-        )
-
-    def test_no_match_fails(self):
-        self.assertIs(
-            self._resolution("[[FACT:F-999]]", []), ValidationStatus.FAIL
-        )
-
-    def test_two_matches_ambiguous_fails(self):
-        facts = [
-            make_fact(fact_id="F-001"),
-            make_fact(fact_id="F-001"),
-        ]
-        self.assertIs(
-            self._resolution("[[FACT:F-001]]", facts), ValidationStatus.FAIL
-        )
-
-    def test_non_eligible_ignored_fails(self):
-        facts = [
-            make_fact(fact_id="F-001", allowed_in_draft=DraftPermission.NO)
-        ]
-        self.assertIs(
-            self._resolution("[[FACT:F-001]]", facts), ValidationStatus.FAIL
-        )
-
-    def test_case_sensitive_id(self):
-        facts = [make_fact(fact_id="F-001")]
-        self.assertIs(
-            self._resolution("[[FACT:f-001]]", facts), ValidationStatus.FAIL
-        )
-
-    def test_conditional_eligible_resolves(self):
-        facts = [
-            make_fact(
-                fact_id="F-001",
-                status=FactStatus.ALLEGED,
-                allowed_in_draft=DraftPermission.CONDITIONAL,
-            )
-        ]
-        self.assertIs(
-            self._resolution("[[FACT:F-001]]", facts), ValidationStatus.PASS
-        )
-
-    def test_related_fact_ids_deduplicated(self):
-        facts = [make_fact(fact_id="F-001")]
-        result = run_post_validation(
-            ["[[FACT:F-001]] [[FACT:F-001]]", "Two.", "Three."],
-            extraction_result=make_extraction(facts=facts),
-        )
-        item = check_by_id(result, "draft.tokens.fact_resolution")
-        self.assertEqual(item.related_fact_ids, ["F-001"])
-
-
-class FactPermissionTests(unittest.TestCase):
-    """Check 8: CONFIRMED+YES / ALLEGED+CONDITIONAL only (§23.14)."""
-
-    def _permission(self, status, allowed):
-        facts = [
-            make_fact(
-                fact_id="F-001", status=status, allowed_in_draft=allowed
-            )
-        ]
-        result = run_post_validation(
-            ["[[FACT:F-001]]", "Two.", "Three."],
-            extraction_result=make_extraction(facts=facts),
-        )
-        return check_by_id(result, "draft.tokens.fact_permission").status
-
-    def test_confirmed_yes_pass(self):
-        self.assertIs(
-            self._permission(FactStatus.CONFIRMED, DraftPermission.YES),
-            ValidationStatus.PASS,
-        )
-
-    def test_alleged_conditional_pass(self):
-        self.assertIs(
-            self._permission(FactStatus.ALLEGED, DraftPermission.CONDITIONAL),
-            ValidationStatus.PASS,
-        )
-
-    def test_confirmed_conditional_fails(self):
-        self.assertIs(
-            self._permission(FactStatus.CONFIRMED, DraftPermission.CONDITIONAL),
-            ValidationStatus.FAIL,
-        )
-
-    def test_alleged_yes_fails(self):
-        self.assertIs(
-            self._permission(FactStatus.ALLEGED, DraftPermission.YES),
-            ValidationStatus.FAIL,
-        )
-
-    def test_unknown_status_fails(self):
-        self.assertIs(
-            self._permission(FactStatus.UNKNOWN, DraftPermission.YES),
-            ValidationStatus.FAIL,
-        )
-
-
-class ArithmeticResolutionTests(unittest.TestCase):
-    """Check 9: approved deterministic arithmetic only (§23.16)."""
-
-    def _resolution(self, token, arithmetic, checks):
-        result = run_post_validation(
-            [token, "Two.", "Three."],
-            arithmetic_results=arithmetic,
-            validation_result=make_validation_result(checks=checks),
-        )
-        return check_by_id(result, "draft.tokens.arithmetic_resolution").status
-
-    def test_in_range_pass(self):
-        arith = [make_arithmetic(status=ArithmeticStatus.PASS)]
-        self.assertIs(
-            self._resolution("[[ARITH:1]]", arith, checks_for_arithmetic(arith)),
-            ValidationStatus.PASS,
-        )
-
-    def test_mismatch_status_pass(self):
-        arith = [make_arithmetic(status=ArithmeticStatus.MISMATCH)]
-        self.assertIs(
-            self._resolution("[[ARITH:1]]", arith, checks_for_arithmetic(arith)),
-            ValidationStatus.PASS,
-        )
-
-    def test_insufficient_data_fails(self):
-        arith = [make_arithmetic(status=ArithmeticStatus.INSUFFICIENT_DATA)]
-        self.assertIs(
-            self._resolution("[[ARITH:1]]", arith, checks_for_arithmetic(arith)),
-            ValidationStatus.FAIL,
-        )
-
-    def test_result_none_fails(self):
-        arith = [make_arithmetic(result=None)]
-        self.assertIs(
-            self._resolution("[[ARITH:1]]", arith, checks_for_arithmetic(arith)),
-            ValidationStatus.FAIL,
-        )
-
-    def test_out_of_range_fails(self):
-        arith = [make_arithmetic()]
-        self.assertIs(
-            self._resolution("[[ARITH:999]]", arith, checks_for_arithmetic(arith)),
-            ValidationStatus.FAIL,
-        )
-
-    def test_missing_structural_check_fails(self):
-        arith = [make_arithmetic()]
-        checks = structural_checks_for(1)[:4]  # drop one
-        self.assertIs(
-            self._resolution("[[ARITH:1]]", arith, checks),
-            ValidationStatus.FAIL,
-        )
-
-    def test_related_calculation_types_deduplicated(self):
-        arith = [make_arithmetic()]
-        result = run_post_validation(
-            ["[[ARITH:1]] [[ARITH:1]]", "Two.", "Three."],
-            arithmetic_results=arith,
-            validation_result=make_validation_result(
-                checks=checks_for_arithmetic(arith)
-            ),
-        )
-        item = check_by_id(result, "draft.tokens.arithmetic_resolution")
-        self.assertEqual(
-            item.related_calculation_types,
-            [ArithmeticCalculationType.ITC_DIFFERENCE],
-        )
-
-
-class DeadlineResolutionTests(unittest.TestCase):
-    """Check 10: DEADLINE token vs supplied deadline result (§23.18)."""
-
-    def test_token_with_result_pass(self):
-        result = run_post_validation(
-            ["[[DEADLINE]]", "Two.", "Three."], deadline_result=make_deadline()
-        )
-        self.assertIs(
-            check_by_id(result, "draft.tokens.deadline_resolution").status,
-            ValidationStatus.PASS,
-        )
-
-    def test_token_without_result_fails(self):
-        result = run_post_validation(["[[DEADLINE]]", "Two.", "Three."])
-        self.assertIs(
-            check_by_id(result, "draft.tokens.deadline_resolution").status,
-            ValidationStatus.FAIL,
-        )
-
-    def test_no_token_without_result_pass(self):
-        result = run_post_validation(["One.", "Two.", "Three."])
-        self.assertIs(
-            check_by_id(result, "draft.tokens.deadline_resolution").status,
-            ValidationStatus.PASS,
-        )
-
-    def test_no_token_with_result_pass(self):
-        result = run_post_validation(
-            ["One.", "Two.", "Three."], deadline_result=make_deadline()
-        )
-        self.assertIs(
-            check_by_id(result, "draft.tokens.deadline_resolution").status,
-            ValidationStatus.PASS,
-        )
-
-
-class HearingResolutionTests(unittest.TestCase):
-    """Check 11: HEARING token vs supplied hearing information (§23.19)."""
-
-    def _status(self, deadline):
-        result = run_post_validation(
-            ["[[HEARING]]", "Two.", "Three."], deadline_result=deadline
-        )
-        return check_by_id(result, "draft.tokens.hearing_resolution").status
-
-    def test_upcoming_pass(self):
-        self.assertIs(
-            self._status(
-                make_deadline(
-                    hearing_date=date(2025, 5, 1),
-                    hearing_status=HearingStatus.UPCOMING,
-                )
-            ),
-            ValidationStatus.PASS,
-        )
-
-    def test_today_pass(self):
-        self.assertIs(
-            self._status(
-                make_deadline(
-                    hearing_date=date(2025, 5, 1),
-                    hearing_status=HearingStatus.TODAY,
-                )
-            ),
-            ValidationStatus.PASS,
-        )
-
-    def test_passed_pass(self):
-        self.assertIs(
-            self._status(
-                make_deadline(
-                    hearing_date=date(2025, 5, 1),
-                    hearing_status=HearingStatus.PASSED,
-                )
-            ),
-            ValidationStatus.PASS,
-        )
-
-    def test_no_deadline_fails(self):
-        self.assertIs(self._status(None), ValidationStatus.FAIL)
-
-    def test_no_hearing_date_fails(self):
-        self.assertIs(
-            self._status(
-                make_deadline(
-                    hearing_date=None, hearing_status=HearingStatus.UPCOMING
-                )
-            ),
-            ValidationStatus.FAIL,
-        )
-
-    def test_not_scheduled_fails(self):
-        self.assertIs(
-            self._status(
-                make_deadline(
-                    hearing_date=date(2025, 5, 1),
-                    hearing_status=HearingStatus.NOT_SCHEDULED,
-                )
-            ),
-            ValidationStatus.FAIL,
-        )
-
-
-class RawFactLiteralTests(unittest.TestCase):
-    """Check 12: raw-literal leakage barrier (§23.20–§23.30)."""
-
-    def _raw(self, body, **overrides):
-        result = run_post_validation([body, "Two.", "Three."], **overrides)
-        return check_by_id(result, "draft.prose.raw_fact_literal").status
-
-    def test_gstin_fails(self):
-        self.assertIs(self._raw("GSTIN 27ABCDE1234F1Z5."), ValidationStatus.FAIL)
-
-    def test_rupee_symbol_fails(self):
-        self.assertIs(self._raw("Amount ₹ 12,34,567.00 due."), ValidationStatus.FAIL)
-
-    def test_inr_word_fails(self):
-        self.assertIs(self._raw("Amount INR 12,34,567 due."), ValidationStatus.FAIL)
-
-    def test_percentage_fails(self):
-        self.assertIs(self._raw("Rate is 18%."), ValidationStatus.FAIL)
-
-    def test_numeric_date_fails(self):
-        self.assertIs(self._raw("Due by 31/03/2025."), ValidationStatus.FAIL)
-
-    def test_iso_date_fails(self):
-        self.assertIs(self._raw("Due by 2025-03-31."), ValidationStatus.FAIL)
-
-    def test_textual_date_fails(self):
-        self.assertIs(self._raw("Due by 15 April 2025."), ValidationStatus.FAIL)
-
-    def test_rfn_din_fails(self):
-        self.assertIs(
-            self._raw("Reference RFN No. ABC1234567."), ValidationStatus.FAIL
-        )
-
-    def test_benign_pass(self):
-        self.assertIs(
-            self._raw("The taxpayer responded on time."), ValidationStatus.PASS
-        )
-
-    def test_exact_source_copy_fails_and_ids(self):
-        fact = make_fact(
-            fact_id="F-001",
-            source_text="The notice demands payment of the outstanding tax.",
-            allowed_in_draft=DraftPermission.YES,
-        )
-        result = run_post_validation(
-            [
-                "The notice demands payment of the outstanding tax.",
-                "Two.",
-                "Three.",
-            ],
-            extraction_result=make_extraction(facts=[fact]),
-        )
-        item = check_by_id(result, "draft.prose.raw_fact_literal")
-        self.assertIs(item.status, ValidationStatus.FAIL)
-        self.assertEqual(item.related_fact_ids, ["F-001"])
-
-    def test_short_source_copy_ignored(self):
-        fact = make_fact(
-            fact_id="F-001",
-            source_text="Short text.",
-            allowed_in_draft=DraftPermission.YES,
-        )
-        result = run_post_validation(
-            ["Short text.", "Two.", "Three."],
-            extraction_result=make_extraction(facts=[fact]),
-        )
-        self.assertIs(
-            check_by_id(result, "draft.prose.raw_fact_literal").status,
-            ValidationStatus.PASS,
-        )
-
-    def test_non_eligible_source_ignored(self):
-        fact = make_fact(
-            fact_id="F-001",
-            source_text="The notice demands payment of the outstanding tax.",
-            allowed_in_draft=DraftPermission.NO,
-        )
-        result = run_post_validation(
-            [
-                "The notice demands payment of the outstanding tax.",
-                "Two.",
-                "Three.",
-            ],
-            extraction_result=make_extraction(facts=[fact]),
-        )
-        self.assertIs(
-            check_by_id(result, "draft.prose.raw_fact_literal").status,
-            ValidationStatus.PASS,
-        )
-
-
-class EvidencePresenceTests(unittest.TestCase):
-    """Check 13: prohibited evidence-presence language (§23.31)."""
-
-    def _evidence(self, body):
-        result = run_post_validation([body, "Two.", "Three."])
-        return check_by_id(
-            result, "draft.prose.evidence_presence_language"
-        ).status
-
-    def test_attached_fails(self):
-        self.assertIs(self._evidence("Document is attached."), ValidationStatus.FAIL)
-
-    def test_enclosed_fails(self):
-        self.assertIs(self._evidence("Enclosed please find."), ValidationStatus.FAIL)
-
-    def test_annexed_fails(self):
-        self.assertIs(self._evidence("Annexed to this reply."), ValidationStatus.FAIL)
-
-    def test_submitted_herewith_fails(self):
-        self.assertIs(
-            self._evidence("Submitted herewith."), ValidationStatus.FAIL
-        )
-
-    def test_we_have_enclosed_fails(self):
-        self.assertIs(
-            self._evidence("We have enclosed copies."), ValidationStatus.FAIL
-        )
-
-    def test_we_attach_fails(self):
-        self.assertIs(
-            self._evidence("We attach the ledger."), ValidationStatus.FAIL
-        )
-
-    def test_benign_pass(self):
-        self.assertIs(
-            self._evidence("The records are summarized."), ValidationStatus.PASS
-        )
-
-
-class CitationSurfaceTests(unittest.TestCase):
-    """Check 14: prohibited external-citation surface (§23.32–§23.35)."""
-
-    def _citation(self, body):
-        result = run_post_validation([body, "Two.", "Three."])
-        return check_by_id(
-            result, "draft.prose.external_citation_surface"
-        ).status
-
-    def test_https_url_fails(self):
-        self.assertIs(
-            self._citation("See https://example.com/page."),
-            ValidationStatus.FAIL,
-        )
-
-    def test_www_fails(self):
-        self.assertIs(
-            self._citation("See www.example.com."), ValidationStatus.FAIL
-        )
-
-    def test_case_name_fails(self):
-        self.assertIs(
-            self._citation("ABC Pvt Ltd v. State of Gujarat."),
-            ValidationStatus.FAIL,
-        )
-
-    def test_lowercase_case_name_pass(self):
-        self.assertIs(
-            self._citation("the state versus the taxpayer."),
-            ValidationStatus.PASS,
-        )
-
-    def test_reporter_air_fails(self):
-        self.assertIs(self._citation("AIR 2025 SC 123."), ValidationStatus.FAIL)
-
-    def test_reporter_year_paren_fails(self):
-        self.assertIs(
-            self._citation("2025 (1) SCC 100."), ValidationStatus.FAIL
-        )
-
-    def test_reporter_paren_year_fails(self):
-        self.assertIs(
-            self._citation("(2025) 1 GSTL 45."), ValidationStatus.FAIL
-        )
-
-    def test_reporter_insc_fails(self):
-        self.assertIs(self._citation("2025 INSC 500."), ValidationStatus.FAIL)
-
-    def test_reporter_scc_online_fails(self):
-        self.assertIs(
-            self._citation("2025 SCC OnLine SC 1234."), ValidationStatus.FAIL
-        )
-
-    def test_numeric_footnote_fails(self):
-        self.assertIs(self._citation("See note[1]."), ValidationStatus.FAIL)
-
-    def test_benign_pass(self):
-        self.assertIs(
-            self._citation("The provisions are discussed."),
-            ValidationStatus.PASS,
-        )
-
-
-class RenderingTests(unittest.TestCase):
-    """Python renderers + single-pass replacement (§23.39–§23.43)."""
-
-    def test_fact_confirmed_yes_rendered(self):
-        sections = render_happy_sections()
-        self.assertEqual(
-            sections[0].rendered_text,
-            'Working paper The notice records: "The taxpayer claimed input tax credit." (notice p. 2).',
-        )
-
-    def test_fact_alleged_conditional_rendered(self):
-        fact = make_fact(
-            fact_id="F-001",
-            status=FactStatus.ALLEGED,
-            source_text="The department alleges a shortfall.",
-            allowed_in_draft=DraftPermission.CONDITIONAL,
-        )
-        inputs = make_step94_happy_inputs(
-            extraction_result=make_extraction(facts=[fact])
-        )
-        sections = engine._render_sections(
-            make_interim_sections(["[[FACT:F-001]]", "Two.", "Three."]),
-            inputs["extraction_result"],
-            inputs["arithmetic_results"],
-            inputs["validation_result"],
-            inputs["deadline_result"],
-            inputs["preflight_result"],
-        )
-        self.assertEqual(
-            sections[0].rendered_text,
-            'The department alleges: "The department alleges a shortfall."',
-        )
-
-    def test_fact_no_page_suffix(self):
-        fact = make_fact(
-            fact_id="F-001",
-            status=FactStatus.CONFIRMED,
-            source_text="Text without a page.",
-            allowed_in_draft=DraftPermission.YES,
-        )
-        inputs = make_step94_happy_inputs(
-            extraction_result=make_extraction(facts=[fact])
-        )
-        sections = engine._render_sections(
-            make_interim_sections(["[[FACT:F-001]]", "Two.", "Three."]),
-            inputs["extraction_result"],
-            inputs["arithmetic_results"],
-            inputs["validation_result"],
-            inputs["deadline_result"],
-            inputs["preflight_result"],
-        )
-        self.assertEqual(
-            sections[0].rendered_text,
-            'The notice records: "Text without a page."',
-        )
-
-    def test_arithmetic_rendered(self):
-        sections = render_happy_sections()
-        self.assertEqual(
-            sections[1].rendered_text,
-            "Table Deterministic reconciliation output: left - right = 888.80 INR (status: pass).",
-        )
-
-    def test_deadline_rendered_full(self):
-        sections = render_happy_sections()
-        self.assertEqual(
-            sections[2].rendered_text,
-            'Draft Deterministic deadline output: notice_date=2025-03-10; service_date=2025-03-12; response_period_days=30; response_deadline=2025-04-11; deadline_confidence=confirmed; deadline_status=upcoming; days_remaining=20; portal_verification_required=false; notes=["note a"]; preflight_deadline_conflict_status=cannot_compare. and Deterministic hearing output: hearing_date=2025-05-01; hearing_status=upcoming.',
-        )
-
-    def test_deadline_nulls_rendered(self):
-        deadline = make_deadline(
-            notice_date=date(2025, 3, 10),
-            response_period_days=None,
-            response_deadline=None,
-            days_remaining=None,
-        )
-        inputs = make_step94_happy_inputs(deadline_result=deadline)
-        sections = engine._render_sections(
-            make_interim_sections(["[[DEADLINE]]", "Two.", "Three."]),
-            inputs["extraction_result"],
-            inputs["arithmetic_results"],
-            inputs["validation_result"],
-            inputs["deadline_result"],
-            inputs["preflight_result"],
-        )
-        self.assertEqual(
-            sections[0].rendered_text,
-            'Deterministic deadline output: notice_date=2025-03-10; service_date=null; response_period_days=null; response_deadline=null; deadline_confidence=unknown; deadline_status=upcoming; days_remaining=null; portal_verification_required=true; notes=[]; preflight_deadline_conflict_status=cannot_compare.',
-        )
-
-    def test_hearing_rendered(self):
-        sections = render_happy_sections()
-        self.assertIn(
-            "Deterministic hearing output: hearing_date=2025-05-01; hearing_status=upcoming.",
-            sections[2].rendered_text,
-        )
-
-    def test_template_text_unchanged(self):
-        sections = render_happy_sections()
-        for section in sections:
-            self.assertIn("[[", section.template_text)
-
-    def test_rendered_sections_are_fresh_objects(self):
-        sections = render_happy_sections()
-        interim = make_interim_sections(HAPPY_BODIES)
-        for rendered, original in zip(sections, interim):
-            self.assertIsNot(rendered, original)
-            self.assertEqual(rendered.template_text, original.template_text)
-
-    def test_single_pass_no_recursion_in_source_text(self):
-        fact = make_fact(
-            fact_id="F-001",
-            status=FactStatus.CONFIRMED,
-            source_text="Literal [[DEADLINE]] token inside source text.",
-            allowed_in_draft=DraftPermission.YES,
-        )
-        rendered = engine._render_template(
-            "[[FACT:F-001]]",
-            {"F-001": fact},
-            {},
-            None,
-            make_preflight(),
-        )
-        self.assertEqual(
-            rendered,
-            'The notice records: "Literal [[DEADLINE]] token inside source text."',
-        )
-
-
-class FinalResultShapeTests(unittest.TestCase):
-    """SUCCESS / POST_VALIDATION_FAILED result shapes (§23.44–§23.45)."""
-
-    def _happy_draft(self):
-        inputs = make_step94_happy_inputs()
-        response = make_response_json(
-            sections=[
-                {"section_id": sid, "body_template": body}
-                for sid, body in zip(ITC_SECTION_IDS, HAPPY_BODIES)
-            ]
-        )
-        return run_draft(response=response, **inputs)
-
-    def test_success_status(self):
-        result, _ = self._happy_draft()
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
-
-    def test_success_failure_code_none(self):
-        result, _ = self._happy_draft()
-        self.assertIsNone(result.failure_code)
-        self.assertIsNone(result.error_message)
-
-    def test_success_post_validation_pass(self):
-        result, _ = self._happy_draft()
-        self.assertIs(
-            result.post_validation.overall_status, ValidationStatus.PASS
-        )
-        self.assertEqual(len(result.post_validation.checks), 14)
-
-    def test_success_rendered_text_populated(self):
-        result, _ = self._happy_draft()
-        for section in result.sections:
-            self.assertNotIn("[[", section.rendered_text)
-
-    def test_success_metadata_copied(self):
-        inputs = make_step94_happy_inputs()
-        result, _ = run_draft(
-            response=make_response_json(
-                sections=[
-                    {"section_id": sid, "body_template": body}
-                    for sid, body in zip(ITC_SECTION_IDS, HAPPY_BODIES)
-                ]
-            ),
-            **inputs,
-        )
-        self.assertEqual(
-            result.evidence_checklist,
-            inputs["validation_result"].evidence_checklist,
-        )
-
-    def test_fail_shape(self):
-        result, _ = run_draft(
-            response=make_response_json(
-                sections=[
-                    {"section_id": "sec73_itc.s1", "body_template": "[[BAD:TOKEN]]."},
-                    {"section_id": "sec73_itc.s2", "body_template": "Two."},
-                    {"section_id": "sec73_itc.s3", "body_template": "Three."},
-                ]
-            )
-        )
-        self.assertIs(result.status, DraftGenerationStatus.FAILED)
-        self.assertIs(
-            result.failure_code, DraftFailureCode.POST_VALIDATION_FAILED
-        )
-        self.assertEqual(result.sections, [])
-        self.assertEqual(
-            result.error_message,
-            "Specialist draft failed deterministic post-generation validation.",
-        )
-        self.assertIs(
-            result.post_validation.overall_status, ValidationStatus.FAIL
-        )
-
-    def test_fail_preserves_eligibility(self):
-        result, _ = run_draft(
-            response=make_response_json(
-                sections=[
-                    {"section_id": "sec73_itc.s1", "body_template": "[[BAD:TOKEN]]."},
-                    {"section_id": "sec73_itc.s2", "body_template": "Two."},
-                    {"section_id": "sec73_itc.s3", "body_template": "Three."},
-                ]
-            ),
-            validation_result=make_rich_validation(
-                draft_eligibility=DraftEligibility.ALLOWED
-            ),
-        )
-        self.assertIs(result.draft_eligibility, DraftEligibility.ALLOWED)
-
-
-class Step94ZeroLlmTests(unittest.TestCase):
-    """Zero new LLM calls and input immutability across Step 9.4."""
-
-    def test_success_still_exactly_one_call(self):
-        inputs = make_step94_happy_inputs()
-        response = make_response_json(
-            sections=[
-                {"section_id": sid, "body_template": body}
-                for sid, body in zip(ITC_SECTION_IDS, HAPPY_BODIES)
-            ]
-        )
-        _, mocked = run_draft(response=response, **inputs)
-        self.assertEqual(mocked.call_count, 1)
-
-    def test_failure_still_exactly_one_call(self):
-        result, mocked = run_draft(
-            response=make_response_json(
-                sections=[
-                    {"section_id": "sec73_itc.s1", "body_template": "[[BAD:TOKEN]]."},
-                    {"section_id": "sec73_itc.s2", "body_template": "Two."},
-                    {"section_id": "sec73_itc.s3", "body_template": "Three."},
-                ]
-            )
-        )
-        self.assertIs(
-            result.failure_code, DraftFailureCode.POST_VALIDATION_FAILED
-        )
-        self.assertEqual(mocked.call_count, 1)
-
-    def test_inputs_never_mutated_through_step94(self):
-        inputs = make_step94_happy_inputs()
-        snapshots = {
-            key: copy.deepcopy(value) for key, value in inputs.items()
-        }
-        response = make_response_json(
-            sections=[
-                {"section_id": sid, "body_template": body}
-                for sid, body in zip(ITC_SECTION_IDS, HAPPY_BODIES)
-            ]
-        )
-        run_draft(response=response, **inputs)
-        for key, value in inputs.items():
-            self.assertEqual(value, snapshots[key], key)
-
-    def test_render_does_not_mutate_sections(self):
-        interim = make_interim_sections(HAPPY_BODIES)
-        snapshot = copy.deepcopy(interim)
-        inputs = make_step94_happy_inputs()
-        engine._render_sections(
-            interim,
-            inputs["extraction_result"],
-            inputs["arithmetic_results"],
-            inputs["validation_result"],
-            inputs["deadline_result"],
-            inputs["preflight_result"],
-        )
-        self.assertEqual(interim, snapshot)
 
 
 class Step9E1DormantContractTests(unittest.TestCase):
@@ -5293,22 +3474,8 @@ class Step9E1DormantContractTests(unittest.TestCase):
             )
             mocked.assert_not_called()
 
-    def test_active_legacy_generation_behavior_is_unchanged(self):
-        result, mocked = run_draft()
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
-        self.assertEqual(mocked.call_count, 1)
-        self.assertEqual(
-            [section.template_text for section in result.sections],
-            DEFAULT_RESPONSE_BODIES,
-        )
-        self.assertEqual(
-            [section.rendered_text for section in result.sections],
-            DEFAULT_RESPONSE_BODIES,
-        )
-
-
-class Step9E2InactiveProvenanceTests(unittest.TestCase):
-    """§25 Step 9E.2 context, prompt and parser remain private/inactive."""
+class Step9E2ProvenancePreparationTests(unittest.TestCase):
+    """§25 Step 9E.2 context, prompt and strict parser contracts."""
 
     CONTEXT_KEYS = [
         "schema_version",
@@ -5659,17 +3826,738 @@ class Step9E2InactiveProvenanceTests(unittest.TestCase):
         self.assertNotIn("_render", source)
         self.assertNotIn("_post_validate", source)
 
-    def test_public_generation_remains_legacy_single_call_path(self):
+    def test_public_generation_uses_only_provenance_single_call_path(self):
         source = inspect.getsource(engine.generate_specialist_draft)
-        self.assertNotIn("provenance", source.lower())
+        self.assertIn("_build_provenance_prompt", source)
+        self.assertIn("_parse_provenance_response", source)
+        self.assertNotIn("_build_specialist_prompt", source)
+        self.assertNotIn("_parse_strict_sections", source)
         self.assertEqual(source.count("call_gemini("), 1)
         result, mocked = run_draft()
         self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
         self.assertEqual(mocked.call_count, 1)
         self.assertEqual(
             list(DraftSection.__dataclass_fields__.keys()),
-            ["section_id", "title", "template_text", "rendered_text"],
+            ["section_id", "title", "rendered_text"],
         )
+
+
+class Step9E3ActiveProvenanceTests(unittest.TestCase):
+    """Atomic §25 activation: 21 checks and Python-only final text."""
+
+    CHECK_IDS = [
+        "draft.response.schema",
+        "draft.sections.count",
+        "draft.sections.ids",
+        "draft.sections.order",
+        "draft.sections.nonempty",
+        "draft.blocks.kind",
+        "draft.blocks.schema",
+        "draft.blocks.static_template",
+        "draft.blocks.fact_resolution",
+        "draft.blocks.fact_permission",
+        "draft.blocks.arithmetic_resolution",
+        "draft.blocks.deadline_resolution",
+        "draft.blocks.hearing_resolution",
+        "draft.blocks.requirement_resolution",
+        "draft.blocks.requirement_status",
+        "draft.blocks.evidence_resolution",
+        "draft.blocks.evidence_status",
+        "draft.blocks.review_resolution",
+        "draft.blocks.no_freeform",
+        "draft.rendering.completeness",
+        "draft.rendering.python_owned",
+    ]
+    P0_SENTENCE = (
+        "The Noticee is in the process of compiling vendor ledgers and "
+        "agreements."
+    )
+    PRE_RENDER_MESSAGES = (
+        "Rendering completeness was not established because pre-render "
+        "validation failed.",
+        "Python-owned final rendering was not established because "
+        "pre-render validation failed.",
+    )
+
+    def _success_inputs(self):
+        arithmetic = make_arithmetic(
+            status=ArithmeticStatus.MISMATCH,
+            result=Decimal("1250.00"),
+            formula="notice_credit - return_credit",
+            currency="INR",
+        )
+        validation = make_validation_result(
+            checks=checks_for_arithmetic([arithmetic]),
+            requirements=[
+                make_requirement(
+                    requirement_id="req.open",
+                    requirement_text="Vendor ledger reconciliation.",
+                    status=RequirementStatus.UNKNOWN,
+                )
+            ],
+            evidence_checklist=[
+                make_evidence(
+                    evidence_id="ev.ledger",
+                    requirement_text="Vendor ledgers and agreements.",
+                )
+            ],
+            review_requirements=[
+                make_review(
+                    review_id="rev.ca",
+                    reason="Confirm the factual and evidentiary position.",
+                )
+            ],
+        )
+        return {
+            "classification": make_classification(),
+            "extraction_result": make_extraction(
+                facts=[
+                    make_fact(
+                        fact_id="F-CONFIRMED",
+                        source_text="ITC of INR 10,000 appears in the notice.",
+                        source_page=2,
+                    ),
+                    make_fact(
+                        fact_id="F-ALLEGED",
+                        status=FactStatus.ALLEGED,
+                        allowed_in_draft=DraftPermission.CONDITIONAL,
+                        source_text="The taxpayer claimed excess credit.",
+                        source_page=4,
+                    ),
+                ]
+            ),
+            "preflight_result": make_preflight(),
+            "arithmetic_results": [arithmetic],
+            "validation_result": validation,
+            "deadline_result": make_deadline(
+                notice_date=date(2025, 3, 10),
+                service_date=date(2025, 3, 12),
+                response_period_days=30,
+                response_deadline=date(2025, 4, 11),
+                deadline_confidence=DeadlineConfidence.CONFIRMED,
+                deadline_status=DeadlineStatus.UPCOMING,
+                days_remaining=20,
+                hearing_date=date(2025, 5, 1),
+                hearing_status=HearingStatus.UPCOMING,
+                portal_verification_required=False,
+                notes=("portal copy",),
+            ),
+        }
+
+    def _success_payload(self):
+        return {
+            "sections": [
+                {
+                    "section_id": ITC_SECTION_IDS[0],
+                    "blocks": [
+                        {
+                            "kind": "static",
+                            "template_id": "static.notice_material",
+                        },
+                        {"kind": "fact", "fact_id": "F-CONFIRMED"},
+                        {"kind": "fact", "fact_id": "F-ALLEGED"},
+                    ],
+                },
+                {
+                    "section_id": ITC_SECTION_IDS[1],
+                    "blocks": [
+                        {"kind": "arithmetic", "arithmetic_index": 1},
+                        {"kind": "deadline"},
+                        {"kind": "hearing"},
+                        {
+                            "kind": "requirement",
+                            "requirement_id": "req.open",
+                        },
+                    ],
+                },
+                {
+                    "section_id": ITC_SECTION_IDS[2],
+                    "blocks": [
+                        {"kind": "evidence", "evidence_id": "ev.ledger"},
+                        {"kind": "review", "review_id": "rev.ca"},
+                        {
+                            "kind": "static",
+                            "template_id": "static.conditional_response",
+                        },
+                    ],
+                },
+            ]
+        }
+
+    def _run_success(self):
+        return run_draft(
+            response=json.dumps(self._success_payload()),
+            **self._success_inputs(),
+        )
+
+    def _assert_malformed(self, response):
+        with mock.patch.object(engine, "_post_validate_and_render_provenance") as gate:
+            result, mocked = run_draft(response=response)
+        gate.assert_not_called()
+        self.assertEqual(mocked.call_count, 1)
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+        self.assertIs(
+            result.failure_code, DraftFailureCode.MALFORMED_RESPONSE
+        )
+        self.assertEqual(result.sections, [])
+        self.assertIsNone(result.post_validation)
+        return result
+
+    def _reference_payload(self, block):
+        payload = json.loads(make_provenance_response_json())
+        payload["sections"][0]["blocks"] = [block]
+        return json.dumps(payload)
+
+    def _assert_pre_render_failure(
+        self,
+        block,
+        failed_check,
+        **overrides,
+    ):
+        with mock.patch.object(engine, "_render_provenance_block") as renderer:
+            result, mocked = run_draft(
+                response=self._reference_payload(block),
+                **overrides,
+            )
+        renderer.assert_not_called()
+        self.assertEqual(mocked.call_count, 1)
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+        self.assertIs(
+            result.failure_code,
+            DraftFailureCode.POST_VALIDATION_FAILED,
+        )
+        self.assertEqual(result.sections, [])
+        self.assertIsNotNone(result.post_validation)
+        self.assertEqual(
+            [item.check_id for item in result.post_validation.checks],
+            self.CHECK_IDS,
+        )
+        self.assertEqual(len(result.post_validation.checks), 21)
+        self.assertIs(
+            check_by_id(result.post_validation, failed_check).status,
+            ValidationStatus.FAIL,
+        )
+        self.assertEqual(
+            tuple(item.message for item in result.post_validation.checks[-2:]),
+            self.PRE_RENDER_MESSAGES,
+        )
+        self.assertTrue(
+            all(
+                item.status is ValidationStatus.FAIL
+                for item in result.post_validation.checks[-2:]
+            )
+        )
+        return result
+
+    def test_success_renders_all_eight_block_kinds_exactly(self):
+        result, mocked = self._run_success()
+        self.assertEqual(mocked.call_count, 1)
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self.assertIsNone(result.failure_code)
+        self.assertIsNone(result.error_message)
+        self.assertEqual(
+            [item.check_id for item in result.post_validation.checks],
+            self.CHECK_IDS,
+        )
+        self.assertEqual(len(result.post_validation.checks), 21)
+        self.assertTrue(
+            all(
+                item.status is ValidationStatus.PASS
+                for item in result.post_validation.checks
+            )
+        )
+        self.assertIs(
+            result.post_validation.overall_status, ValidationStatus.PASS
+        )
+        expected = [
+            (
+                "The following notice-grounded material is relevant to this "
+                "section.\n\n"
+                'The notice records: "ITC of INR 10,000 appears in the '
+                'notice." (notice p. 2)\n\n'
+                'The department alleges: "The taxpayer claimed excess '
+                'credit." (notice p. 4)'
+            ),
+            (
+                "Deterministic reconciliation output: notice_credit - "
+                "return_credit = 1250.00 INR (status: mismatch).\n\n"
+                "Deterministic deadline output: notice_date=2025-03-10; "
+                "service_date=2025-03-12; response_period_days=30; "
+                "response_deadline=2025-04-11; "
+                "deadline_confidence=confirmed; deadline_status=upcoming; "
+                "days_remaining=20; portal_verification_required=false; "
+                'notes=["portal copy"]; '
+                "preflight_deadline_conflict_status=cannot_compare.\n\n"
+                "Deterministic hearing output: hearing_date=2025-05-01; "
+                "hearing_status=upcoming.\n\n"
+                "Open item — status not established: Vendor ledger "
+                "reconciliation."
+            ),
+            (
+                "Evidence check required; availability, possession, "
+                "preparation, compilation, enclosure, submission and "
+                "verification are not established: Vendor ledgers and "
+                "agreements.\n\n"
+                "Mandatory ca_review review: Confirm the factual and "
+                "evidentiary position.\n\n"
+                "Any response should remain conditional on verification of "
+                "the structured facts and records identified in this working "
+                "draft."
+            ),
+        ]
+        self.assertEqual(
+            [section.rendered_text for section in result.sections], expected
+        )
+        profile = get_drafting_profile(ProceedingType.GST_SEC73_ITC)
+        self.assertEqual(
+            [section.title for section in result.sections],
+            [section.title for section in profile.sections],
+        )
+        self.assertEqual(
+            list(DraftSection.__dataclass_fields__),
+            ["section_id", "title", "rendered_text"],
+        )
+        self.assertNotIn(self.P0_SENTENCE, "\n".join(expected))
+
+    def test_success_dispatches_each_block_once_in_candidate_order(self):
+        original = engine._render_provenance_block
+        with mock.patch.object(
+            engine,
+            "_render_provenance_block",
+            wraps=original,
+        ) as dispatcher:
+            result, mocked = self._run_success()
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(dispatcher.call_count, 10)
+        self.assertEqual(
+            [type(call.args[0]) for call in dispatcher.call_args_list],
+            [
+                StaticDraftBlock,
+                FactDraftBlock,
+                FactDraftBlock,
+                ArithmeticDraftBlock,
+                DeadlineDraftBlock,
+                HearingDraftBlock,
+                RequirementDraftBlock,
+                EvidenceDraftBlock,
+                ReviewDraftBlock,
+                StaticDraftBlock,
+            ],
+        )
+
+    def test_success_check_relationships_are_exact(self):
+        result, _ = self._run_success()
+        fact_resolution = check_by_id(
+            result.post_validation, "draft.blocks.fact_resolution"
+        )
+        fact_permission = check_by_id(
+            result.post_validation, "draft.blocks.fact_permission"
+        )
+        arithmetic = check_by_id(
+            result.post_validation, "draft.blocks.arithmetic_resolution"
+        )
+        expected_fact_ids = ["F-CONFIRMED", "F-ALLEGED"]
+        self.assertEqual(fact_resolution.related_fact_ids, expected_fact_ids)
+        self.assertEqual(fact_permission.related_fact_ids, expected_fact_ids)
+        self.assertEqual(
+            arithmetic.related_calculation_types,
+            [ArithmeticCalculationType.ITC_DIFFERENCE],
+        )
+        for item in result.post_validation.checks:
+            if item not in (fact_resolution, fact_permission, arithmetic):
+                self.assertEqual(item.related_fact_ids, [], item.check_id)
+                self.assertEqual(
+                    item.related_calculation_types, [], item.check_id
+                )
+
+    def test_success_messages_are_exact_in_authoritative_order(self):
+        result, _ = self._run_success()
+        self.assertEqual(
+            [item.message for item in result.post_validation.checks],
+            [
+                "Draft candidate schema is structurally valid.",
+                "Draft section count matches the drafting profile.",
+                "Draft section IDs match the drafting profile.",
+                "Draft section order matches the drafting profile.",
+                "Every draft section contains at least one typed block.",
+                "Every draft block kind is architecture-approved.",
+                "Every draft block matches its exact typed schema.",
+                "All static blocks resolve to the closed template registry.",
+                "All fact blocks resolve to exactly one eligible ExtractedFact.",
+                "All resolved fact blocks satisfy FactStatus and "
+                "DraftPermission invariants.",
+                "All arithmetic blocks resolve to approved deterministic "
+                "arithmetic results.",
+                "All deadline blocks resolve to the supplied deterministic "
+                "deadline result.",
+                "All hearing blocks resolve to supplied deterministic hearing "
+                "information.",
+                "All requirement blocks resolve to exactly one "
+                "RequirementResult.",
+                "All requirement blocks use the deterministic template "
+                "authorized for their status.",
+                "All evidence blocks resolve to exactly one "
+                "EvidenceChecklistItem.",
+                "All evidence blocks preserve the architecture-authorized "
+                "evidence status.",
+                "All review blocks resolve to exactly one mandatory "
+                "ReviewRequirement.",
+                "Draft candidate contains no provider-authored free-form prose "
+                "field.",
+                "Every accepted draft block was rendered exactly once in "
+                "candidate order.",
+                "Final specialist text is assembled only from Python-owned "
+                "renderers and closed templates.",
+            ],
+        )
+
+    def test_requirement_renderer_exact_closed_status_mapping(self):
+        cases = [
+            (
+                RequirementStatus.SATISFIED,
+                "Requirement status — satisfied: Required item.",
+            ),
+            (
+                RequirementStatus.DERIVED,
+                "Requirement status — derived from approved deterministic "
+                "arithmetic: Required item.",
+            ),
+            (
+                RequirementStatus.MISSING,
+                "Open item — missing from a successful extraction: Required "
+                "item.",
+            ),
+            (
+                RequirementStatus.UNKNOWN,
+                "Open item — status not established: Required item.",
+            ),
+            (
+                RequirementStatus.REQUIRES_VERIFICATION,
+                "Verification required: Required item.",
+            ),
+        ]
+        for status, expected in cases:
+            with self.subTest(status=status):
+                self.assertEqual(
+                    engine._render_requirement(
+                        make_requirement(status=status)
+                    ),
+                    expected,
+                )
+
+    def test_evidence_and_review_renderers_are_exact(self):
+        self.assertEqual(
+            engine._render_evidence(
+                make_evidence(requirement_text="Vendor agreement.")
+            ),
+            "Evidence check required; availability, possession, preparation, "
+            "compilation, enclosure, submission and verification are not "
+            "established: Vendor agreement.",
+        )
+        self.assertEqual(
+            engine._render_review(
+                make_review(reason="Confirm source material.")
+            ),
+            "Mandatory ca_review review: Confirm source material.",
+        )
+
+    def test_exact_p0_incident_rejected_in_every_prose_bearing_field(self):
+        fields = (
+            "body_template",
+            "template_text",
+            "text",
+            "prose",
+            "body",
+            "claim",
+            "explanation",
+            "metadata",
+            "payload",
+        )
+        for field_name in fields:
+            with self.subTest(field_name=field_name):
+                payload = self._success_payload()
+                if field_name == "body_template":
+                    payload["sections"][0] = {
+                        "section_id": ITC_SECTION_IDS[0],
+                        field_name: self.P0_SENTENCE,
+                    }
+                else:
+                    payload["sections"][0]["blocks"][0][field_name] = (
+                        self.P0_SENTENCE
+                    )
+                self._assert_malformed(json.dumps(payload))
+
+    def test_semantic_family_has_no_successful_prose_field(self):
+        attempts = (
+            "The records have been prepared.",
+            "Documents are being compiled.",
+            "Documents have been submitted.",
+            "Evidence is available and ready.",
+            "The taxpayer has paid the amount.",
+            "The taxpayer has filed the return.",
+            "The taxpayer maintains compliant records.",
+            "The ledgers have been reconciled.",
+        )
+        unauthorized_fields = (
+            "text",
+            "prose",
+            "explanation",
+            "metadata",
+            "payload",
+            "claim",
+            "body",
+            "template_text",
+        )
+        for attempted_text, field_name in zip(attempts, unauthorized_fields):
+            with self.subTest(field_name=field_name):
+                payload = self._success_payload()
+                payload["sections"][0]["blocks"][0][field_name] = attempted_text
+                result = self._assert_malformed(json.dumps(payload))
+                self.assertNotIn(
+                    attempted_text,
+                    "\n".join(section.rendered_text for section in result.sections),
+                )
+        source = inspect.getsource(engine._run_provenance_pre_render_validation)
+        self.assertNotIn("re.", source)
+        self.assertNotIn(".lower(", source)
+
+    def test_legacy_response_is_malformed_without_fallback(self):
+        result = self._assert_malformed(make_response_json())
+        self.assertEqual(
+            result.error_message,
+            "Specialist drafting response did not match the required schema.",
+        )
+
+    def test_duplicate_json_key_is_parser_level_malformed(self):
+        response = make_provenance_response_json().replace(
+            '"kind": "static"',
+            '"kind": "static", "kind": "fact"',
+            1,
+        )
+        self._assert_malformed(response)
+
+    def test_parser_schema_failures_never_create_post_validation(self):
+        for response in (
+            "{",
+            "[]",
+            '{"sections": []}',
+            make_provenance_response_json(
+                sections=[
+                    {
+                        "section_id": ITC_SECTION_IDS[0],
+                        "blocks": [{"kind": "prose", "text": "anything"}],
+                    }
+                ]
+            ),
+        ):
+            with self.subTest(response=response):
+                self._assert_malformed(response)
+
+    def test_invalid_references_fail_before_every_renderer(self):
+        valid_arithmetic = make_arithmetic()
+        cases = [
+            (
+                {"kind": "static", "template_id": "static.unknown"},
+                "draft.blocks.static_template",
+                {},
+            ),
+            (
+                {"kind": "fact", "fact_id": "F-UNKNOWN"},
+                "draft.blocks.fact_resolution",
+                {},
+            ),
+            (
+                {"kind": "fact", "fact_id": "F-NO"},
+                "draft.blocks.fact_permission",
+                {
+                    "extraction_result": make_extraction(
+                        facts=[
+                            make_fact(
+                                fact_id="F-NO",
+                                status=FactStatus.REQUIRES_VERIFICATION,
+                                allowed_in_draft=DraftPermission.NO,
+                            )
+                        ]
+                    )
+                },
+            ),
+            (
+                {"kind": "arithmetic", "arithmetic_index": 2},
+                "draft.blocks.arithmetic_resolution",
+                {
+                    "arithmetic_results": [valid_arithmetic],
+                    "validation_result": make_validation_result(
+                        checks=checks_for_arithmetic([valid_arithmetic])
+                    ),
+                },
+            ),
+            (
+                {"kind": "arithmetic", "arithmetic_index": 1},
+                "draft.blocks.arithmetic_resolution",
+                {
+                    "arithmetic_results": [
+                        make_arithmetic(status=ArithmeticStatus.INSUFFICIENT_DATA)
+                    ],
+                    "validation_result": make_validation_result(
+                        checks=checks_for_arithmetic(
+                            [make_arithmetic(status=ArithmeticStatus.INSUFFICIENT_DATA)]
+                        )
+                    ),
+                },
+            ),
+            (
+                {"kind": "deadline"},
+                "draft.blocks.deadline_resolution",
+                {"deadline_result": None},
+            ),
+            (
+                {"kind": "hearing"},
+                "draft.blocks.hearing_resolution",
+                {"deadline_result": make_deadline()},
+            ),
+            (
+                {"kind": "requirement", "requirement_id": "req.unknown"},
+                "draft.blocks.requirement_resolution",
+                {},
+            ),
+            (
+                {"kind": "evidence", "evidence_id": "ev.unknown"},
+                "draft.blocks.evidence_resolution",
+                {},
+            ),
+            (
+                {"kind": "review", "review_id": "rev.unknown"},
+                "draft.blocks.review_resolution",
+                {},
+            ),
+            (
+                {"kind": "fact", "fact_id": "req.cross-family"},
+                "draft.blocks.fact_resolution",
+                {
+                    "validation_result": make_validation_result(
+                        requirements=[
+                            make_requirement(requirement_id="req.cross-family")
+                        ]
+                    )
+                },
+            ),
+            (
+                {"kind": "fact", "fact_id": "F-DUP"},
+                "draft.blocks.fact_resolution",
+                {
+                    "extraction_result": make_extraction(
+                        facts=[
+                            make_fact(fact_id="F-DUP"),
+                            make_fact(fact_id="F-DUP"),
+                        ]
+                    )
+                },
+            ),
+        ]
+        for block, failed_check, overrides in cases:
+            with self.subTest(block=block, failed_check=failed_check):
+                self._assert_pre_render_failure(
+                    block, failed_check, **overrides
+                )
+
+    def test_unauthorized_evidence_and_review_states_fail_pre_render(self):
+        self._assert_pre_render_failure(
+            {"kind": "evidence", "evidence_id": "ev.present"},
+            "draft.blocks.evidence_status",
+            validation_result=make_validation_result(
+                evidence_checklist=[
+                    make_evidence(
+                        evidence_id="ev.present",
+                        status=EvidenceStatus.PRESENT,
+                    )
+                ]
+            ),
+        )
+        self._assert_pre_render_failure(
+            {"kind": "review", "review_id": "rev.optional"},
+            "draft.blocks.review_resolution",
+            validation_result=make_validation_result(
+                review_requirements=[
+                    make_review(review_id="rev.optional", mandatory=False)
+                ]
+            ),
+        )
+
+    def test_derived_requirement_without_approved_arithmetic_fails(self):
+        self._assert_pre_render_failure(
+            {"kind": "requirement", "requirement_id": "req.derived"},
+            "draft.blocks.requirement_status",
+            validation_result=make_validation_result(
+                requirements=[
+                    make_requirement(
+                        requirement_id="req.derived",
+                        status=RequirementStatus.DERIVED,
+                        calculation_type=ArithmeticCalculationType.ITC_DIFFERENCE,
+                    )
+                ]
+            ),
+        )
+
+    def test_in_memory_freeform_tampering_fails_check_19_without_rendering(self):
+        profile = get_drafting_profile(ProceedingType.GST_SEC73_ITC)
+        sections = engine._parse_provenance_response(
+            make_provenance_response_json(), profile.sections
+        )
+        sections[0].blocks[0].text = self.P0_SENTENCE
+        with mock.patch.object(engine, "_render_provenance_block") as renderer:
+            result = engine._post_validate_and_render_provenance(
+                make_extraction(),
+                make_preflight(),
+                [],
+                make_validation_result(),
+                None,
+                profile,
+                sections,
+            )
+        renderer.assert_not_called()
+        self.assertEqual(len(result.post_validation.checks), 21)
+        self.assertIs(
+            check_by_id(
+                result.post_validation, "draft.blocks.no_freeform"
+            ).status,
+            ValidationStatus.FAIL,
+        )
+
+    def test_renderer_failure_uses_ordinary_checks_20_and_21_messages(self):
+        with mock.patch.object(
+            engine, "_render_provenance_block", return_value=None
+        ) as renderer:
+            result, mocked = run_draft()
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual(renderer.call_count, 3)
+        self.assertIs(
+            result.failure_code, DraftFailureCode.POST_VALIDATION_FAILED
+        )
+        self.assertEqual(result.sections, [])
+        self.assertEqual(len(result.post_validation.checks), 21)
+        self.assertEqual(
+            [item.message for item in result.post_validation.checks[-2:]],
+            [
+                "One or more accepted draft blocks were not rendered exactly "
+                "once in candidate order.",
+                "Final specialist text contains output not produced by an "
+                "authorized Python renderer or closed template.",
+            ],
+        )
+
+    def test_active_runtime_has_one_call_and_no_legacy_fallback(self):
+        source = inspect.getsource(engine.generate_specialist_draft)
+        self.assertEqual(source.count("call_gemini("), 1)
+        self.assertIn("_build_provenance_prompt", source)
+        self.assertIn("_parse_provenance_response", source)
+        self.assertIn("_post_validate_and_render_provenance", source)
+        for legacy in (
+            "_build_specialist_prompt",
+            "_parse_strict_sections",
+            "_post_validate_and_render(",
+        ):
+            self.assertNotIn(legacy, source)
 
 
 if __name__ == "__main__":

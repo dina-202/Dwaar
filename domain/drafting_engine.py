@@ -1,44 +1,19 @@
-"""Controlled specialist drafting: deterministic context/prompt assembly
-plus the Step-9.3 generation/parser state machine
-(ARCHITECTURE_SPEC_v1_1 §21 and §22 — Phase 2 Steps 9.2 and 9.3).
+"""Provenance-complete controlled specialist drafting (§25).
 
-Step-9.2 surface (private, unchanged):
+The active public path applies the existing Step-9 eligibility gate,
+builds the versioned provenance-v1 controlled prompt, makes exactly one
+drafting-layer provider call, and strictly parses identifiers-only typed
+blocks. Successfully parsed candidates receive the exact ordered 21-check
+deterministic gate. Only candidates whose checks 1–19 pass reach the closed
+Python renderer dispatcher; final section text uses only dispatcher output
+and architecture-owned static templates.
 
-- the deterministic Step-9 gate preconditions (§20.3, §21.28);
-- the closed controlled-context JSON shape in the exact architecture key
-  order (§21.1–§21.16);
-- deterministic JSON serialization (§21.24);
-- closed static prompt asset loading (§21.17–§21.22);
-- deterministic prompt assembly (§21.23).
+Legacy body-template parsing, token substitution, and lexical validation
+are not production paths. The older context/prompt construction helpers
+remain private for their committed deterministic contracts, but
+generate_specialist_draft(...) does not call them.
 
-Step-9.3 surface (§22, authoritative):
-
-- the public generate_specialist_draft(...) API (§22.1);
-- the exact pre-call failure precedence and blocked-result shapes
-  (§22.2–§22.5);
-- fresh Python-owned metadata copying (§22.6);
-- exactly one LLM call through modules.llm_client.call_gemini (§22.7);
-- provider exception / "Error:"-string / non-string handling
-  (§22.8–§22.10);
-- the strict response JSON parser and interim DraftSection construction
-  (§22.12–§22.17);
-- the closed SpecialistDraftResult consistency contract
-  (§22.18–§22.25).
-
-Step-9.4 surface (§23, authoritative):
-
-- deterministic post-draft validation over the interim sections — the
-  exact fourteen §23.3 checks in fixed order, PASS/FAIL only;
-- the closed token syntax / resolution / permission / raw-literal /
-  evidence / external-citation catalogs (§23.7–§23.37);
-- Python-owned token resolution and single-pass rendering
-  (§23.39–§23.43);
-- the final SpecialistDraftResult transition — SUCCESS with rendered
-  sections and a PASS DraftPostValidationResult, or FAILED with
-  POST_VALIDATION_FAILED and no usable sections (§23.44–§23.45).
-
-Step 9.4 adds ZERO new LLM calls (§23.49). Application integration
-remains prohibited (§22.29, §21.30, §23.51).
+Application/orchestrator replay remains outside Step 9E.3 (§25.28).
 
 All module-level names except generate_specialist_draft are
 underscore-private (§21.27). Private helper names are implementation-local
@@ -46,7 +21,6 @@ and are NOT external machine contracts.
 """
 
 import json
-import re
 from pathlib import Path
 from types import MappingProxyType
 from typing import Dict, List, Mapping, Optional, Tuple
@@ -66,6 +40,7 @@ from domain.models import (
     DraftPostValidationResult,
     DraftSection,
     EvidenceDraftBlock,
+    EvidenceStatus,
     FactExtractionResult,
     FactDraftBlock,
     FactStatus,
@@ -117,8 +92,8 @@ _PROVENANCE_WORKFLOW_PROMPT_PATHS: Dict[str, Path] = {
     "sec129": _PROVENANCE_PROMPTS_DIR / "gst" / "sec129.txt",
 }
 
-# Closed §25.13 Python-owned static-template registry. Step 9E.1 keeps this
-# immutable and dormant; the active drafting path does not consult it.
+# Closed §25.13 Python-owned static-template registry used by the active
+# validator and STATIC renderer. It is immutable and non-parameterized.
 _STATIC_TEMPLATE_REGISTRY: Mapping[str, str] = MappingProxyType(
     {
         "static.working_draft": (
@@ -555,7 +530,7 @@ def _build_specialist_prompt(
     )
 
 
-# --- Phase 2 Step 9E.2: inactive provenance-v1 preparation (§25) -------------
+# --- Phase 2 Step 9E: active provenance-v1 context/prompt/parser (§25) --------
 
 def _build_provenance_controlled_context(
     classification: NoticeClassification,
@@ -566,7 +541,7 @@ def _build_provenance_controlled_context(
     deadline_result: Optional[DeadlineResult],
     drafting_profile: WorkflowDraftingProfile,
 ) -> Optional[Dict]:
-    """Build the exact dormant §25.8.1 provenance-v1 context.
+    """Build the exact active §25.8.1 provenance-v1 context.
 
     This helper is not called by generate_specialist_draft during Step
     9E.2. It performs no LLM call, parsing, validation or rendering.
@@ -624,7 +599,7 @@ def _build_provenance_controlled_context(
 def _load_provenance_prompt_assets(
     prompt_key: str,
 ) -> Optional[Tuple[str, str]]:
-    """Load only the fixed dormant provenance-v1 prompt assets."""
+    """Load only the fixed provenance-v1 prompt assets."""
     try:
         base_text = _PROVENANCE_BASE_PROMPT_PATH.read_text(
             encoding="utf-8"
@@ -653,7 +628,7 @@ def _build_provenance_prompt(
     validation_result: ValidationEngineResult,
     deadline_result: Optional[DeadlineResult] = None,
 ) -> Optional[str]:
-    """Prepare the deterministic dormant provenance-v1 prompt.
+    """Build the deterministic active provenance-v1 prompt.
 
     No provider is called. Step 9E.3 alone may activate this replacement.
     """
@@ -754,7 +729,7 @@ def _parse_provenance_response(
     response,
     profile_sections,
 ) -> Optional[List[DraftCandidateSection]]:
-    """Strict inactive §25.6 typed-response parser; no partial salvage."""
+    """Strict active §25.6 typed-response parser; no partial salvage."""
     if not isinstance(response, str):
         return None
     response_trimmed = response.strip()
@@ -870,255 +845,6 @@ def _specialist_result(
     )
 
 
-def _parse_strict_sections(
-    response_trimmed: str,
-    profile_sections,
-) -> Optional[List[DraftSection]]:
-    """§22.12–§22.17: strict response parser.
-
-    Parses only response_trimmed via json.loads — no fence stripping, no
-    substring extraction, no repair, no coercion, no retry. Enforces the
-    exact root/section schema, the exact section count, and the exact
-    case-sensitive profile IDs in profile order. Every body_template is
-    stripped once and must be non-empty; internal content is preserved
-    exactly. Returns a fresh List[DraftSection] with rendered_text == ""
-    on complete success, or None on ANY violation (§22.21: no partial
-    success).
-    """
-    try:
-        parsed = json.loads(response_trimmed)
-    except Exception:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    if set(parsed.keys()) != {"sections"}:
-        return None
-    raw_sections = parsed["sections"]
-    if not isinstance(raw_sections, list):
-        return None
-    if len(raw_sections) != len(profile_sections):
-        return None
-    sections = []
-    for index, raw_section in enumerate(raw_sections):
-        if not isinstance(raw_section, dict):
-            return None
-        if set(raw_section.keys()) != {"section_id", "body_template"}:
-            return None
-        returned_id = raw_section["section_id"]
-        body_template = raw_section["body_template"]
-        if not isinstance(returned_id, str) or not isinstance(
-            body_template, str
-        ):
-            return None
-        profile_section = profile_sections[index]
-        if returned_id != profile_section.section_id:
-            return None
-        normalized_body = body_template.strip()
-        if normalized_body == "":
-            return None
-        sections.append(
-            DraftSection(
-                section_id=profile_section.section_id,
-                title=profile_section.title,
-                template_text=normalized_body,
-                rendered_text="",
-            )
-        )
-    return sections
-
-
-# --- Phase 2 Step 9.4: deterministic post-validation + rendering (§23) ---------
-
-# §23.3: the exact fourteen check IDs, in the exact emission order.
-_CHECK_SCHEMA = "draft.response.schema"
-_CHECK_COUNT = "draft.sections.count"
-_CHECK_IDS = "draft.sections.ids"
-_CHECK_ORDER = "draft.sections.order"
-_CHECK_NONEMPTY = "draft.sections.nonempty"
-_CHECK_TOKENS_SYNTAX = "draft.tokens.syntax"
-_CHECK_FACT_RESOLUTION = "draft.tokens.fact_resolution"
-_CHECK_FACT_PERMISSION = "draft.tokens.fact_permission"
-_CHECK_ARITH_RESOLUTION = "draft.tokens.arithmetic_resolution"
-_CHECK_DEADLINE_RESOLUTION = "draft.tokens.deadline_resolution"
-_CHECK_HEARING_RESOLUTION = "draft.tokens.hearing_resolution"
-_CHECK_RAW_FACT_LITERAL = "draft.prose.raw_fact_literal"
-_CHECK_EVIDENCE = "draft.prose.evidence_presence_language"
-_CHECK_CITATION = "draft.prose.external_citation_surface"
-
-_POST_VALIDATION_CHECK_IDS = (
-    _CHECK_SCHEMA,
-    _CHECK_COUNT,
-    _CHECK_IDS,
-    _CHECK_ORDER,
-    _CHECK_NONEMPTY,
-    _CHECK_TOKENS_SYNTAX,
-    _CHECK_FACT_RESOLUTION,
-    _CHECK_FACT_PERMISSION,
-    _CHECK_ARITH_RESOLUTION,
-    _CHECK_DEADLINE_RESOLUTION,
-    _CHECK_HEARING_RESOLUTION,
-    _CHECK_RAW_FACT_LITERAL,
-    _CHECK_EVIDENCE,
-    _CHECK_CITATION,
-)
-
-# §23.5: the exact twenty-eight PASS/FAIL messages, keyed by check ID.
-_POST_VALIDATION_MESSAGES = {
-    _CHECK_SCHEMA: (
-        "Draft response schema is structurally valid.",
-        "Draft response schema is not structurally valid.",
-    ),
-    _CHECK_COUNT: (
-        "Draft section count matches the drafting profile.",
-        "Draft section count does not match the drafting profile.",
-    ),
-    _CHECK_IDS: (
-        "Draft section IDs match the drafting profile.",
-        "Draft section IDs do not match the drafting profile.",
-    ),
-    _CHECK_ORDER: (
-        "Draft section order matches the drafting profile.",
-        "Draft section order does not match the drafting profile.",
-    ),
-    _CHECK_NONEMPTY: (
-        "Every draft section contains non-empty template text.",
-        "One or more draft sections contain empty template text.",
-    ),
-    _CHECK_TOKENS_SYNTAX: (
-        "Draft reference-token syntax is valid.",
-        "Draft contains malformed or unsupported reference-token syntax.",
-    ),
-    _CHECK_FACT_RESOLUTION: (
-        "All FACT tokens resolve to exactly one eligible fact.",
-        "One or more FACT tokens do not resolve to exactly one eligible fact.",
-    ),
-    _CHECK_FACT_PERMISSION: (
-        "All resolved FACT tokens satisfy draft-permission and fact-status invariants.",
-        "One or more resolved FACT tokens violate draft-permission or fact-status invariants.",
-    ),
-    _CHECK_ARITH_RESOLUTION: (
-        "All ARITH tokens resolve to approved deterministic arithmetic results.",
-        "One or more ARITH tokens do not resolve to approved deterministic arithmetic results.",
-    ),
-    _CHECK_DEADLINE_RESOLUTION: (
-        "All DEADLINE tokens resolve to the supplied deterministic deadline result.",
-        "One or more DEADLINE tokens cannot resolve to the supplied deterministic deadline result.",
-    ),
-    _CHECK_HEARING_RESOLUTION: (
-        "All HEARING tokens resolve to supplied deterministic hearing information.",
-        "One or more HEARING tokens cannot resolve to supplied deterministic hearing information.",
-    ),
-    _CHECK_RAW_FACT_LITERAL: (
-        "Draft template contains no prohibited raw case-specific factual literal.",
-        "Draft template contains a prohibited raw case-specific factual literal outside authorized tokens.",
-    ),
-    _CHECK_EVIDENCE: (
-        "Draft template contains no prohibited evidence-presence language.",
-        "Draft template contains prohibited evidence-presence language.",
-    ),
-    _CHECK_CITATION: (
-        "Draft template contains no prohibited external-citation surface.",
-        "Draft template contains a prohibited external-citation surface.",
-    ),
-}
-
-# §23.11: closed single-bracket lookalike detector (malformed-reference).
-_LOOKALIKE_RE = re.compile(
-    r"(?<!\[)\[(?:FACT:[^\[\]\r\n]*|ARITH:[^\[\]\r\n]*|"
-    r"DEADLINE(?::[^\[\]\r\n]*)?|HEARING(?::[^\[\]\r\n]*)?)\](?!\])",
-    re.IGNORECASE,
-)
-
-# §23.11: boundary-safe occurrence regexes (complete valid tokens only).
-_FACT_OCCURRENCE_RE = re.compile(
-    r"(?<!\[)\[\[FACT:([A-Za-z0-9][A-Za-z0-9._-]*)\]\](?!\])"
-)
-_ARITH_OCCURRENCE_RE = re.compile(
-    r"(?<!\[)\[\[ARITH:([1-9][0-9]*)\]\](?!\])"
-)
-_DEADLINE_OCCURRENCE_RE = re.compile(r"(?<!\[)\[\[DEADLINE\]\](?!\])")
-_HEARING_OCCURRENCE_RE = re.compile(r"(?<!\[)\[\[HEARING\]\](?!\])")
-
-# §23.43: single-pass replacement — one complete valid token occurrence.
-_COMPLETE_TOKEN_RE = re.compile(
-    r"(?<!\[)(\[\[(?:FACT:[A-Za-z0-9][A-Za-z0-9._-]*|"
-    r"ARITH:[1-9][0-9]*|DEADLINE|HEARING)\]\])(?!\])"
-)
-
-# §23.22: GSTIN-like literal.
-_GSTIN_RE = re.compile(
-    r"(?<![A-Z0-9])[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z](?![A-Z0-9])",
-    re.IGNORECASE,
-)
-
-# §23.23: rupee / currency amount (two patterns).
-_RUPEE_RE_A = re.compile(r"₹\s*[0-9][0-9,]*(?:\.[0-9]+)?")
-_RUPEE_RE_B = re.compile(
-    r"\b(?:INR|RS\.?|RUPEES?)\s*[:\-]?\s*[0-9][0-9,]*(?:\.[0-9]+)?\b",
-    re.IGNORECASE,
-)
-
-# §23.24: percentage.
-_PERCENT_RE = re.compile(r"(?<![A-Z0-9.])[0-9]+(?:\.[0-9]+)?\s*%(?![A-Z0-9])")
-
-# §23.25: numeric date (day-first, same separator).
-_NUMERIC_DATE_RE = re.compile(
-    r"\b(?:0?[1-9]|[12][0-9]|3[01])([./-])(?:0?[1-9]|1[0-2])\1(?:19|20)[0-9]{2}\b"
-)
-
-# §23.26: ISO date.
-_ISO_DATE_RE = re.compile(
-    r"\b(?:19|20)[0-9]{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])\b"
-)
-
-# §23.27: textual date (day-first).
-_TEXTUAL_DATE_RE = re.compile(
-    r"\b(?:0?[1-9]|[12][0-9]|3[01])\s+"
-    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
-    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
-    r"Nov(?:ember)?|Dec(?:ember)?)\s+(?:19|20)[0-9]{2}\b",
-    re.IGNORECASE,
-)
-
-# §23.28: labelled RFN / DIN.
-_RFN_DIN_RE = re.compile(
-    r"\b(?:RFN|DIN)\s*(?:NO\.?|NUMBER)?\s*[:#-]?\s*[A-Z0-9][A-Z0-9/-]{5,}\b",
-    re.IGNORECASE,
-)
-
-# §23.31: closed evidence-presence patterns.
-_EVIDENCE_PATTERNS = (
-    re.compile(r"\battached\b", re.IGNORECASE),
-    re.compile(r"\benclosed\b", re.IGNORECASE),
-    re.compile(r"\bannexed\b", re.IGNORECASE),
-    re.compile(r"\bsubmitted\s+herewith\b", re.IGNORECASE),
-    re.compile(r"\bwe\s+have\s+enclosed\b", re.IGNORECASE),
-    re.compile(r"\bwe\s+attach\b", re.IGNORECASE),
-)
-
-# §23.32: URLs.
-_URL_HTTP_RE = re.compile(r"\bhttps?://[^\s<>\"']+", re.IGNORECASE)
-_URL_WWW_RE = re.compile(r"\bwww\.[^\s<>\"']+", re.IGNORECASE)
-
-# §23.33: case-name style (case-sensitive).
-_CASE_NAME_RE = re.compile(
-    r"\b[A-Z][A-Za-z0-9&.,'() -]{1,80}\s+(?:v\.|vs\.|versus)\s+"
-    r"[A-Z][A-Za-z0-9&.,'() -]{1,80}\b"
-)
-
-# §23.34: reporter styles (case-insensitive).
-_REPORTER_PATTERNS = (
-    re.compile(r"\bAIR\s+(?:19|20)[0-9]{2}\s+[A-Z]{2,10}\s+[0-9]+\b", re.IGNORECASE),
-    re.compile(r"\b(?:19|20)[0-9]{2}\s*\([0-9]+\)\s*(?:SCC|GSTL|ELT|STR)\s+[0-9]+\b", re.IGNORECASE),
-    re.compile(r"\((?:19|20)[0-9]{2}\)\s*[0-9]+\s*(?:SCC|GSTL|ELT|STR)\s+[0-9]+\b", re.IGNORECASE),
-    re.compile(r"\b(?:19|20)[0-9]{2}\s+(?:INSC|INHC)\s+[0-9]+\b", re.IGNORECASE),
-    re.compile(r"\b(?:19|20)[0-9]{2}\s+SCC\s+OnLine\s+[A-Za-z]+\s+[0-9]+\b", re.IGNORECASE),
-)
-
-# §23.35: numeric footnote.
-_NUMERIC_FOOTNOTE_RE = re.compile(r"(?<!\[)\[[0-9]{1,3}\](?!\])")
-
-
 def _dedup_first_occurrence(items):
     """§23.12, §23.15, §23.17: first-occurrence deduplication preserving
     order."""
@@ -1129,61 +855,6 @@ def _dedup_first_occurrence(items):
             seen.add(item)
             result.append(item)
     return result
-
-
-def _safe_template_texts(sections):
-    """§23.6: string template_text of schema-compatible sections only."""
-    return [
-        section.template_text
-        for section in sections
-        if isinstance(section, DraftSection)
-        and isinstance(section.template_text, str)
-    ]
-
-
-def _collect_tokens(texts):
-    """§23.12: token references in section order then left-to-right
-    occurrence order. Returns (fact_ids, arith_ns, deadline_seen,
-    hearing_seen)."""
-    fact_ids = []
-    arith_ns = []
-    deadline_seen = False
-    hearing_seen = False
-    for text in texts:
-        for match in _FACT_OCCURRENCE_RE.finditer(text):
-            fact_ids.append(match.group(1))
-        for match in _ARITH_OCCURRENCE_RE.finditer(text):
-            arith_ns.append(int(match.group(1)))
-        if _DEADLINE_OCCURRENCE_RE.search(text):
-            deadline_seen = True
-        if _HEARING_OCCURRENCE_RE.search(text):
-            hearing_seen = True
-    return fact_ids, arith_ns, deadline_seen, hearing_seen
-
-
-def _token_syntax_ok(texts):
-    """§23.11 A/B algorithm: remove complete valid token occurrences, then
-    FAIL on any remaining [[/]] or a single-bracket lookalike."""
-    for text in texts:
-        remaining = _COMPLETE_TOKEN_RE.sub("", text)
-        if "[[" in remaining or "]]" in remaining:
-            return False
-        if _LOOKALIKE_RE.search(remaining):
-            return False
-    return True
-
-
-def _resolve_fact(fact_id, extraction_result):
-    """§23.13: exactly one eligible fact (YES or CONDITIONAL) with the
-    exact case-sensitive fact_id."""
-    matches = [
-        fact
-        for fact in extraction_result.facts
-        if fact.fact_id == fact_id
-        and fact.allowed_in_draft
-        in (DraftPermission.YES, DraftPermission.CONDITIONAL)
-    ]
-    return matches[0] if len(matches) == 1 else None
 
 
 def _resolve_arithmetic(n, arithmetic_results, validation_result):
@@ -1272,279 +943,554 @@ def _render_hearing(deadline):
     )
 
 
-def _render_template(text, fact_map, arith_map, deadline_result, preflight):
-    """§23.43: single-pass left-to-right token replacement."""
+# --- Phase 2 Step 9E.3: active typed validation + Python rendering (§25) ------
 
-    def replace(match):
-        token = match.group(1)
-        if token.startswith("[[FACT:"):
-            return _render_fact(fact_map[token[7:-2]])
-        if token.startswith("[[ARITH:"):
-            return _render_arithmetic(arith_map[int(token[8:-2])])
-        if token == "[[DEADLINE]]":
-            return _render_deadline(deadline_result, preflight)
-        if token == "[[HEARING]]":
-            return _render_hearing(deadline_result)
-        return match.group(0)
+_PROVENANCE_CHECK_IDS = (
+    "draft.response.schema",
+    "draft.sections.count",
+    "draft.sections.ids",
+    "draft.sections.order",
+    "draft.sections.nonempty",
+    "draft.blocks.kind",
+    "draft.blocks.schema",
+    "draft.blocks.static_template",
+    "draft.blocks.fact_resolution",
+    "draft.blocks.fact_permission",
+    "draft.blocks.arithmetic_resolution",
+    "draft.blocks.deadline_resolution",
+    "draft.blocks.hearing_resolution",
+    "draft.blocks.requirement_resolution",
+    "draft.blocks.requirement_status",
+    "draft.blocks.evidence_resolution",
+    "draft.blocks.evidence_status",
+    "draft.blocks.review_resolution",
+    "draft.blocks.no_freeform",
+    "draft.rendering.completeness",
+    "draft.rendering.python_owned",
+)
 
-    return _COMPLETE_TOKEN_RE.sub(replace, text)
+_PROVENANCE_MESSAGES = {
+    "draft.response.schema": (
+        "Draft candidate schema is structurally valid.",
+        "Draft candidate schema is not structurally valid.",
+    ),
+    "draft.sections.count": (
+        "Draft section count matches the drafting profile.",
+        "Draft section count does not match the drafting profile.",
+    ),
+    "draft.sections.ids": (
+        "Draft section IDs match the drafting profile.",
+        "Draft section IDs do not match the drafting profile.",
+    ),
+    "draft.sections.order": (
+        "Draft section order matches the drafting profile.",
+        "Draft section order does not match the drafting profile.",
+    ),
+    "draft.sections.nonempty": (
+        "Every draft section contains at least one typed block.",
+        "One or more draft sections contain no typed block.",
+    ),
+    "draft.blocks.kind": (
+        "Every draft block kind is architecture-approved.",
+        "One or more draft block kinds are not architecture-approved.",
+    ),
+    "draft.blocks.schema": (
+        "Every draft block matches its exact typed schema.",
+        "One or more draft blocks do not match their exact typed schema.",
+    ),
+    "draft.blocks.static_template": (
+        "All static blocks resolve to the closed template registry.",
+        "One or more static blocks do not resolve to the closed template registry.",
+    ),
+    "draft.blocks.fact_resolution": (
+        "All fact blocks resolve to exactly one eligible ExtractedFact.",
+        "One or more fact blocks do not resolve to exactly one eligible ExtractedFact.",
+    ),
+    "draft.blocks.fact_permission": (
+        "All resolved fact blocks satisfy FactStatus and DraftPermission invariants.",
+        "One or more resolved fact blocks violate FactStatus or DraftPermission invariants.",
+    ),
+    "draft.blocks.arithmetic_resolution": (
+        "All arithmetic blocks resolve to approved deterministic arithmetic results.",
+        "One or more arithmetic blocks do not resolve to approved deterministic arithmetic results.",
+    ),
+    "draft.blocks.deadline_resolution": (
+        "All deadline blocks resolve to the supplied deterministic deadline result.",
+        "One or more deadline blocks cannot resolve to the supplied deterministic deadline result.",
+    ),
+    "draft.blocks.hearing_resolution": (
+        "All hearing blocks resolve to supplied deterministic hearing information.",
+        "One or more hearing blocks cannot resolve to supplied deterministic hearing information.",
+    ),
+    "draft.blocks.requirement_resolution": (
+        "All requirement blocks resolve to exactly one RequirementResult.",
+        "One or more requirement blocks do not resolve to exactly one RequirementResult.",
+    ),
+    "draft.blocks.requirement_status": (
+        "All requirement blocks use the deterministic template authorized for their status.",
+        "One or more requirement blocks cannot use a deterministic template authorized for their status.",
+    ),
+    "draft.blocks.evidence_resolution": (
+        "All evidence blocks resolve to exactly one EvidenceChecklistItem.",
+        "One or more evidence blocks do not resolve to exactly one EvidenceChecklistItem.",
+    ),
+    "draft.blocks.evidence_status": (
+        "All evidence blocks preserve the architecture-authorized evidence status.",
+        "One or more evidence blocks would assert an unauthorized evidence state.",
+    ),
+    "draft.blocks.review_resolution": (
+        "All review blocks resolve to exactly one mandatory ReviewRequirement.",
+        "One or more review blocks do not resolve to exactly one mandatory ReviewRequirement.",
+    ),
+    "draft.blocks.no_freeform": (
+        "Draft candidate contains no provider-authored free-form prose field.",
+        "Draft candidate contains a provider-authored free-form prose field.",
+    ),
+    "draft.rendering.completeness": (
+        "Every accepted draft block was rendered exactly once in candidate order.",
+        "One or more accepted draft blocks were not rendered exactly once in candidate order.",
+    ),
+    "draft.rendering.python_owned": (
+        "Final specialist text is assembled only from Python-owned renderers and closed templates.",
+        "Final specialist text contains output not produced by an authorized Python renderer or closed template.",
+    ),
+}
+
+_PRE_RENDER_COMPLETENESS_FAIL = (
+    "Rendering completeness was not established because pre-render validation failed."
+)
+_PRE_RENDER_PYTHON_OWNED_FAIL = (
+    "Python-owned final rendering was not established because pre-render validation failed."
+)
+
+_PROVENANCE_BLOCK_TYPES = (
+    StaticDraftBlock,
+    FactDraftBlock,
+    ArithmeticDraftBlock,
+    DeadlineDraftBlock,
+    HearingDraftBlock,
+    RequirementDraftBlock,
+    EvidenceDraftBlock,
+    ReviewDraftBlock,
+)
+
+_PROVENANCE_BLOCK_FIELDS = {
+    StaticDraftBlock: (("template_id", str),),
+    FactDraftBlock: (("fact_id", str),),
+    ArithmeticDraftBlock: (("arithmetic_index", int),),
+    DeadlineDraftBlock: (),
+    HearingDraftBlock: (),
+    RequirementDraftBlock: (("requirement_id", str),),
+    EvidenceDraftBlock: (("evidence_id", str),),
+    ReviewDraftBlock: (("review_id", str),),
+}
 
 
-def _run_post_validation(
-    sections,
+def _provenance_item(
+    check_id,
+    ok,
+    related_fact_ids=(),
+    related_calculation_types=(),
+    fail_message=None,
+):
+    pass_message, ordinary_fail_message = _PROVENANCE_MESSAGES[check_id]
+    return ValidationItem(
+        check_id=check_id,
+        status=ValidationStatus.PASS if ok else ValidationStatus.FAIL,
+        message=(
+            pass_message
+            if ok
+            else ordinary_fail_message if fail_message is None else fail_message
+        ),
+        related_fact_ids=list(related_fact_ids),
+        related_calculation_types=list(related_calculation_types),
+    )
+
+
+def _resolve_candidate_fact(fact_id, extraction_result):
+    matches = [
+        fact for fact in extraction_result.facts if fact.fact_id == fact_id
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _resolve_requirement(requirement_id, validation_result):
+    matches = [
+        item
+        for item in validation_result.requirements
+        if item.requirement_id == requirement_id
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _resolve_evidence(evidence_id, validation_result):
+    matches = [
+        item
+        for item in validation_result.evidence_checklist
+        if item.evidence_id == evidence_id
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _resolve_review(review_id, validation_result):
+    matches = [
+        item
+        for item in validation_result.review_requirements
+        if item.review_id == review_id
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _block_schema_ok(block):
+    block_type = type(block)
+    expected = _PROVENANCE_BLOCK_FIELDS.get(block_type)
+    if expected is None:
+        return False
+    declared = getattr(block_type, "__dataclass_fields__", {})
+    if tuple(
+        (name, item.type) for name, item in declared.items()
+    ) != expected:
+        return False
+    if set(vars(block).keys()) != {name for name, _ in expected}:
+        return False
+    for name, annotation in expected:
+        value = getattr(block, name)
+        if annotation is int:
+            if type(value) is not int or value <= 0:
+                return False
+        elif not isinstance(value, annotation) or value == "":
+            return False
+    return True
+
+
+def _run_provenance_pre_render_validation(
+    candidate_sections,
     drafting_profile,
     extraction_result,
     arithmetic_results,
     validation_result,
-    preflight_result,
     deadline_result,
 ):
-    """§23.1–§23.38: emit exactly fourteen ValidationItems in fixed order."""
+    """Emit the exact §25.21 checks 1-19 without invoking a renderer."""
     profile_ids = [spec.section_id for spec in drafting_profile.sections]
-
-    texts = _safe_template_texts(sections)
-    fact_ids_in_order, arith_ns_in_order, deadline_seen, hearing_seen = (
-        _collect_tokens(texts)
-    )
-
-    # --- checks 1–5: structural (§23.6) ---
-    schema_ok = all(
-        isinstance(section, DraftSection)
+    candidate_is_list = isinstance(candidate_sections, list)
+    schema_ok = candidate_is_list and all(
+        type(section) is DraftCandidateSection
         and isinstance(section.section_id, str)
-        and isinstance(section.title, str)
-        and isinstance(section.template_text, str)
-        and section.rendered_text == ""
-        for section in sections
+        and isinstance(section.blocks, tuple)
+        for section in candidate_sections
     )
-    count_ok = len(sections) == len(profile_ids)
-    returned_ids = [
-        section.section_id if isinstance(section, DraftSection) else None
-        for section in sections
+    count_ok = candidate_is_list and len(candidate_sections) == len(profile_ids)
+    returned_ids = (
+        [
+            section.section_id
+            if type(section) is DraftCandidateSection
+            else None
+            for section in candidate_sections
+        ]
+        if candidate_is_list
+        else []
+    )
+    ids_ok = count_ok and set(returned_ids) == set(profile_ids)
+    order_ok = count_ok and returned_ids == profile_ids
+    nonempty_ok = schema_ok and all(section.blocks for section in candidate_sections)
+
+    blocks = []
+    if candidate_is_list:
+        for section in candidate_sections:
+            if type(section) is DraftCandidateSection and isinstance(
+                section.blocks, tuple
+            ):
+                blocks.extend(section.blocks)
+
+    kind_ok = schema_ok and all(type(block) in _PROVENANCE_BLOCK_TYPES for block in blocks)
+    block_schema_ok = kind_ok and all(_block_schema_ok(block) for block in blocks)
+
+    static_blocks = [block for block in blocks if type(block) is StaticDraftBlock]
+    fact_blocks = [block for block in blocks if type(block) is FactDraftBlock]
+    arithmetic_blocks = [
+        block for block in blocks if type(block) is ArithmeticDraftBlock
     ]
-    ids_ok = returned_ids == profile_ids
-    order_ok = returned_ids == profile_ids
-    nonempty_ok = all(
-        isinstance(section, DraftSection)
-        and isinstance(section.template_text, str)
-        and section.template_text.strip() != ""
-        for section in sections
+    deadline_blocks = [block for block in blocks if type(block) is DeadlineDraftBlock]
+    hearing_blocks = [block for block in blocks if type(block) is HearingDraftBlock]
+    requirement_blocks = [
+        block for block in blocks if type(block) is RequirementDraftBlock
+    ]
+    evidence_blocks = [block for block in blocks if type(block) is EvidenceDraftBlock]
+    review_blocks = [block for block in blocks if type(block) is ReviewDraftBlock]
+
+    static_ok = all(
+        _block_schema_ok(block)
+        and block.template_id in _STATIC_TEMPLATE_REGISTRY
+        for block in static_blocks
     )
 
-    # --- check 6: token syntax (§23.11) ---
-    syntax_ok = _token_syntax_ok(texts)
-
-    # --- checks 7–8: FACT resolution / permission (§23.13–§23.14) ---
-    resolved_facts = {}
-    fact_resolution_ok = True
-    for fact_id in fact_ids_in_order:
-        fact = _resolve_fact(fact_id, extraction_result)
-        if fact is None:
-            fact_resolution_ok = False
-        else:
-            resolved_facts[fact_id] = fact
-
+    resolved_facts = {
+        block.fact_id: _resolve_candidate_fact(block.fact_id, extraction_result)
+        for block in fact_blocks
+        if _block_schema_ok(block)
+    }
+    fact_resolution_ok = all(
+        _block_schema_ok(block) and resolved_facts.get(block.fact_id) is not None
+        for block in fact_blocks
+    )
     fact_permission_ok = True
-    for fact_id in fact_ids_in_order:
-        fact = resolved_facts.get(fact_id)
+    for block in fact_blocks:
+        if not _block_schema_ok(block):
+            fact_permission_ok = False
+            continue
+        fact = resolved_facts.get(block.fact_id)
         if fact is None:
             continue
-        permitted = (
-            fact.status is FactStatus.CONFIRMED
-            and fact.allowed_in_draft is DraftPermission.YES
-        ) or (
-            fact.status is FactStatus.ALLEGED
-            and fact.allowed_in_draft is DraftPermission.CONDITIONAL
-        )
-        if not permitted:
+        if not (
+            (
+                fact.status is FactStatus.CONFIRMED
+                and fact.allowed_in_draft is DraftPermission.YES
+            )
+            or (
+                fact.status is FactStatus.ALLEGED
+                and fact.allowed_in_draft is DraftPermission.CONDITIONAL
+            )
+        ):
             fact_permission_ok = False
 
-    # --- check 9: ARITH resolution (§23.16) ---
-    arith_resolution_ok = True
-    for n in arith_ns_in_order:
-        if _resolve_arithmetic(n, arithmetic_results, validation_result) is None:
-            arith_resolution_ok = False
-
-    # --- checks 10–11: DEADLINE / HEARING resolution (§23.18–§23.19) ---
-    deadline_resolution_ok = True
-    if deadline_seen and deadline_result is None:
-        deadline_resolution_ok = False
-
-    hearing_resolution_ok = True
-    if hearing_seen and (
-        deadline_result is None
-        or deadline_result.hearing_date is None
-        or deadline_result.hearing_status
-        not in (
-            HearingStatus.UPCOMING,
-            HearingStatus.TODAY,
-            HearingStatus.PASSED,
+    arithmetic_ok = all(
+        _block_schema_ok(block)
+        and _resolve_arithmetic(
+            block.arithmetic_index, arithmetic_results, validation_result
         )
-    ):
-        hearing_resolution_ok = False
-
-    # --- check 12: raw fact literal (§23.20–§23.30) ---
-    raw_literal_ok = True
-    for text in texts:
-        if (
-            _GSTIN_RE.search(text)
-            or _RUPEE_RE_A.search(text)
-            or _RUPEE_RE_B.search(text)
-            or _PERCENT_RE.search(text)
-            or _NUMERIC_DATE_RE.search(text)
-            or _ISO_DATE_RE.search(text)
-            or _TEXTUAL_DATE_RE.search(text)
-            or _RFN_DIN_RE.search(text)
-        ):
-            raw_literal_ok = False
-            break
-
-    raw_literal_fact_ids = []
-    for fact in extraction_result.facts:
-        if fact.allowed_in_draft not in (
-            DraftPermission.YES,
-            DraftPermission.CONDITIONAL,
-        ):
-            continue
-        if fact.source_text is None:
-            continue
-        candidate = fact.source_text.strip()
-        if len(candidate) < 24:
-            continue
-        for text in texts:
-            if candidate in text:
-                raw_literal_ok = False
-                raw_literal_fact_ids.append(fact.fact_id)
-                break
-
-    # --- check 13: evidence-presence language (§23.31) ---
-    evidence_ok = True
-    for text in texts:
-        if any(pattern.search(text) for pattern in _EVIDENCE_PATTERNS):
-            evidence_ok = False
-            break
-
-    # --- check 14: external citation surface (§23.32–§23.35) ---
-    citation_ok = True
-    for text in texts:
-        if (
-            _URL_HTTP_RE.search(text)
-            or _URL_WWW_RE.search(text)
-            or _CASE_NAME_RE.search(text)
-            or _NUMERIC_FOOTNOTE_RE.search(text)
-            or any(pattern.search(text) for pattern in _REPORTER_PATTERNS)
-        ):
-            citation_ok = False
-            break
-
-    # --- related-ID metadata (§23.15, §23.17, §23.30, §23.46) ---
-    fact_related_ids = _dedup_first_occurrence(fact_ids_in_order)
-    arith_related_types = _dedup_first_occurrence(
-        arithmetic_results[n - 1].calculation_type
-        for n in arith_ns_in_order
-        if 1 <= n <= len(arithmetic_results)
+        is not None
+        for block in arithmetic_blocks
+    )
+    deadline_ok = not deadline_blocks or deadline_result is not None
+    hearing_ok = not hearing_blocks or (
+        deadline_result is not None
+        and deadline_result.hearing_date is not None
+        and deadline_result.hearing_status
+        in (HearingStatus.UPCOMING, HearingStatus.TODAY, HearingStatus.PASSED)
     )
 
-    def item(check_id, ok, fact_ids=(), calc_types=()):
-        pass_msg, fail_msg = _POST_VALIDATION_MESSAGES[check_id]
-        return ValidationItem(
-            check_id=check_id,
-            status=ValidationStatus.PASS if ok else ValidationStatus.FAIL,
-            message=pass_msg if ok else fail_msg,
-            related_fact_ids=list(fact_ids),
-            related_calculation_types=list(calc_types),
+    resolved_requirements = {
+        block.requirement_id: _resolve_requirement(
+            block.requirement_id, validation_result
         )
+        for block in requirement_blocks
+        if _block_schema_ok(block)
+    }
+    requirement_resolution_ok = all(
+        _block_schema_ok(block)
+        and resolved_requirements.get(block.requirement_id) is not None
+        for block in requirement_blocks
+    )
+    authorized_requirement_statuses = (
+        RequirementStatus.SATISFIED,
+        RequirementStatus.DERIVED,
+        RequirementStatus.MISSING,
+        RequirementStatus.UNKNOWN,
+        RequirementStatus.REQUIRES_VERIFICATION,
+    )
+    requirement_status_ok = True
+    for block in requirement_blocks:
+        if not _block_schema_ok(block):
+            requirement_status_ok = False
+            continue
+        requirement = resolved_requirements.get(block.requirement_id)
+        if requirement is None:
+            continue
+        if requirement.status not in authorized_requirement_statuses:
+            requirement_status_ok = False
+        if requirement.status is RequirementStatus.DERIVED:
+            if requirement.calculation_type is None or not any(
+                _resolve_arithmetic(index, arithmetic_results, validation_result)
+                is not None
+                and arithmetic_results[index - 1].calculation_type
+                is requirement.calculation_type
+                for index in range(1, len(arithmetic_results) + 1)
+            ):
+                requirement_status_ok = False
 
-    checks = [
-        item(_CHECK_SCHEMA, schema_ok),
-        item(_CHECK_COUNT, count_ok),
-        item(_CHECK_IDS, ids_ok),
-        item(_CHECK_ORDER, order_ok),
-        item(_CHECK_NONEMPTY, nonempty_ok),
-        item(_CHECK_TOKENS_SYNTAX, syntax_ok),
-        item(_CHECK_FACT_RESOLUTION, fact_resolution_ok, fact_related_ids),
-        item(_CHECK_FACT_PERMISSION, fact_permission_ok, fact_related_ids),
-        item(_CHECK_ARITH_RESOLUTION, arith_resolution_ok, (), arith_related_types),
-        item(_CHECK_DEADLINE_RESOLUTION, deadline_resolution_ok),
-        item(_CHECK_HEARING_RESOLUTION, hearing_resolution_ok),
-        item(_CHECK_RAW_FACT_LITERAL, raw_literal_ok, raw_literal_fact_ids),
-        item(_CHECK_EVIDENCE, evidence_ok),
-        item(_CHECK_CITATION, citation_ok),
+    resolved_evidence = {
+        block.evidence_id: _resolve_evidence(block.evidence_id, validation_result)
+        for block in evidence_blocks
+        if _block_schema_ok(block)
+    }
+    evidence_resolution_ok = all(
+        _block_schema_ok(block)
+        and resolved_evidence.get(block.evidence_id) is not None
+        for block in evidence_blocks
+    )
+    evidence_status_ok = all(
+        resolved_evidence.get(block.evidence_id) is None
+        or resolved_evidence[block.evidence_id].status is EvidenceStatus.UNKNOWN
+        for block in evidence_blocks
+        if _block_schema_ok(block)
+    )
+
+    resolved_reviews = {
+        block.review_id: _resolve_review(block.review_id, validation_result)
+        for block in review_blocks
+        if _block_schema_ok(block)
+    }
+    review_resolution_ok = all(
+        _block_schema_ok(block)
+        and resolved_reviews.get(block.review_id) is not None
+        and resolved_reviews[block.review_id].mandatory is True
+        for block in review_blocks
+    )
+
+    no_freeform_ok = kind_ok and all(
+        set(vars(block).keys())
+        == {name for name, _ in _PROVENANCE_BLOCK_FIELDS[type(block)]}
+        for block in blocks
+    )
+
+    fact_ids = _dedup_first_occurrence(
+        block.fact_id for block in fact_blocks if _block_schema_ok(block)
+    )
+    calculation_types = _dedup_first_occurrence(
+        arithmetic_results[block.arithmetic_index - 1].calculation_type
+        for block in arithmetic_blocks
+        if _block_schema_ok(block)
+        and 1 <= block.arithmetic_index <= len(arithmetic_results)
+    )
+
+    return [
+        _provenance_item(_PROVENANCE_CHECK_IDS[0], schema_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[1], count_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[2], ids_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[3], order_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[4], nonempty_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[5], kind_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[6], block_schema_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[7], static_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[8], fact_resolution_ok, fact_ids),
+        _provenance_item(_PROVENANCE_CHECK_IDS[9], fact_permission_ok, fact_ids),
+        _provenance_item(
+            _PROVENANCE_CHECK_IDS[10],
+            arithmetic_ok,
+            related_calculation_types=calculation_types,
+        ),
+        _provenance_item(_PROVENANCE_CHECK_IDS[11], deadline_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[12], hearing_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[13], requirement_resolution_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[14], requirement_status_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[15], evidence_resolution_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[16], evidence_status_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[17], review_resolution_ok),
+        _provenance_item(_PROVENANCE_CHECK_IDS[18], no_freeform_ok),
     ]
 
-    overall = (
-        ValidationStatus.FAIL
-        if any(check.status is ValidationStatus.FAIL for check in checks)
-        else ValidationStatus.PASS
+
+def _render_requirement(requirement):
+    templates = {
+        RequirementStatus.SATISFIED: "Requirement status — satisfied: ",
+        RequirementStatus.DERIVED: (
+            "Requirement status — derived from approved deterministic arithmetic: "
+        ),
+        RequirementStatus.MISSING: (
+            "Open item — missing from a successful extraction: "
+        ),
+        RequirementStatus.UNKNOWN: "Open item — status not established: ",
+        RequirementStatus.REQUIRES_VERIFICATION: "Verification required: ",
+    }
+    return templates[requirement.status] + requirement.requirement_text
+
+
+def _render_evidence(item):
+    return (
+        "Evidence check required; availability, possession, preparation, "
+        "compilation, enclosure, submission and verification are not "
+        "established: "
+        + item.requirement_text
     )
-    return DraftPostValidationResult(overall_status=overall, checks=checks)
 
 
-def _render_sections(
-    sections,
+def _render_review(item):
+    return (
+        "Mandatory " + item.level.value + " review: " + item.reason
+    )
+
+
+def _render_provenance_block(
+    block,
     extraction_result,
     arithmetic_results,
     validation_result,
     deadline_result,
     preflight_result,
 ):
-    """§23.43–§23.45: fresh DraftSection objects with rendered_text set via
-    single-pass replacement; template_text unchanged (§23.48)."""
-    texts = _safe_template_texts(sections)
-    fact_map = {}
-    arith_map = {}
-    for text in texts:
-        for match in _FACT_OCCURRENCE_RE.finditer(text):
-            fact = _resolve_fact(match.group(1), extraction_result)
-            if fact is not None:
-                fact_map[match.group(1)] = fact
-        for match in _ARITH_OCCURRENCE_RE.finditer(text):
-            result = _resolve_arithmetic(
-                int(match.group(1)), arithmetic_results, validation_result
-            )
-            if result is not None:
-                arith_map[int(match.group(1))] = result
-
-    rendered = []
-    for section in sections:
-        rendered.append(
-            DraftSection(
-                section_id=section.section_id,
-                title=section.title,
-                template_text=section.template_text,
-                rendered_text=_render_template(
-                    section.template_text,
-                    fact_map,
-                    arith_map,
-                    deadline_result,
-                    preflight_result,
-                ),
+    """Closed §25.14-§25.20 Python renderer dispatcher."""
+    if type(block) is StaticDraftBlock:
+        return _STATIC_TEMPLATE_REGISTRY[block.template_id]
+    if type(block) is FactDraftBlock:
+        return _render_fact(
+            _resolve_candidate_fact(block.fact_id, extraction_result)
+        )
+    if type(block) is ArithmeticDraftBlock:
+        return _render_arithmetic(
+            _resolve_arithmetic(
+                block.arithmetic_index,
+                arithmetic_results,
+                validation_result,
             )
         )
-    return rendered
+    if type(block) is DeadlineDraftBlock:
+        return _render_deadline(deadline_result, preflight_result)
+    if type(block) is HearingDraftBlock:
+        return _render_hearing(deadline_result)
+    if type(block) is RequirementDraftBlock:
+        return _render_requirement(
+            _resolve_requirement(block.requirement_id, validation_result)
+        )
+    if type(block) is EvidenceDraftBlock:
+        return _render_evidence(
+            _resolve_evidence(block.evidence_id, validation_result)
+        )
+    if type(block) is ReviewDraftBlock:
+        return _render_review(
+            _resolve_review(block.review_id, validation_result)
+        )
+    return None
 
 
-def _post_validate_and_render(
+def _post_validate_and_render_provenance(
     extraction_result,
     preflight_result,
     arithmetic_results,
     validation_result,
     deadline_result,
     drafting_profile,
-    sections,
+    candidate_sections,
 ):
-    """§23.44–§23.45: run Step-9.4 post-validation, then either fail with
-    POST_VALIDATION_FAILED (no usable sections) or render and succeed."""
-    post_validation = _run_post_validation(
-        sections,
+    """Run the exact §25 21-check gate and Python-only rendering."""
+    checks = _run_provenance_pre_render_validation(
+        candidate_sections,
         drafting_profile,
         extraction_result,
         arithmetic_results,
         validation_result,
-        preflight_result,
         deadline_result,
     )
     unresolved, evidence, reviews = _copy_result_metadata(validation_result)
-    if post_validation.overall_status is ValidationStatus.FAIL:
+    if any(check.status is ValidationStatus.FAIL for check in checks):
+        checks.extend(
+            [
+                _provenance_item(
+                    _PROVENANCE_CHECK_IDS[19],
+                    False,
+                    fail_message=_PRE_RENDER_COMPLETENESS_FAIL,
+                ),
+                _provenance_item(
+                    _PROVENANCE_CHECK_IDS[20],
+                    False,
+                    fail_message=_PRE_RENDER_PYTHON_OWNED_FAIL,
+                ),
+            ]
+        )
+        post_validation = DraftPostValidationResult(
+            overall_status=ValidationStatus.FAIL,
+            checks=checks,
+        )
         return SpecialistDraftResult(
             status=DraftGenerationStatus.FAILED,
             draft_eligibility=validation_result.draft_eligibility,
@@ -1556,18 +1502,77 @@ def _post_validate_and_render(
             failure_code=DraftFailureCode.POST_VALIDATION_FAILED,
             error_message=_ERROR_POST_VALIDATION,
         )
-    rendered = _render_sections(
-        sections,
-        extraction_result,
-        arithmetic_results,
-        validation_result,
-        deadline_result,
-        preflight_result,
+
+    rendered_sections = []
+    rendering_complete = True
+    python_owned = True
+    for candidate, profile_section in zip(
+        candidate_sections, drafting_profile.sections
+    ):
+        fragments = []
+        for block in candidate.blocks:
+            try:
+                fragment = _render_provenance_block(
+                    block,
+                    extraction_result,
+                    arithmetic_results,
+                    validation_result,
+                    deadline_result,
+                    preflight_result,
+                )
+            except Exception:
+                fragment = None
+            if not isinstance(fragment, str):
+                rendering_complete = False
+                python_owned = False
+                continue
+            fragments.append(fragment)
+        if len(fragments) != len(candidate.blocks):
+            rendering_complete = False
+        rendered_text = "\n\n".join(fragments)
+        rendered_sections.append(
+            DraftSection(
+                section_id=profile_section.section_id,
+                title=profile_section.title,
+                rendered_text=rendered_text,
+            )
+        )
+
+    if len(rendered_sections) != len(candidate_sections):
+        rendering_complete = False
+    checks.extend(
+        [
+            _provenance_item(
+                _PROVENANCE_CHECK_IDS[19], rendering_complete
+            ),
+            _provenance_item(_PROVENANCE_CHECK_IDS[20], python_owned),
+        ]
     )
+    overall = (
+        ValidationStatus.PASS
+        if all(check.status is ValidationStatus.PASS for check in checks)
+        else ValidationStatus.FAIL
+    )
+    post_validation = DraftPostValidationResult(
+        overall_status=overall,
+        checks=checks,
+    )
+    if overall is ValidationStatus.FAIL:
+        return SpecialistDraftResult(
+            status=DraftGenerationStatus.FAILED,
+            draft_eligibility=validation_result.draft_eligibility,
+            sections=[],
+            unresolved_requirements=unresolved,
+            evidence_checklist=evidence,
+            review_requirements=reviews,
+            post_validation=post_validation,
+            failure_code=DraftFailureCode.POST_VALIDATION_FAILED,
+            error_message=_ERROR_POST_VALIDATION,
+        )
     return SpecialistDraftResult(
         status=DraftGenerationStatus.SUCCESS,
         draft_eligibility=validation_result.draft_eligibility,
-        sections=rendered,
+        sections=rendered_sections,
         unresolved_requirements=unresolved,
         evidence_checklist=evidence,
         review_requirements=reviews,
@@ -1585,8 +1590,7 @@ def generate_specialist_draft(
     validation_result: ValidationEngineResult,
     deadline_result: Optional[DeadlineResult] = None,
 ) -> SpecialistDraftResult:
-    """Public Step-9 API (§20.1, §22.1): exactly one controlled specialist
-    drafting LLM call plus the strict response parser (§22).
+    """Public Step-9E API: one typed drafting call and Python rendering.
 
     Pre-call failure precedence is deterministic (§22.3):
     1. validation_result is None → VALIDATION_REQUIRED (§22.2);
@@ -1594,12 +1598,9 @@ def generate_specialist_draft(
        is FAIL → DRAFT_BLOCKED (§22.4);
     3. workflow/profile/prompt availability inconsistency →
        WORKFLOW_UNAVAILABLE (§22.5);
-    4. otherwise call modules.llm_client.call_gemini exactly once (§22.7)
-       and parse the single response strictly (§22.12–§22.17).
-
-    SUCCESS is interim only: post_validation is None and every section
-    has rendered_text == "" (§22.19). No token resolution, no post-draft
-    validation, no app integration. Inputs are never mutated (§22.26).
+    4. otherwise call modules.llm_client.call_gemini exactly once, parse the
+       provenance-v1 typed response, validate 21 checks, and render through
+       the closed Python dispatcher (§25).
     """
     if validation_result is None:
         return SpecialistDraftResult(
@@ -1647,7 +1648,7 @@ def generate_specialist_draft(
             _ERROR_WORKFLOW_UNAVAILABLE,
         )
 
-    prompt = _build_specialist_prompt(
+    prompt = _build_provenance_prompt(
         classification,
         extraction_result,
         preflight_result,
@@ -1698,10 +1699,10 @@ def generate_specialist_draft(
             _ERROR_MALFORMED,
         )
 
-    sections = _parse_strict_sections(
+    candidate_sections = _parse_provenance_response(
         response_trimmed, drafting_profile.sections
     )
-    if sections is None:
+    if candidate_sections is None:
         return _specialist_result(
             validation_result,
             DraftGenerationStatus.FAILED,
@@ -1709,12 +1710,12 @@ def generate_specialist_draft(
             _ERROR_MALFORMED,
         )
 
-    return _post_validate_and_render(
+    return _post_validate_and_render_provenance(
         extraction_result,
         preflight_result,
         arithmetic_results,
         validation_result,
         deadline_result,
         drafting_profile,
-        sections,
+        candidate_sections,
     )
