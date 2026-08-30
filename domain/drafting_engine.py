@@ -25,10 +25,20 @@ Step-9.3 surface (§22, authoritative):
 - the closed SpecialistDraftResult consistency contract
   (§22.18–§22.25).
 
-Step 9.3 does NOT implement post-draft validation, token resolution or
-final factual rendering; every successful section carries rendered_text
-= "" and post_validation is always None (§22.19, §22.23). Application
-integration remains prohibited (§22.29, §21.30).
+Step-9.4 surface (§23, authoritative):
+
+- deterministic post-draft validation over the interim sections — the
+  exact fourteen §23.3 checks in fixed order, PASS/FAIL only;
+- the closed token syntax / resolution / permission / raw-literal /
+  evidence / external-citation catalogs (§23.7–§23.37);
+- Python-owned token resolution and single-pass rendering
+  (§23.39–§23.43);
+- the final SpecialistDraftResult transition — SUCCESS with rendered
+  sections and a PASS DraftPostValidationResult, or FAILED with
+  POST_VALIDATION_FAILED and no usable sections (§23.44–§23.45).
+
+Step 9.4 adds ZERO new LLM calls (§23.49). Application integration
+remains prohibited (§22.29, §21.30, §23.51).
 
 All module-level names except generate_specialist_draft are
 underscore-private (§21.27). Private helper names are implementation-local
@@ -36,6 +46,7 @@ and are NOT external machine contracts.
 """
 
 import json
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -47,8 +58,11 @@ from domain.models import (
     DraftFailureCode,
     DraftGenerationStatus,
     DraftPermission,
+    DraftPostValidationResult,
     DraftSection,
     FactExtractionResult,
+    FactStatus,
+    HearingStatus,
     NoticeClassification,
     PreflightResult,
     ProceedingType,
@@ -56,6 +70,7 @@ from domain.models import (
     SpecialistDraftResult,
     SupportLevel,
     ValidationEngineResult,
+    ValidationItem,
     ValidationStatus,
     WorkflowDraftingProfile,
 )
@@ -487,6 +502,9 @@ _ERROR_LLM = "Specialist drafting provider call failed."
 _ERROR_MALFORMED = (
     "Specialist drafting response did not match the required schema."
 )
+_ERROR_POST_VALIDATION = (
+    "Specialist draft failed deterministic post-generation validation."
+)
 
 
 def _copy_result_metadata(
@@ -588,6 +606,656 @@ def _parse_strict_sections(
             )
         )
     return sections
+
+
+# --- Phase 2 Step 9.4: deterministic post-validation + rendering (§23) ---------
+
+# §23.3: the exact fourteen check IDs, in the exact emission order.
+_CHECK_SCHEMA = "draft.response.schema"
+_CHECK_COUNT = "draft.sections.count"
+_CHECK_IDS = "draft.sections.ids"
+_CHECK_ORDER = "draft.sections.order"
+_CHECK_NONEMPTY = "draft.sections.nonempty"
+_CHECK_TOKENS_SYNTAX = "draft.tokens.syntax"
+_CHECK_FACT_RESOLUTION = "draft.tokens.fact_resolution"
+_CHECK_FACT_PERMISSION = "draft.tokens.fact_permission"
+_CHECK_ARITH_RESOLUTION = "draft.tokens.arithmetic_resolution"
+_CHECK_DEADLINE_RESOLUTION = "draft.tokens.deadline_resolution"
+_CHECK_HEARING_RESOLUTION = "draft.tokens.hearing_resolution"
+_CHECK_RAW_FACT_LITERAL = "draft.prose.raw_fact_literal"
+_CHECK_EVIDENCE = "draft.prose.evidence_presence_language"
+_CHECK_CITATION = "draft.prose.external_citation_surface"
+
+_POST_VALIDATION_CHECK_IDS = (
+    _CHECK_SCHEMA,
+    _CHECK_COUNT,
+    _CHECK_IDS,
+    _CHECK_ORDER,
+    _CHECK_NONEMPTY,
+    _CHECK_TOKENS_SYNTAX,
+    _CHECK_FACT_RESOLUTION,
+    _CHECK_FACT_PERMISSION,
+    _CHECK_ARITH_RESOLUTION,
+    _CHECK_DEADLINE_RESOLUTION,
+    _CHECK_HEARING_RESOLUTION,
+    _CHECK_RAW_FACT_LITERAL,
+    _CHECK_EVIDENCE,
+    _CHECK_CITATION,
+)
+
+# §23.5: the exact twenty-eight PASS/FAIL messages, keyed by check ID.
+_POST_VALIDATION_MESSAGES = {
+    _CHECK_SCHEMA: (
+        "Draft response schema is structurally valid.",
+        "Draft response schema is not structurally valid.",
+    ),
+    _CHECK_COUNT: (
+        "Draft section count matches the drafting profile.",
+        "Draft section count does not match the drafting profile.",
+    ),
+    _CHECK_IDS: (
+        "Draft section IDs match the drafting profile.",
+        "Draft section IDs do not match the drafting profile.",
+    ),
+    _CHECK_ORDER: (
+        "Draft section order matches the drafting profile.",
+        "Draft section order does not match the drafting profile.",
+    ),
+    _CHECK_NONEMPTY: (
+        "Every draft section contains non-empty template text.",
+        "One or more draft sections contain empty template text.",
+    ),
+    _CHECK_TOKENS_SYNTAX: (
+        "Draft reference-token syntax is valid.",
+        "Draft contains malformed or unsupported reference-token syntax.",
+    ),
+    _CHECK_FACT_RESOLUTION: (
+        "All FACT tokens resolve to exactly one eligible fact.",
+        "One or more FACT tokens do not resolve to exactly one eligible fact.",
+    ),
+    _CHECK_FACT_PERMISSION: (
+        "All resolved FACT tokens satisfy draft-permission and fact-status invariants.",
+        "One or more resolved FACT tokens violate draft-permission or fact-status invariants.",
+    ),
+    _CHECK_ARITH_RESOLUTION: (
+        "All ARITH tokens resolve to approved deterministic arithmetic results.",
+        "One or more ARITH tokens do not resolve to approved deterministic arithmetic results.",
+    ),
+    _CHECK_DEADLINE_RESOLUTION: (
+        "All DEADLINE tokens resolve to the supplied deterministic deadline result.",
+        "One or more DEADLINE tokens cannot resolve to the supplied deterministic deadline result.",
+    ),
+    _CHECK_HEARING_RESOLUTION: (
+        "All HEARING tokens resolve to supplied deterministic hearing information.",
+        "One or more HEARING tokens cannot resolve to supplied deterministic hearing information.",
+    ),
+    _CHECK_RAW_FACT_LITERAL: (
+        "Draft template contains no prohibited raw case-specific factual literal.",
+        "Draft template contains a prohibited raw case-specific factual literal outside authorized tokens.",
+    ),
+    _CHECK_EVIDENCE: (
+        "Draft template contains no prohibited evidence-presence language.",
+        "Draft template contains prohibited evidence-presence language.",
+    ),
+    _CHECK_CITATION: (
+        "Draft template contains no prohibited external-citation surface.",
+        "Draft template contains a prohibited external-citation surface.",
+    ),
+}
+
+# §23.11: closed single-bracket lookalike detector (malformed-reference).
+_LOOKALIKE_RE = re.compile(
+    r"(?<!\[)\[(?:FACT:[^\[\]\r\n]*|ARITH:[^\[\]\r\n]*|"
+    r"DEADLINE(?::[^\[\]\r\n]*)?|HEARING(?::[^\[\]\r\n]*)?)\](?!\])",
+    re.IGNORECASE,
+)
+
+# §23.11: boundary-safe occurrence regexes (complete valid tokens only).
+_FACT_OCCURRENCE_RE = re.compile(
+    r"(?<!\[)\[\[FACT:([A-Za-z0-9][A-Za-z0-9._-]*)\]\](?!\])"
+)
+_ARITH_OCCURRENCE_RE = re.compile(
+    r"(?<!\[)\[\[ARITH:([1-9][0-9]*)\]\](?!\])"
+)
+_DEADLINE_OCCURRENCE_RE = re.compile(r"(?<!\[)\[\[DEADLINE\]\](?!\])")
+_HEARING_OCCURRENCE_RE = re.compile(r"(?<!\[)\[\[HEARING\]\](?!\])")
+
+# §23.43: single-pass replacement — one complete valid token occurrence.
+_COMPLETE_TOKEN_RE = re.compile(
+    r"(?<!\[)(\[\[(?:FACT:[A-Za-z0-9][A-Za-z0-9._-]*|"
+    r"ARITH:[1-9][0-9]*|DEADLINE|HEARING)\]\])(?!\])"
+)
+
+# §23.22: GSTIN-like literal.
+_GSTIN_RE = re.compile(
+    r"(?<![A-Z0-9])[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][0-9A-Z]Z[0-9A-Z](?![A-Z0-9])",
+    re.IGNORECASE,
+)
+
+# §23.23: rupee / currency amount (two patterns).
+_RUPEE_RE_A = re.compile(r"₹\s*[0-9][0-9,]*(?:\.[0-9]+)?")
+_RUPEE_RE_B = re.compile(
+    r"\b(?:INR|RS\.?|RUPEES?)\s*[:\-]?\s*[0-9][0-9,]*(?:\.[0-9]+)?\b",
+    re.IGNORECASE,
+)
+
+# §23.24: percentage.
+_PERCENT_RE = re.compile(r"(?<![A-Z0-9.])[0-9]+(?:\.[0-9]+)?\s*%(?![A-Z0-9])")
+
+# §23.25: numeric date (day-first, same separator).
+_NUMERIC_DATE_RE = re.compile(
+    r"\b(?:0?[1-9]|[12][0-9]|3[01])([./-])(?:0?[1-9]|1[0-2])\1(?:19|20)[0-9]{2}\b"
+)
+
+# §23.26: ISO date.
+_ISO_DATE_RE = re.compile(
+    r"\b(?:19|20)[0-9]{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])\b"
+)
+
+# §23.27: textual date (day-first).
+_TEXTUAL_DATE_RE = re.compile(
+    r"\b(?:0?[1-9]|[12][0-9]|3[01])\s+"
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
+    r"Nov(?:ember)?|Dec(?:ember)?)\s+(?:19|20)[0-9]{2}\b",
+    re.IGNORECASE,
+)
+
+# §23.28: labelled RFN / DIN.
+_RFN_DIN_RE = re.compile(
+    r"\b(?:RFN|DIN)\s*(?:NO\.?|NUMBER)?\s*[:#-]?\s*[A-Z0-9][A-Z0-9/-]{5,}\b",
+    re.IGNORECASE,
+)
+
+# §23.31: closed evidence-presence patterns.
+_EVIDENCE_PATTERNS = (
+    re.compile(r"\battached\b", re.IGNORECASE),
+    re.compile(r"\benclosed\b", re.IGNORECASE),
+    re.compile(r"\bannexed\b", re.IGNORECASE),
+    re.compile(r"\bsubmitted\s+herewith\b", re.IGNORECASE),
+    re.compile(r"\bwe\s+have\s+enclosed\b", re.IGNORECASE),
+    re.compile(r"\bwe\s+attach\b", re.IGNORECASE),
+)
+
+# §23.32: URLs.
+_URL_HTTP_RE = re.compile(r"\bhttps?://[^\s<>\"']+", re.IGNORECASE)
+_URL_WWW_RE = re.compile(r"\bwww\.[^\s<>\"']+", re.IGNORECASE)
+
+# §23.33: case-name style (case-sensitive).
+_CASE_NAME_RE = re.compile(
+    r"\b[A-Z][A-Za-z0-9&.,'() -]{1,80}\s+(?:v\.|vs\.|versus)\s+"
+    r"[A-Z][A-Za-z0-9&.,'() -]{1,80}\b"
+)
+
+# §23.34: reporter styles (case-insensitive).
+_REPORTER_PATTERNS = (
+    re.compile(r"\bAIR\s+(?:19|20)[0-9]{2}\s+[A-Z]{2,10}\s+[0-9]+\b", re.IGNORECASE),
+    re.compile(r"\b(?:19|20)[0-9]{2}\s*\([0-9]+\)\s*(?:SCC|GSTL|ELT|STR)\s+[0-9]+\b", re.IGNORECASE),
+    re.compile(r"\((?:19|20)[0-9]{2}\)\s*[0-9]+\s*(?:SCC|GSTL|ELT|STR)\s+[0-9]+\b", re.IGNORECASE),
+    re.compile(r"\b(?:19|20)[0-9]{2}\s+(?:INSC|INHC)\s+[0-9]+\b", re.IGNORECASE),
+    re.compile(r"\b(?:19|20)[0-9]{2}\s+SCC\s+OnLine\s+[A-Za-z]+\s+[0-9]+\b", re.IGNORECASE),
+)
+
+# §23.35: numeric footnote.
+_NUMERIC_FOOTNOTE_RE = re.compile(r"(?<!\[)\[[0-9]{1,3}\](?!\])")
+
+
+def _dedup_first_occurrence(items):
+    """§23.12, §23.15, §23.17: first-occurrence deduplication preserving
+    order."""
+    seen = set()
+    result = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _safe_template_texts(sections):
+    """§23.6: string template_text of schema-compatible sections only."""
+    return [
+        section.template_text
+        for section in sections
+        if isinstance(section, DraftSection)
+        and isinstance(section.template_text, str)
+    ]
+
+
+def _collect_tokens(texts):
+    """§23.12: token references in section order then left-to-right
+    occurrence order. Returns (fact_ids, arith_ns, deadline_seen,
+    hearing_seen)."""
+    fact_ids = []
+    arith_ns = []
+    deadline_seen = False
+    hearing_seen = False
+    for text in texts:
+        for match in _FACT_OCCURRENCE_RE.finditer(text):
+            fact_ids.append(match.group(1))
+        for match in _ARITH_OCCURRENCE_RE.finditer(text):
+            arith_ns.append(int(match.group(1)))
+        if _DEADLINE_OCCURRENCE_RE.search(text):
+            deadline_seen = True
+        if _HEARING_OCCURRENCE_RE.search(text):
+            hearing_seen = True
+    return fact_ids, arith_ns, deadline_seen, hearing_seen
+
+
+def _token_syntax_ok(texts):
+    """§23.11 A/B algorithm: remove complete valid token occurrences, then
+    FAIL on any remaining [[/]] or a single-bracket lookalike."""
+    for text in texts:
+        remaining = _COMPLETE_TOKEN_RE.sub("", text)
+        if "[[" in remaining or "]]" in remaining:
+            return False
+        if _LOOKALIKE_RE.search(remaining):
+            return False
+    return True
+
+
+def _resolve_fact(fact_id, extraction_result):
+    """§23.13: exactly one eligible fact (YES or CONDITIONAL) with the
+    exact case-sensitive fact_id."""
+    matches = [
+        fact
+        for fact in extraction_result.facts
+        if fact.fact_id == fact_id
+        and fact.allowed_in_draft
+        in (DraftPermission.YES, DraftPermission.CONDITIONAL)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _resolve_arithmetic(n, arithmetic_results, validation_result):
+    """§23.16: approved only when in-range, all five structural checks
+    PASS, status PASS/MISMATCH, and result is not None."""
+    if n < 1 or n > len(arithmetic_results):
+        return None
+    result = arithmetic_results[n - 1]
+    if result.status not in (ArithmeticStatus.PASS, ArithmeticStatus.MISMATCH):
+        return None
+    if result.result is None:
+        return None
+    status_by_id = {item.check_id: item.status for item in validation_result.checks}
+    if any(
+        status_by_id.get(f"arithmetic.{n}.{suffix}") is not ValidationStatus.PASS
+        for suffix in _ARITHMETIC_STRUCTURAL_SUFFIXES
+    ):
+        return None
+    return result
+
+
+def _render_fact(fact):
+    """§23.39: CONFIRMED → notice records, ALLEGED → department alleges."""
+    if fact.status is FactStatus.CONFIRMED:
+        text = 'The notice records: "' + (fact.source_text or "") + '"'
+    else:
+        text = 'The department alleges: "' + (fact.source_text or "") + '"'
+    if fact.source_page is not None:
+        text += " (notice p. " + str(fact.source_page) + ")"
+    return text
+
+
+def _render_arithmetic(result):
+    """§23.40: deterministic reconciliation output line."""
+    return (
+        "Deterministic reconciliation output: "
+        + result.formula
+        + " = "
+        + str(result.result)
+        + " "
+        + result.currency
+        + " (status: "
+        + result.status.value
+        + ")."
+    )
+
+
+def _render_deadline(deadline, preflight):
+    """§23.41: exact ten-field machine-labelled deadline output."""
+
+    def date_field(value):
+        return "null" if value is None else value.isoformat()
+
+    def int_field(value):
+        return "null" if value is None else str(value)
+
+    def bool_field(value):
+        return "true" if value else "false"
+
+    fields = [
+        "notice_date=" + date_field(deadline.notice_date),
+        "service_date=" + date_field(deadline.service_date),
+        "response_period_days=" + int_field(deadline.response_period_days),
+        "response_deadline=" + date_field(deadline.response_deadline),
+        "deadline_confidence=" + deadline.deadline_confidence.value,
+        "deadline_status=" + deadline.deadline_status.value,
+        "days_remaining=" + int_field(deadline.days_remaining),
+        "portal_verification_required=" + bool_field(
+            deadline.portal_verification_required
+        ),
+        "notes=" + json.dumps(deadline.notes),
+        "preflight_deadline_conflict_status="
+        + preflight.deadline_conflict_status.value,
+    ]
+    return "Deterministic deadline output: " + "; ".join(fields) + "."
+
+
+def _render_hearing(deadline):
+    """§23.42: deterministic hearing output line."""
+    return (
+        "Deterministic hearing output: hearing_date="
+        + deadline.hearing_date.isoformat()
+        + "; hearing_status="
+        + deadline.hearing_status.value
+        + "."
+    )
+
+
+def _render_template(text, fact_map, arith_map, deadline_result, preflight):
+    """§23.43: single-pass left-to-right token replacement."""
+
+    def replace(match):
+        token = match.group(1)
+        if token.startswith("[[FACT:"):
+            return _render_fact(fact_map[token[7:-2]])
+        if token.startswith("[[ARITH:"):
+            return _render_arithmetic(arith_map[int(token[8:-2])])
+        if token == "[[DEADLINE]]":
+            return _render_deadline(deadline_result, preflight)
+        if token == "[[HEARING]]":
+            return _render_hearing(deadline_result)
+        return match.group(0)
+
+    return _COMPLETE_TOKEN_RE.sub(replace, text)
+
+
+def _run_post_validation(
+    sections,
+    drafting_profile,
+    extraction_result,
+    arithmetic_results,
+    validation_result,
+    preflight_result,
+    deadline_result,
+):
+    """§23.1–§23.38: emit exactly fourteen ValidationItems in fixed order."""
+    profile_ids = [spec.section_id for spec in drafting_profile.sections]
+
+    texts = _safe_template_texts(sections)
+    fact_ids_in_order, arith_ns_in_order, deadline_seen, hearing_seen = (
+        _collect_tokens(texts)
+    )
+
+    # --- checks 1–5: structural (§23.6) ---
+    schema_ok = all(
+        isinstance(section, DraftSection)
+        and isinstance(section.section_id, str)
+        and isinstance(section.title, str)
+        and isinstance(section.template_text, str)
+        and section.rendered_text == ""
+        for section in sections
+    )
+    count_ok = len(sections) == len(profile_ids)
+    returned_ids = [
+        section.section_id if isinstance(section, DraftSection) else None
+        for section in sections
+    ]
+    ids_ok = returned_ids == profile_ids
+    order_ok = returned_ids == profile_ids
+    nonempty_ok = all(
+        isinstance(section, DraftSection)
+        and isinstance(section.template_text, str)
+        and section.template_text.strip() != ""
+        for section in sections
+    )
+
+    # --- check 6: token syntax (§23.11) ---
+    syntax_ok = _token_syntax_ok(texts)
+
+    # --- checks 7–8: FACT resolution / permission (§23.13–§23.14) ---
+    resolved_facts = {}
+    fact_resolution_ok = True
+    for fact_id in fact_ids_in_order:
+        fact = _resolve_fact(fact_id, extraction_result)
+        if fact is None:
+            fact_resolution_ok = False
+        else:
+            resolved_facts[fact_id] = fact
+
+    fact_permission_ok = True
+    for fact_id in fact_ids_in_order:
+        fact = resolved_facts.get(fact_id)
+        if fact is None:
+            continue
+        permitted = (
+            fact.status is FactStatus.CONFIRMED
+            and fact.allowed_in_draft is DraftPermission.YES
+        ) or (
+            fact.status is FactStatus.ALLEGED
+            and fact.allowed_in_draft is DraftPermission.CONDITIONAL
+        )
+        if not permitted:
+            fact_permission_ok = False
+
+    # --- check 9: ARITH resolution (§23.16) ---
+    arith_resolution_ok = True
+    for n in arith_ns_in_order:
+        if _resolve_arithmetic(n, arithmetic_results, validation_result) is None:
+            arith_resolution_ok = False
+
+    # --- checks 10–11: DEADLINE / HEARING resolution (§23.18–§23.19) ---
+    deadline_resolution_ok = True
+    if deadline_seen and deadline_result is None:
+        deadline_resolution_ok = False
+
+    hearing_resolution_ok = True
+    if hearing_seen and (
+        deadline_result is None
+        or deadline_result.hearing_date is None
+        or deadline_result.hearing_status
+        not in (
+            HearingStatus.UPCOMING,
+            HearingStatus.TODAY,
+            HearingStatus.PASSED,
+        )
+    ):
+        hearing_resolution_ok = False
+
+    # --- check 12: raw fact literal (§23.20–§23.30) ---
+    raw_literal_ok = True
+    for text in texts:
+        if (
+            _GSTIN_RE.search(text)
+            or _RUPEE_RE_A.search(text)
+            or _RUPEE_RE_B.search(text)
+            or _PERCENT_RE.search(text)
+            or _NUMERIC_DATE_RE.search(text)
+            or _ISO_DATE_RE.search(text)
+            or _TEXTUAL_DATE_RE.search(text)
+            or _RFN_DIN_RE.search(text)
+        ):
+            raw_literal_ok = False
+            break
+
+    raw_literal_fact_ids = []
+    for fact in extraction_result.facts:
+        if fact.allowed_in_draft not in (
+            DraftPermission.YES,
+            DraftPermission.CONDITIONAL,
+        ):
+            continue
+        if fact.source_text is None:
+            continue
+        candidate = fact.source_text.strip()
+        if len(candidate) < 24:
+            continue
+        for text in texts:
+            if candidate in text:
+                raw_literal_ok = False
+                raw_literal_fact_ids.append(fact.fact_id)
+                break
+
+    # --- check 13: evidence-presence language (§23.31) ---
+    evidence_ok = True
+    for text in texts:
+        if any(pattern.search(text) for pattern in _EVIDENCE_PATTERNS):
+            evidence_ok = False
+            break
+
+    # --- check 14: external citation surface (§23.32–§23.35) ---
+    citation_ok = True
+    for text in texts:
+        if (
+            _URL_HTTP_RE.search(text)
+            or _URL_WWW_RE.search(text)
+            or _CASE_NAME_RE.search(text)
+            or _NUMERIC_FOOTNOTE_RE.search(text)
+            or any(pattern.search(text) for pattern in _REPORTER_PATTERNS)
+        ):
+            citation_ok = False
+            break
+
+    # --- related-ID metadata (§23.15, §23.17, §23.30, §23.46) ---
+    fact_related_ids = _dedup_first_occurrence(fact_ids_in_order)
+    arith_related_types = _dedup_first_occurrence(
+        arithmetic_results[n - 1].calculation_type
+        for n in arith_ns_in_order
+        if 1 <= n <= len(arithmetic_results)
+    )
+
+    def item(check_id, ok, fact_ids=(), calc_types=()):
+        pass_msg, fail_msg = _POST_VALIDATION_MESSAGES[check_id]
+        return ValidationItem(
+            check_id=check_id,
+            status=ValidationStatus.PASS if ok else ValidationStatus.FAIL,
+            message=pass_msg if ok else fail_msg,
+            related_fact_ids=list(fact_ids),
+            related_calculation_types=list(calc_types),
+        )
+
+    checks = [
+        item(_CHECK_SCHEMA, schema_ok),
+        item(_CHECK_COUNT, count_ok),
+        item(_CHECK_IDS, ids_ok),
+        item(_CHECK_ORDER, order_ok),
+        item(_CHECK_NONEMPTY, nonempty_ok),
+        item(_CHECK_TOKENS_SYNTAX, syntax_ok),
+        item(_CHECK_FACT_RESOLUTION, fact_resolution_ok, fact_related_ids),
+        item(_CHECK_FACT_PERMISSION, fact_permission_ok, fact_related_ids),
+        item(_CHECK_ARITH_RESOLUTION, arith_resolution_ok, (), arith_related_types),
+        item(_CHECK_DEADLINE_RESOLUTION, deadline_resolution_ok),
+        item(_CHECK_HEARING_RESOLUTION, hearing_resolution_ok),
+        item(_CHECK_RAW_FACT_LITERAL, raw_literal_ok, raw_literal_fact_ids),
+        item(_CHECK_EVIDENCE, evidence_ok),
+        item(_CHECK_CITATION, citation_ok),
+    ]
+
+    overall = (
+        ValidationStatus.FAIL
+        if any(check.status is ValidationStatus.FAIL for check in checks)
+        else ValidationStatus.PASS
+    )
+    return DraftPostValidationResult(overall_status=overall, checks=checks)
+
+
+def _render_sections(
+    sections,
+    extraction_result,
+    arithmetic_results,
+    validation_result,
+    deadline_result,
+    preflight_result,
+):
+    """§23.43–§23.45: fresh DraftSection objects with rendered_text set via
+    single-pass replacement; template_text unchanged (§23.48)."""
+    texts = _safe_template_texts(sections)
+    fact_map = {}
+    arith_map = {}
+    for text in texts:
+        for match in _FACT_OCCURRENCE_RE.finditer(text):
+            fact = _resolve_fact(match.group(1), extraction_result)
+            if fact is not None:
+                fact_map[match.group(1)] = fact
+        for match in _ARITH_OCCURRENCE_RE.finditer(text):
+            result = _resolve_arithmetic(
+                int(match.group(1)), arithmetic_results, validation_result
+            )
+            if result is not None:
+                arith_map[int(match.group(1))] = result
+
+    rendered = []
+    for section in sections:
+        rendered.append(
+            DraftSection(
+                section_id=section.section_id,
+                title=section.title,
+                template_text=section.template_text,
+                rendered_text=_render_template(
+                    section.template_text,
+                    fact_map,
+                    arith_map,
+                    deadline_result,
+                    preflight_result,
+                ),
+            )
+        )
+    return rendered
+
+
+def _post_validate_and_render(
+    extraction_result,
+    preflight_result,
+    arithmetic_results,
+    validation_result,
+    deadline_result,
+    drafting_profile,
+    sections,
+):
+    """§23.44–§23.45: run Step-9.4 post-validation, then either fail with
+    POST_VALIDATION_FAILED (no usable sections) or render and succeed."""
+    post_validation = _run_post_validation(
+        sections,
+        drafting_profile,
+        extraction_result,
+        arithmetic_results,
+        validation_result,
+        preflight_result,
+        deadline_result,
+    )
+    unresolved, evidence, reviews = _copy_result_metadata(validation_result)
+    if post_validation.overall_status is ValidationStatus.FAIL:
+        return SpecialistDraftResult(
+            status=DraftGenerationStatus.FAILED,
+            draft_eligibility=validation_result.draft_eligibility,
+            sections=[],
+            unresolved_requirements=unresolved,
+            evidence_checklist=evidence,
+            review_requirements=reviews,
+            post_validation=post_validation,
+            failure_code=DraftFailureCode.POST_VALIDATION_FAILED,
+            error_message=_ERROR_POST_VALIDATION,
+        )
+    rendered = _render_sections(
+        sections,
+        extraction_result,
+        arithmetic_results,
+        validation_result,
+        deadline_result,
+        preflight_result,
+    )
+    return SpecialistDraftResult(
+        status=DraftGenerationStatus.SUCCESS,
+        draft_eligibility=validation_result.draft_eligibility,
+        sections=rendered,
+        unresolved_requirements=unresolved,
+        evidence_checklist=evidence,
+        review_requirements=reviews,
+        post_validation=post_validation,
+        failure_code=None,
+        error_message=None,
+    )
 
 
 def generate_specialist_draft(
@@ -722,8 +1390,12 @@ def generate_specialist_draft(
             _ERROR_MALFORMED,
         )
 
-    return _specialist_result(
+    return _post_validate_and_render(
+        extraction_result,
+        preflight_result,
+        arithmetic_results,
         validation_result,
-        DraftGenerationStatus.SUCCESS,
-        sections=sections,
+        deadline_result,
+        drafting_profile,
+        sections,
     )

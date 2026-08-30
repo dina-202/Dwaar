@@ -486,9 +486,9 @@ def context_json_from_prompt(prompt):
 ITC_SECTION_IDS = ["sec73_itc.s1", "sec73_itc.s2", "sec73_itc.s3"]
 
 DEFAULT_RESPONSE_BODIES = [
-    "Working paper text with token [[FACT:F-001]].",
-    "Reconciliation table with token [[ARITH:1]].",
-    "Reviewable draft with [[DEADLINE]] and [[HEARING]].",
+    "Working paper body without reference tokens.",
+    "Reconciliation table body without reference tokens.",
+    "Reviewable draft body without reference tokens.",
 ]
 
 
@@ -577,7 +577,7 @@ class ModuleSurfaceTests(unittest.TestCase):
     SOURCE = pathlib.Path(engine.__file__).read_text(encoding="utf-8")
 
     ALLOWED_IMPORT_ROOTS = (
-        "json", "pathlib", "typing", "domain", "modules", "workflows",
+        "json", "pathlib", "re", "typing", "domain", "modules", "workflows",
     )
 
     def test_module_imports(self):
@@ -628,7 +628,7 @@ class ModuleSurfaceTests(unittest.TestCase):
 
     def test_no_network_imports(self):
         lowered = self.SOURCE.lower()
-        for token in ("requests", "urllib", "socket", "streamlit", "http"):
+        for token in ("requests", "urllib", "socket", "streamlit"):
             self.assertNotIn(token, lowered, token)
 
     def test_no_validation_engine_import(self):
@@ -2488,26 +2488,29 @@ class StagingTests(unittest.TestCase):
     def test_specialist_draft_result_creation_present(self):
         self.assertIn("SpecialistDraftResult(", self.SOURCE)
 
-    def test_no_token_resolver(self):
+    def test_token_resolver_present(self):
         for token in ("[[FACT", "[[ARITH", "[[DEADLINE]]", "[[HEARING]]"):
-            self.assertNotIn(token, self.SOURCE, token)
+            self.assertIn(token, self.SOURCE, token)
 
     def test_only_interim_rendered_text_construction(self):
         self.assertIn('rendered_text=""', self.SOURCE)
 
-    def test_no_draft_post_validation_result_production(self):
-        self.assertNotIn("DraftPostValidationResult", self.SOURCE)
+    def test_draft_post_validation_result_present(self):
+        self.assertIn("DraftPostValidationResult", self.SOURCE)
 
-    def test_no_post_draft_check_ids_emitted(self):
-        self.assertNotIn("draft.response", self.SOURCE)
-        self.assertNotIn("draft.sections", self.SOURCE)
-        self.assertNotIn("draft.tokens", self.SOURCE)
-        self.assertNotIn("draft.prose", self.SOURCE)
+    def test_post_draft_check_ids_emitted(self):
+        for token in (
+            "draft.response",
+            "draft.sections",
+            "draft.tokens",
+            "draft.prose",
+        ):
+            self.assertIn(token, self.SOURCE, token)
 
-    def test_no_leakage_regex_implementation(self):
-        self.assertNotIn("import re", self.SOURCE)
-        for token in ("re.compile", "re.search", "re.match", "regex"):
-            self.assertNotIn(token, self.SOURCE, token)
+    def test_deterministic_regex_present(self):
+        self.assertIn("import re", self.SOURCE)
+        for token in ("re.compile", ".search(", ".sub("):
+            self.assertIn(token, self.SOURCE, token)
 
     def test_no_app_integration(self):
         self.assertNotIn("app.py", self.SOURCE)
@@ -3692,14 +3695,18 @@ class SuccessResultTests(unittest.TestCase):
             DEFAULT_RESPONSE_BODIES,
         )
 
-    def test_success_rendered_text_empty(self):
+    def test_success_rendered_text_matches_template(self):
         result, _ = run_draft()
         for section in result.sections:
-            self.assertEqual(section.rendered_text, "")
+            self.assertEqual(section.rendered_text, section.template_text)
 
-    def test_success_post_validation_none(self):
+    def test_success_post_validation_pass(self):
         result, _ = run_draft()
-        self.assertIsNone(result.post_validation)
+        self.assertIsNotNone(result.post_validation)
+        self.assertIs(
+            result.post_validation.overall_status, ValidationStatus.PASS
+        )
+        self.assertEqual(len(result.post_validation.checks), 14)
 
     def test_success_metadata_copied(self):
         validation = make_rich_validation()
@@ -3784,7 +3791,10 @@ class NoPartialSuccessTests(unittest.TestCase):
 # --- 36. Step-9.3 vs Step-9.4 boundary (items 132–140) --------------------------
 
 
-class StepBoundaryTests(unittest.TestCase):
+class Step94BoundaryTests(unittest.TestCase):
+    """Step 9.4 boundary: unsupported/malformed surface now fails
+    post-validation rather than passing through (§23.11, §23.44)."""
+
     def _run_unsafe_bodies(self, bodies):
         return run_draft(
             response=make_response_json(
@@ -3795,31 +3805,46 @@ class StepBoundaryTests(unittest.TestCase):
             )
         )
 
-    def test_unknown_token_still_success(self):
+    def _assert_post_validation_failed(self, result):
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+        self.assertIs(
+            result.failure_code, DraftFailureCode.POST_VALIDATION_FAILED
+        )
+        self.assertEqual(result.sections, [])
+        self.assertEqual(
+            result.error_message,
+            "Specialist draft failed deterministic post-generation validation.",
+        )
+        self.assertIs(
+            result.post_validation.overall_status, ValidationStatus.FAIL
+        )
+        self.assertEqual(len(result.post_validation.checks), 14)
+
+    def test_unknown_token_fails(self):
         result, _ = self._run_unsafe_bodies(
             ["Has [[BAD:TOKEN]].", "Two.", "Three."]
         )
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self._assert_post_validation_failed(result)
 
-    def test_unresolved_fact_token_still_success(self):
+    def test_unresolved_fact_token_fails(self):
         result, _ = self._run_unsafe_bodies(
             ["Refers [[FACT:F-999]].", "Two.", "Three."]
         )
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self._assert_post_validation_failed(result)
 
-    def test_invalid_arithmetic_index_still_success(self):
+    def test_invalid_arithmetic_index_fails(self):
         result, _ = self._run_unsafe_bodies(
             ["Uses [[ARITH:999]].", "Two.", "Three."]
         )
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self._assert_post_validation_failed(result)
 
-    def test_attached_word_still_success(self):
+    def test_attached_word_fails(self):
         result, _ = self._run_unsafe_bodies(
             ["Please find the annexure attached.", "Two.", "Three."]
         )
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self._assert_post_validation_failed(result)
 
-    def test_urls_and_citations_still_success(self):
+    def test_urls_and_citations_fail(self):
         result, _ = self._run_unsafe_bodies(
             [
                 "See https://example.com/page and (2025) 1 SCC 100.",
@@ -3827,23 +3852,21 @@ class StepBoundaryTests(unittest.TestCase):
                 "Three.",
             ]
         )
-        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+        self._assert_post_validation_failed(result)
 
-    def test_rendered_text_never_populated(self):
-        result, _ = self._run_unsafe_bodies(
-            ["[[BAD:TOKEN]]", "Two.", "Three."]
-        )
-        for section in result.sections:
-            self.assertEqual(section.rendered_text, "")
-
-    def test_post_validation_never_populated(self):
+    def test_rendered_text_populated_on_success(self):
         result, _ = run_draft()
-        self.assertIsNone(result.post_validation)
+        for section in result.sections:
+            self.assertEqual(section.rendered_text, section.template_text)
 
-    def test_no_draft_post_validation_result_in_engine(self):
-        self.assertNotIn("DraftPostValidationResult", engine_source())
+    def test_post_validation_populated_on_success(self):
+        result, _ = run_draft()
+        self.assertIsNotNone(result.post_validation)
 
-    def test_no_step_9_4_check_ids_in_engine(self):
+    def test_draft_post_validation_result_in_engine(self):
+        self.assertIn("DraftPostValidationResult", engine_source())
+
+    def test_step_9_4_check_ids_in_engine(self):
         source = engine_source()
         for token in (
             "draft.response",
@@ -3851,7 +3874,7 @@ class StepBoundaryTests(unittest.TestCase):
             "draft.tokens",
             "draft.prose",
         ):
-            self.assertNotIn(token, source, token)
+            self.assertIn(token, source, token)
 
 
 # --- 37. status / failure-code consistency (items 141–144) ----------------------
@@ -3921,26 +3944,28 @@ class StatusConsistencyTests(unittest.TestCase):
             self.assertIs(result.status, DraftGenerationStatus.FAILED)
             self.assertIn(result.failure_code, failed_codes)
 
-    def test_post_validation_failed_never_produced(self):
-        self.assertNotIn("POST_VALIDATION_FAILED", engine_source())
-        scenarios = [
-            run_draft(),
-            run_draft(validation_result=None),
-            run_draft(
-                classification=make_classification(
-                    support_level=SupportLevel.TRIAGE_ONLY
-                )
-            ),
-            run_draft(response="Error: boom"),
-            run_draft(response="{bad json"),
-        ]
-        with mock.patch.object(engine, "get_workflow", return_value=None):
-            scenarios.append(run_draft())
-        for result, _ in scenarios:
-            self.assertIsNot(
-                result.failure_code,
-                DraftFailureCode.POST_VALIDATION_FAILED,
+    def test_post_validation_failed_produced(self):
+        self.assertIn("POST_VALIDATION_FAILED", engine_source())
+        result, _ = run_draft(
+            response=make_response_json(
+                sections=[
+                    {
+                        "section_id": "sec73_itc.s1",
+                        "body_template": "Has [[BAD:TOKEN]].",
+                    },
+                    {"section_id": "sec73_itc.s2", "body_template": "Two."},
+                    {"section_id": "sec73_itc.s3", "body_template": "Three."},
+                ]
             )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.POST_VALIDATION_FAILED
+        )
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+        self.assertEqual(result.sections, [])
+        self.assertIs(
+            result.post_validation.overall_status, ValidationStatus.FAIL
+        )
 
 
 # --- 38. purity / scope (items 145–160) -----------------------------------------
@@ -3959,7 +3984,7 @@ class PurityScopeTests(unittest.TestCase):
 
     def test_no_network_imports(self):
         source = engine_source().lower()
-        for token in ("requests", "urllib", "socket", "http"):
+        for token in ("requests", "urllib", "socket"):
             self.assertNotIn(token, source, token)
 
     def test_no_app_integration(self):
@@ -3971,11 +3996,10 @@ class PurityScopeTests(unittest.TestCase):
     def test_no_notice_prompt_reference(self):
         self.assertNotIn("notice_prompt", engine_source())
 
-    def test_no_regex_implementation(self):
+    def test_regex_implementation_present(self):
         source = engine_source()
-        self.assertNotIn("import re", source)
-        for token in ("re.compile", "re.search", "re.match", "regex"):
-            self.assertNotIn(token, source, token)
+        self.assertIn("import re", source)
+        self.assertIn("re.compile", source)
 
     def test_no_leakage_scanners(self):
         self.assertNotIn("leakage", engine_source().lower())
@@ -4049,14 +4073,1128 @@ class PurityScopeTests(unittest.TestCase):
             result.review_requirements, validation.review_requirements
         )
 
-    def test_no_step_9_4_symbols_in_engine(self):
+    def test_step_9_4_symbols_in_engine(self):
         source = engine_source()
-        for token in (
-            "resolve_token",
-            "token_resolver",
-            "DraftPostValidationResult",
+        self.assertIn("DraftPostValidationResult", source)
+
+
+# --- 39. Phase 2 Step 9.4: post-validation + resolution + rendering ------------
+# (§23, authoritative)
+
+
+def make_interim_sections(bodies):
+    """Interim DraftSections (rendered_text == "") for the ITC profile."""
+    profile = get_drafting_profile(ProceedingType.GST_SEC73_ITC)
+    return [
+        DraftSection(
+            section_id=spec.section_id,
+            title=spec.title,
+            template_text=body,
+            rendered_text="",
+        )
+        for spec, body in zip(profile.sections, bodies)
+    ]
+
+
+def check_by_id(result, check_id):
+    for item in result.checks:
+        if item.check_id == check_id:
+            return item
+    raise KeyError(check_id)
+
+
+def run_post_validation(bodies, **overrides):
+    """engine._run_post_validation over ITC interim sections built from
+    three bodies."""
+    defaults = dict(
+        drafting_profile=get_drafting_profile(
+            ProceedingType.GST_SEC73_ITC
+        ),
+        extraction_result=make_extraction(),
+        arithmetic_results=[],
+        validation_result=make_validation_result(),
+        preflight_result=make_preflight(),
+        deadline_result=None,
+    )
+    defaults.update(overrides)
+    return engine._run_post_validation(
+        make_interim_sections(bodies), **defaults
+    )
+
+
+def make_step94_happy_inputs(**overrides):
+    """A fully resolvable permitted input set for end-to-end Step-9.4."""
+    fact = make_fact(
+        fact_id="F-001",
+        status=FactStatus.CONFIRMED,
+        source_text="The taxpayer claimed input tax credit.",
+        source_page=2,
+        allowed_in_draft=DraftPermission.YES,
+    )
+    arith = make_arithmetic(
+        calculation_type=ArithmeticCalculationType.ITC_DIFFERENCE,
+        status=ArithmeticStatus.PASS,
+        result=Decimal("888.80"),
+        formula="left - right",
+        currency="INR",
+        allowed_in_draft=DraftPermission.YES,
+    )
+    deadline = make_deadline(
+        notice_date=date(2025, 3, 10),
+        service_date=date(2025, 3, 12),
+        response_period_days=30,
+        response_deadline=date(2025, 4, 11),
+        deadline_confidence=DeadlineConfidence.CONFIRMED,
+        deadline_status=DeadlineStatus.UPCOMING,
+        days_remaining=20,
+        hearing_date=date(2025, 5, 1),
+        hearing_status=HearingStatus.UPCOMING,
+        portal_verification_required=False,
+        notes=["note a"],
+    )
+    inputs = dict(
+        classification=make_classification(),
+        extraction_result=make_extraction(facts=[fact]),
+        preflight_result=make_preflight(),
+        arithmetic_results=[arith],
+        validation_result=make_validation_result(
+            draft_eligibility=DraftEligibility.REVIEW_REQUIRED,
+            checks=checks_for_arithmetic([arith]),
+        ),
+        deadline_result=deadline,
+    )
+    inputs.update(overrides)
+    return inputs
+
+
+HAPPY_BODIES = [
+    "Working paper [[FACT:F-001]].",
+    "Table [[ARITH:1]]",
+    "Draft [[DEADLINE]] and [[HEARING]]",
+]
+
+
+def render_happy_sections(bodies=HAPPY_BODIES):
+    inputs = make_step94_happy_inputs()
+    return engine._render_sections(
+        make_interim_sections(bodies),
+        inputs["extraction_result"],
+        inputs["arithmetic_results"],
+        inputs["validation_result"],
+        inputs["deadline_result"],
+        inputs["preflight_result"],
+    )
+
+
+class PostValidationCheckOrderTests(unittest.TestCase):
+    """The exact fourteen §23.3 checks, fixed order, PASS/FAIL only."""
+
+    def test_exactly_fourteen_checks(self):
+        result = run_post_validation(["One.", "Two.", "Three."])
+        self.assertEqual(len(result.checks), 14)
+
+    def test_exact_check_id_order(self):
+        result = run_post_validation(["One.", "Two.", "Three."])
+        self.assertEqual(
+            [item.check_id for item in result.checks],
+            list(engine._POST_VALIDATION_CHECK_IDS),
+        )
+
+    def test_vacuous_pass_overall_status(self):
+        result = run_post_validation(["One.", "Two.", "Three."])
+        self.assertIs(result.overall_status, ValidationStatus.PASS)
+
+    def test_all_statuses_are_pass_or_fail(self):
+        result = run_post_validation(["One.", "Two.", "Three."])
+        for item in result.checks:
+            self.assertIn(
+                item.status,
+                (ValidationStatus.PASS, ValidationStatus.FAIL),
+            )
+
+    def test_no_warning_status_anywhere(self):
+        result = run_post_validation(["One.", "Two.", "Three."])
+        for item in result.checks:
+            self.assertIsNot(item.status, ValidationStatus.WARNING)
+
+    def test_pass_messages_match_catalog(self):
+        result = run_post_validation(["One.", "Two.", "Three."])
+        for item in result.checks:
+            self.assertIs(item.status, ValidationStatus.PASS)
+            self.assertEqual(
+                item.message,
+                engine._POST_VALIDATION_MESSAGES[item.check_id][0],
+            )
+
+    def test_schema_fail_message(self):
+        result = run_post_validation(
+            ["One.", "Two.", "Three."],
+            drafting_profile=get_drafting_profile(
+                ProceedingType.GST_SEC73_ITC
+            ),
+        )
+        bad = engine._run_post_validation(
+            ["not", "a", "list"],
+            get_drafting_profile(ProceedingType.GST_SEC73_ITC),
+            make_extraction(),
+            [],
+            make_validation_result(),
+            make_preflight(),
+            None,
+        )
+        schema_item = check_by_id(bad, "draft.response.schema")
+        self.assertIs(schema_item.status, ValidationStatus.FAIL)
+        self.assertEqual(
+            schema_item.message,
+            "Draft response schema is not structurally valid.",
+        )
+
+    def test_structural_checks_have_no_related_ids(self):
+        result = run_post_validation(["One.", "Two.", "Three."])
+        for check_id in (
+            "draft.response.schema",
+            "draft.sections.count",
+            "draft.sections.ids",
+            "draft.sections.order",
+            "draft.sections.nonempty",
+            "draft.tokens.syntax",
         ):
-            self.assertNotIn(token, source, token)
+            item = check_by_id(result, check_id)
+            self.assertEqual(item.related_fact_ids, [])
+            self.assertEqual(item.related_calculation_types, [])
+
+
+class PostValidationStructuralTests(unittest.TestCase):
+    """Checks 1–5: schema / count / ids / order / nonempty (§23.6)."""
+
+    def _pv(self, sections):
+        return engine._run_post_validation(
+            sections,
+            get_drafting_profile(ProceedingType.GST_SEC73_ITC),
+            make_extraction(),
+            [],
+            make_validation_result(),
+            make_preflight(),
+            None,
+        )
+
+    def test_schema_pass(self):
+        result = self._pv(make_interim_sections(["One.", "Two.", "Three."]))
+        self.assertIs(
+            check_by_id(result, "draft.response.schema").status,
+            ValidationStatus.PASS,
+        )
+
+    def test_schema_fail_non_draft_section(self):
+        sections = make_interim_sections(["One.", "Two.", "Three."])
+        sections[0] = "not a DraftSection"
+        self.assertIs(
+            check_by_id(
+                self._pv(sections), "draft.response.schema"
+            ).status,
+            ValidationStatus.FAIL,
+        )
+
+    def test_count_pass(self):
+        result = self._pv(make_interim_sections(["One.", "Two.", "Three."]))
+        self.assertIs(
+            check_by_id(result, "draft.sections.count").status,
+            ValidationStatus.PASS,
+        )
+
+    def test_count_fail(self):
+        result = self._pv(
+            make_interim_sections(["One.", "Two.", "Three."])[:2]
+        )
+        self.assertIs(
+            check_by_id(result, "draft.sections.count").status,
+            ValidationStatus.FAIL,
+        )
+
+    def test_ids_pass(self):
+        result = self._pv(make_interim_sections(["One.", "Two.", "Three."]))
+        self.assertIs(
+            check_by_id(result, "draft.sections.ids").status,
+            ValidationStatus.PASS,
+        )
+
+    def test_ids_fail_wrong_id(self):
+        sections = make_interim_sections(["One.", "Two.", "Three."])
+        sections[1] = DraftSection(
+            section_id="wrong.id", title="x", template_text="Two.", rendered_text=""
+        )
+        self.assertIs(
+            check_by_id(self._pv(sections), "draft.sections.ids").status,
+            ValidationStatus.FAIL,
+        )
+
+    def test_order_fail_swapped(self):
+        profile = get_drafting_profile(ProceedingType.GST_SEC73_ITC)
+        ids = [spec.section_id for spec in profile.sections]
+        swapped = [ids[0], ids[2], ids[1]]
+        sections = [
+            DraftSection(section_id=sid, title="t", template_text="x", rendered_text="")
+            for sid in swapped
+        ]
+        self.assertIs(
+            check_by_id(self._pv(sections), "draft.sections.order").status,
+            ValidationStatus.FAIL,
+        )
+
+    def test_nonempty_pass(self):
+        result = self._pv(make_interim_sections(["One.", "Two.", "Three."]))
+        self.assertIs(
+            check_by_id(result, "draft.sections.nonempty").status,
+            ValidationStatus.PASS,
+        )
+
+    def test_nonempty_fail_blank(self):
+        sections = make_interim_sections(["One.", "   ", "Three."])
+        self.assertIs(
+            check_by_id(self._pv(sections), "draft.sections.nonempty").status,
+            ValidationStatus.FAIL,
+        )
+
+
+class TokenSyntaxTests(unittest.TestCase):
+    """Check 6: closed token syntax + boundary-safe + lookalike (§23.11)."""
+
+    def _syntax(self, body):
+        result = run_post_validation([body, "Two.", "Three."])
+        return check_by_id(result, "draft.tokens.syntax").status
+
+    def test_fact_token_valid(self):
+        self.assertIs(self._syntax("[[FACT:F-001]]"), ValidationStatus.PASS)
+
+    def test_arith_token_valid(self):
+        self.assertIs(self._syntax("[[ARITH:1]]"), ValidationStatus.PASS)
+
+    def test_deadline_token_valid(self):
+        self.assertIs(self._syntax("[[DEADLINE]]"), ValidationStatus.PASS)
+
+    def test_hearing_token_valid(self):
+        self.assertIs(self._syntax("[[HEARING]]"), ValidationStatus.PASS)
+
+    def test_prose_around_tokens_valid(self):
+        self.assertIs(
+            self._syntax("before [[FACT:F-001]] and [[ARITH:1]] after"),
+            ValidationStatus.PASS,
+        )
+
+    def test_adjacent_tokens_valid(self):
+        self.assertIs(
+            self._syntax("[[FACT:F-001]][[DEADLINE]]"),
+            ValidationStatus.PASS,
+        )
+
+    def test_fact_id_allowed_chars_valid(self):
+        self.assertIs(
+            self._syntax("[[FACT:A.B-C_D.0]]"), ValidationStatus.PASS
+        )
+
+    def test_empty_text_vacuous_pass(self):
+        result = run_post_validation(["", "Two.", "Three."])
+        # empty first section also fails nonempty; syntax still passes.
+        self.assertIs(
+            check_by_id(result, "draft.tokens.syntax").status,
+            ValidationStatus.PASS,
+        )
+
+    def test_unknown_token_fails(self):
+        self.assertIs(self._syntax("[[BAD:TOKEN]]"), ValidationStatus.FAIL)
+
+    def test_over_run_three_open_fails(self):
+        self.assertIs(
+            self._syntax("[[[FACT:F-001]]]"), ValidationStatus.FAIL
+        )
+
+    def test_over_run_three_close_fails(self):
+        self.assertIs(
+            self._syntax("[[FACT:F-001]]]"), ValidationStatus.FAIL
+        )
+
+    def test_single_bracket_fact_lookalike_fails(self):
+        self.assertIs(self._syntax("[FACT:F-001]"), ValidationStatus.FAIL)
+
+    def test_single_bracket_arith_lookalike_fails(self):
+        self.assertIs(self._syntax("[ARITH:1]"), ValidationStatus.FAIL)
+
+    def test_single_bracket_deadline_lookalike_fails(self):
+        self.assertIs(self._syntax("[DEADLINE]"), ValidationStatus.FAIL)
+
+    def test_single_bracket_hearing_lookalike_fails(self):
+        self.assertIs(self._syntax("[HEARING]"), ValidationStatus.FAIL)
+
+    def test_lowercase_lookalike_fails(self):
+        self.assertIs(self._syntax("[fact:F-001]"), ValidationStatus.FAIL)
+
+    def test_empty_fact_id_fails(self):
+        self.assertIs(self._syntax("[[FACT:]]"), ValidationStatus.FAIL)
+
+    def test_arith_zero_fails(self):
+        self.assertIs(self._syntax("[[ARITH:0]]"), ValidationStatus.FAIL)
+
+    def test_arith_leading_zero_fails(self):
+        self.assertIs(self._syntax("[[ARITH:01]]"), ValidationStatus.FAIL)
+
+    def test_leftover_double_open_fails(self):
+        self.assertIs(self._syntax("unclosed [[ text"), ValidationStatus.FAIL)
+
+
+class FactResolutionTests(unittest.TestCase):
+    """Check 7: exactly one eligible FACT match (§23.13)."""
+
+    def _resolution(self, body, facts):
+        result = run_post_validation(
+            [body, "Two.", "Three."],
+            extraction_result=make_extraction(facts=facts),
+        )
+        return check_by_id(result, "draft.tokens.fact_resolution").status
+
+    def test_resolves_single_eligible(self):
+        facts = [make_fact(fact_id="F-001", allowed_in_draft=DraftPermission.YES)]
+        self.assertIs(
+            self._resolution("[[FACT:F-001]]", facts), ValidationStatus.PASS
+        )
+
+    def test_no_match_fails(self):
+        self.assertIs(
+            self._resolution("[[FACT:F-999]]", []), ValidationStatus.FAIL
+        )
+
+    def test_two_matches_ambiguous_fails(self):
+        facts = [
+            make_fact(fact_id="F-001"),
+            make_fact(fact_id="F-001"),
+        ]
+        self.assertIs(
+            self._resolution("[[FACT:F-001]]", facts), ValidationStatus.FAIL
+        )
+
+    def test_non_eligible_ignored_fails(self):
+        facts = [
+            make_fact(fact_id="F-001", allowed_in_draft=DraftPermission.NO)
+        ]
+        self.assertIs(
+            self._resolution("[[FACT:F-001]]", facts), ValidationStatus.FAIL
+        )
+
+    def test_case_sensitive_id(self):
+        facts = [make_fact(fact_id="F-001")]
+        self.assertIs(
+            self._resolution("[[FACT:f-001]]", facts), ValidationStatus.FAIL
+        )
+
+    def test_conditional_eligible_resolves(self):
+        facts = [
+            make_fact(
+                fact_id="F-001",
+                status=FactStatus.ALLEGED,
+                allowed_in_draft=DraftPermission.CONDITIONAL,
+            )
+        ]
+        self.assertIs(
+            self._resolution("[[FACT:F-001]]", facts), ValidationStatus.PASS
+        )
+
+    def test_related_fact_ids_deduplicated(self):
+        facts = [make_fact(fact_id="F-001")]
+        result = run_post_validation(
+            ["[[FACT:F-001]] [[FACT:F-001]]", "Two.", "Three."],
+            extraction_result=make_extraction(facts=facts),
+        )
+        item = check_by_id(result, "draft.tokens.fact_resolution")
+        self.assertEqual(item.related_fact_ids, ["F-001"])
+
+
+class FactPermissionTests(unittest.TestCase):
+    """Check 8: CONFIRMED+YES / ALLEGED+CONDITIONAL only (§23.14)."""
+
+    def _permission(self, status, allowed):
+        facts = [
+            make_fact(
+                fact_id="F-001", status=status, allowed_in_draft=allowed
+            )
+        ]
+        result = run_post_validation(
+            ["[[FACT:F-001]]", "Two.", "Three."],
+            extraction_result=make_extraction(facts=facts),
+        )
+        return check_by_id(result, "draft.tokens.fact_permission").status
+
+    def test_confirmed_yes_pass(self):
+        self.assertIs(
+            self._permission(FactStatus.CONFIRMED, DraftPermission.YES),
+            ValidationStatus.PASS,
+        )
+
+    def test_alleged_conditional_pass(self):
+        self.assertIs(
+            self._permission(FactStatus.ALLEGED, DraftPermission.CONDITIONAL),
+            ValidationStatus.PASS,
+        )
+
+    def test_confirmed_conditional_fails(self):
+        self.assertIs(
+            self._permission(FactStatus.CONFIRMED, DraftPermission.CONDITIONAL),
+            ValidationStatus.FAIL,
+        )
+
+    def test_alleged_yes_fails(self):
+        self.assertIs(
+            self._permission(FactStatus.ALLEGED, DraftPermission.YES),
+            ValidationStatus.FAIL,
+        )
+
+    def test_unknown_status_fails(self):
+        self.assertIs(
+            self._permission(FactStatus.UNKNOWN, DraftPermission.YES),
+            ValidationStatus.FAIL,
+        )
+
+
+class ArithmeticResolutionTests(unittest.TestCase):
+    """Check 9: approved deterministic arithmetic only (§23.16)."""
+
+    def _resolution(self, token, arithmetic, checks):
+        result = run_post_validation(
+            [token, "Two.", "Three."],
+            arithmetic_results=arithmetic,
+            validation_result=make_validation_result(checks=checks),
+        )
+        return check_by_id(result, "draft.tokens.arithmetic_resolution").status
+
+    def test_in_range_pass(self):
+        arith = [make_arithmetic(status=ArithmeticStatus.PASS)]
+        self.assertIs(
+            self._resolution("[[ARITH:1]]", arith, checks_for_arithmetic(arith)),
+            ValidationStatus.PASS,
+        )
+
+    def test_mismatch_status_pass(self):
+        arith = [make_arithmetic(status=ArithmeticStatus.MISMATCH)]
+        self.assertIs(
+            self._resolution("[[ARITH:1]]", arith, checks_for_arithmetic(arith)),
+            ValidationStatus.PASS,
+        )
+
+    def test_insufficient_data_fails(self):
+        arith = [make_arithmetic(status=ArithmeticStatus.INSUFFICIENT_DATA)]
+        self.assertIs(
+            self._resolution("[[ARITH:1]]", arith, checks_for_arithmetic(arith)),
+            ValidationStatus.FAIL,
+        )
+
+    def test_result_none_fails(self):
+        arith = [make_arithmetic(result=None)]
+        self.assertIs(
+            self._resolution("[[ARITH:1]]", arith, checks_for_arithmetic(arith)),
+            ValidationStatus.FAIL,
+        )
+
+    def test_out_of_range_fails(self):
+        arith = [make_arithmetic()]
+        self.assertIs(
+            self._resolution("[[ARITH:999]]", arith, checks_for_arithmetic(arith)),
+            ValidationStatus.FAIL,
+        )
+
+    def test_missing_structural_check_fails(self):
+        arith = [make_arithmetic()]
+        checks = structural_checks_for(1)[:4]  # drop one
+        self.assertIs(
+            self._resolution("[[ARITH:1]]", arith, checks),
+            ValidationStatus.FAIL,
+        )
+
+    def test_related_calculation_types_deduplicated(self):
+        arith = [make_arithmetic()]
+        result = run_post_validation(
+            ["[[ARITH:1]] [[ARITH:1]]", "Two.", "Three."],
+            arithmetic_results=arith,
+            validation_result=make_validation_result(
+                checks=checks_for_arithmetic(arith)
+            ),
+        )
+        item = check_by_id(result, "draft.tokens.arithmetic_resolution")
+        self.assertEqual(
+            item.related_calculation_types,
+            [ArithmeticCalculationType.ITC_DIFFERENCE],
+        )
+
+
+class DeadlineResolutionTests(unittest.TestCase):
+    """Check 10: DEADLINE token vs supplied deadline result (§23.18)."""
+
+    def test_token_with_result_pass(self):
+        result = run_post_validation(
+            ["[[DEADLINE]]", "Two.", "Three."], deadline_result=make_deadline()
+        )
+        self.assertIs(
+            check_by_id(result, "draft.tokens.deadline_resolution").status,
+            ValidationStatus.PASS,
+        )
+
+    def test_token_without_result_fails(self):
+        result = run_post_validation(["[[DEADLINE]]", "Two.", "Three."])
+        self.assertIs(
+            check_by_id(result, "draft.tokens.deadline_resolution").status,
+            ValidationStatus.FAIL,
+        )
+
+    def test_no_token_without_result_pass(self):
+        result = run_post_validation(["One.", "Two.", "Three."])
+        self.assertIs(
+            check_by_id(result, "draft.tokens.deadline_resolution").status,
+            ValidationStatus.PASS,
+        )
+
+    def test_no_token_with_result_pass(self):
+        result = run_post_validation(
+            ["One.", "Two.", "Three."], deadline_result=make_deadline()
+        )
+        self.assertIs(
+            check_by_id(result, "draft.tokens.deadline_resolution").status,
+            ValidationStatus.PASS,
+        )
+
+
+class HearingResolutionTests(unittest.TestCase):
+    """Check 11: HEARING token vs supplied hearing information (§23.19)."""
+
+    def _status(self, deadline):
+        result = run_post_validation(
+            ["[[HEARING]]", "Two.", "Three."], deadline_result=deadline
+        )
+        return check_by_id(result, "draft.tokens.hearing_resolution").status
+
+    def test_upcoming_pass(self):
+        self.assertIs(
+            self._status(
+                make_deadline(
+                    hearing_date=date(2025, 5, 1),
+                    hearing_status=HearingStatus.UPCOMING,
+                )
+            ),
+            ValidationStatus.PASS,
+        )
+
+    def test_today_pass(self):
+        self.assertIs(
+            self._status(
+                make_deadline(
+                    hearing_date=date(2025, 5, 1),
+                    hearing_status=HearingStatus.TODAY,
+                )
+            ),
+            ValidationStatus.PASS,
+        )
+
+    def test_passed_pass(self):
+        self.assertIs(
+            self._status(
+                make_deadline(
+                    hearing_date=date(2025, 5, 1),
+                    hearing_status=HearingStatus.PASSED,
+                )
+            ),
+            ValidationStatus.PASS,
+        )
+
+    def test_no_deadline_fails(self):
+        self.assertIs(self._status(None), ValidationStatus.FAIL)
+
+    def test_no_hearing_date_fails(self):
+        self.assertIs(
+            self._status(
+                make_deadline(
+                    hearing_date=None, hearing_status=HearingStatus.UPCOMING
+                )
+            ),
+            ValidationStatus.FAIL,
+        )
+
+    def test_not_scheduled_fails(self):
+        self.assertIs(
+            self._status(
+                make_deadline(
+                    hearing_date=date(2025, 5, 1),
+                    hearing_status=HearingStatus.NOT_SCHEDULED,
+                )
+            ),
+            ValidationStatus.FAIL,
+        )
+
+
+class RawFactLiteralTests(unittest.TestCase):
+    """Check 12: raw-literal leakage barrier (§23.20–§23.30)."""
+
+    def _raw(self, body, **overrides):
+        result = run_post_validation([body, "Two.", "Three."], **overrides)
+        return check_by_id(result, "draft.prose.raw_fact_literal").status
+
+    def test_gstin_fails(self):
+        self.assertIs(self._raw("GSTIN 27ABCDE1234F1Z5."), ValidationStatus.FAIL)
+
+    def test_rupee_symbol_fails(self):
+        self.assertIs(self._raw("Amount ₹ 12,34,567.00 due."), ValidationStatus.FAIL)
+
+    def test_inr_word_fails(self):
+        self.assertIs(self._raw("Amount INR 12,34,567 due."), ValidationStatus.FAIL)
+
+    def test_percentage_fails(self):
+        self.assertIs(self._raw("Rate is 18%."), ValidationStatus.FAIL)
+
+    def test_numeric_date_fails(self):
+        self.assertIs(self._raw("Due by 31/03/2025."), ValidationStatus.FAIL)
+
+    def test_iso_date_fails(self):
+        self.assertIs(self._raw("Due by 2025-03-31."), ValidationStatus.FAIL)
+
+    def test_textual_date_fails(self):
+        self.assertIs(self._raw("Due by 15 April 2025."), ValidationStatus.FAIL)
+
+    def test_rfn_din_fails(self):
+        self.assertIs(
+            self._raw("Reference RFN No. ABC1234567."), ValidationStatus.FAIL
+        )
+
+    def test_benign_pass(self):
+        self.assertIs(
+            self._raw("The taxpayer responded on time."), ValidationStatus.PASS
+        )
+
+    def test_exact_source_copy_fails_and_ids(self):
+        fact = make_fact(
+            fact_id="F-001",
+            source_text="The notice demands payment of the outstanding tax.",
+            allowed_in_draft=DraftPermission.YES,
+        )
+        result = run_post_validation(
+            [
+                "The notice demands payment of the outstanding tax.",
+                "Two.",
+                "Three.",
+            ],
+            extraction_result=make_extraction(facts=[fact]),
+        )
+        item = check_by_id(result, "draft.prose.raw_fact_literal")
+        self.assertIs(item.status, ValidationStatus.FAIL)
+        self.assertEqual(item.related_fact_ids, ["F-001"])
+
+    def test_short_source_copy_ignored(self):
+        fact = make_fact(
+            fact_id="F-001",
+            source_text="Short text.",
+            allowed_in_draft=DraftPermission.YES,
+        )
+        result = run_post_validation(
+            ["Short text.", "Two.", "Three."],
+            extraction_result=make_extraction(facts=[fact]),
+        )
+        self.assertIs(
+            check_by_id(result, "draft.prose.raw_fact_literal").status,
+            ValidationStatus.PASS,
+        )
+
+    def test_non_eligible_source_ignored(self):
+        fact = make_fact(
+            fact_id="F-001",
+            source_text="The notice demands payment of the outstanding tax.",
+            allowed_in_draft=DraftPermission.NO,
+        )
+        result = run_post_validation(
+            [
+                "The notice demands payment of the outstanding tax.",
+                "Two.",
+                "Three.",
+            ],
+            extraction_result=make_extraction(facts=[fact]),
+        )
+        self.assertIs(
+            check_by_id(result, "draft.prose.raw_fact_literal").status,
+            ValidationStatus.PASS,
+        )
+
+
+class EvidencePresenceTests(unittest.TestCase):
+    """Check 13: prohibited evidence-presence language (§23.31)."""
+
+    def _evidence(self, body):
+        result = run_post_validation([body, "Two.", "Three."])
+        return check_by_id(
+            result, "draft.prose.evidence_presence_language"
+        ).status
+
+    def test_attached_fails(self):
+        self.assertIs(self._evidence("Document is attached."), ValidationStatus.FAIL)
+
+    def test_enclosed_fails(self):
+        self.assertIs(self._evidence("Enclosed please find."), ValidationStatus.FAIL)
+
+    def test_annexed_fails(self):
+        self.assertIs(self._evidence("Annexed to this reply."), ValidationStatus.FAIL)
+
+    def test_submitted_herewith_fails(self):
+        self.assertIs(
+            self._evidence("Submitted herewith."), ValidationStatus.FAIL
+        )
+
+    def test_we_have_enclosed_fails(self):
+        self.assertIs(
+            self._evidence("We have enclosed copies."), ValidationStatus.FAIL
+        )
+
+    def test_we_attach_fails(self):
+        self.assertIs(
+            self._evidence("We attach the ledger."), ValidationStatus.FAIL
+        )
+
+    def test_benign_pass(self):
+        self.assertIs(
+            self._evidence("The records are summarized."), ValidationStatus.PASS
+        )
+
+
+class CitationSurfaceTests(unittest.TestCase):
+    """Check 14: prohibited external-citation surface (§23.32–§23.35)."""
+
+    def _citation(self, body):
+        result = run_post_validation([body, "Two.", "Three."])
+        return check_by_id(
+            result, "draft.prose.external_citation_surface"
+        ).status
+
+    def test_https_url_fails(self):
+        self.assertIs(
+            self._citation("See https://example.com/page."),
+            ValidationStatus.FAIL,
+        )
+
+    def test_www_fails(self):
+        self.assertIs(
+            self._citation("See www.example.com."), ValidationStatus.FAIL
+        )
+
+    def test_case_name_fails(self):
+        self.assertIs(
+            self._citation("ABC Pvt Ltd v. State of Gujarat."),
+            ValidationStatus.FAIL,
+        )
+
+    def test_lowercase_case_name_pass(self):
+        self.assertIs(
+            self._citation("the state versus the taxpayer."),
+            ValidationStatus.PASS,
+        )
+
+    def test_reporter_air_fails(self):
+        self.assertIs(self._citation("AIR 2025 SC 123."), ValidationStatus.FAIL)
+
+    def test_reporter_year_paren_fails(self):
+        self.assertIs(
+            self._citation("2025 (1) SCC 100."), ValidationStatus.FAIL
+        )
+
+    def test_reporter_paren_year_fails(self):
+        self.assertIs(
+            self._citation("(2025) 1 GSTL 45."), ValidationStatus.FAIL
+        )
+
+    def test_reporter_insc_fails(self):
+        self.assertIs(self._citation("2025 INSC 500."), ValidationStatus.FAIL)
+
+    def test_reporter_scc_online_fails(self):
+        self.assertIs(
+            self._citation("2025 SCC OnLine SC 1234."), ValidationStatus.FAIL
+        )
+
+    def test_numeric_footnote_fails(self):
+        self.assertIs(self._citation("See note[1]."), ValidationStatus.FAIL)
+
+    def test_benign_pass(self):
+        self.assertIs(
+            self._citation("The provisions are discussed."),
+            ValidationStatus.PASS,
+        )
+
+
+class RenderingTests(unittest.TestCase):
+    """Python renderers + single-pass replacement (§23.39–§23.43)."""
+
+    def test_fact_confirmed_yes_rendered(self):
+        sections = render_happy_sections()
+        self.assertEqual(
+            sections[0].rendered_text,
+            'Working paper The notice records: "The taxpayer claimed input tax credit." (notice p. 2).',
+        )
+
+    def test_fact_alleged_conditional_rendered(self):
+        fact = make_fact(
+            fact_id="F-001",
+            status=FactStatus.ALLEGED,
+            source_text="The department alleges a shortfall.",
+            allowed_in_draft=DraftPermission.CONDITIONAL,
+        )
+        inputs = make_step94_happy_inputs(
+            extraction_result=make_extraction(facts=[fact])
+        )
+        sections = engine._render_sections(
+            make_interim_sections(["[[FACT:F-001]]", "Two.", "Three."]),
+            inputs["extraction_result"],
+            inputs["arithmetic_results"],
+            inputs["validation_result"],
+            inputs["deadline_result"],
+            inputs["preflight_result"],
+        )
+        self.assertEqual(
+            sections[0].rendered_text,
+            'The department alleges: "The department alleges a shortfall."',
+        )
+
+    def test_fact_no_page_suffix(self):
+        fact = make_fact(
+            fact_id="F-001",
+            status=FactStatus.CONFIRMED,
+            source_text="Text without a page.",
+            allowed_in_draft=DraftPermission.YES,
+        )
+        inputs = make_step94_happy_inputs(
+            extraction_result=make_extraction(facts=[fact])
+        )
+        sections = engine._render_sections(
+            make_interim_sections(["[[FACT:F-001]]", "Two.", "Three."]),
+            inputs["extraction_result"],
+            inputs["arithmetic_results"],
+            inputs["validation_result"],
+            inputs["deadline_result"],
+            inputs["preflight_result"],
+        )
+        self.assertEqual(
+            sections[0].rendered_text,
+            'The notice records: "Text without a page."',
+        )
+
+    def test_arithmetic_rendered(self):
+        sections = render_happy_sections()
+        self.assertEqual(
+            sections[1].rendered_text,
+            "Table Deterministic reconciliation output: left - right = 888.80 INR (status: pass).",
+        )
+
+    def test_deadline_rendered_full(self):
+        sections = render_happy_sections()
+        self.assertEqual(
+            sections[2].rendered_text,
+            'Draft Deterministic deadline output: notice_date=2025-03-10; service_date=2025-03-12; response_period_days=30; response_deadline=2025-04-11; deadline_confidence=confirmed; deadline_status=upcoming; days_remaining=20; portal_verification_required=false; notes=["note a"]; preflight_deadline_conflict_status=cannot_compare. and Deterministic hearing output: hearing_date=2025-05-01; hearing_status=upcoming.',
+        )
+
+    def test_deadline_nulls_rendered(self):
+        deadline = make_deadline(
+            notice_date=date(2025, 3, 10),
+            response_period_days=None,
+            response_deadline=None,
+            days_remaining=None,
+        )
+        inputs = make_step94_happy_inputs(deadline_result=deadline)
+        sections = engine._render_sections(
+            make_interim_sections(["[[DEADLINE]]", "Two.", "Three."]),
+            inputs["extraction_result"],
+            inputs["arithmetic_results"],
+            inputs["validation_result"],
+            inputs["deadline_result"],
+            inputs["preflight_result"],
+        )
+        self.assertEqual(
+            sections[0].rendered_text,
+            'Deterministic deadline output: notice_date=2025-03-10; service_date=null; response_period_days=null; response_deadline=null; deadline_confidence=unknown; deadline_status=upcoming; days_remaining=null; portal_verification_required=true; notes=[]; preflight_deadline_conflict_status=cannot_compare.',
+        )
+
+    def test_hearing_rendered(self):
+        sections = render_happy_sections()
+        self.assertIn(
+            "Deterministic hearing output: hearing_date=2025-05-01; hearing_status=upcoming.",
+            sections[2].rendered_text,
+        )
+
+    def test_template_text_unchanged(self):
+        sections = render_happy_sections()
+        for section in sections:
+            self.assertIn("[[", section.template_text)
+
+    def test_rendered_sections_are_fresh_objects(self):
+        sections = render_happy_sections()
+        interim = make_interim_sections(HAPPY_BODIES)
+        for rendered, original in zip(sections, interim):
+            self.assertIsNot(rendered, original)
+            self.assertEqual(rendered.template_text, original.template_text)
+
+    def test_single_pass_no_recursion_in_source_text(self):
+        fact = make_fact(
+            fact_id="F-001",
+            status=FactStatus.CONFIRMED,
+            source_text="Literal [[DEADLINE]] token inside source text.",
+            allowed_in_draft=DraftPermission.YES,
+        )
+        rendered = engine._render_template(
+            "[[FACT:F-001]]",
+            {"F-001": fact},
+            {},
+            None,
+            make_preflight(),
+        )
+        self.assertEqual(
+            rendered,
+            'The notice records: "Literal [[DEADLINE]] token inside source text."',
+        )
+
+
+class FinalResultShapeTests(unittest.TestCase):
+    """SUCCESS / POST_VALIDATION_FAILED result shapes (§23.44–§23.45)."""
+
+    def _happy_draft(self):
+        inputs = make_step94_happy_inputs()
+        response = make_response_json(
+            sections=[
+                {"section_id": sid, "body_template": body}
+                for sid, body in zip(ITC_SECTION_IDS, HAPPY_BODIES)
+            ]
+        )
+        return run_draft(response=response, **inputs)
+
+    def test_success_status(self):
+        result, _ = self._happy_draft()
+        self.assertIs(result.status, DraftGenerationStatus.SUCCESS)
+
+    def test_success_failure_code_none(self):
+        result, _ = self._happy_draft()
+        self.assertIsNone(result.failure_code)
+        self.assertIsNone(result.error_message)
+
+    def test_success_post_validation_pass(self):
+        result, _ = self._happy_draft()
+        self.assertIs(
+            result.post_validation.overall_status, ValidationStatus.PASS
+        )
+        self.assertEqual(len(result.post_validation.checks), 14)
+
+    def test_success_rendered_text_populated(self):
+        result, _ = self._happy_draft()
+        for section in result.sections:
+            self.assertNotIn("[[", section.rendered_text)
+
+    def test_success_metadata_copied(self):
+        inputs = make_step94_happy_inputs()
+        result, _ = run_draft(
+            response=make_response_json(
+                sections=[
+                    {"section_id": sid, "body_template": body}
+                    for sid, body in zip(ITC_SECTION_IDS, HAPPY_BODIES)
+                ]
+            ),
+            **inputs,
+        )
+        self.assertEqual(
+            result.evidence_checklist,
+            inputs["validation_result"].evidence_checklist,
+        )
+
+    def test_fail_shape(self):
+        result, _ = run_draft(
+            response=make_response_json(
+                sections=[
+                    {"section_id": "sec73_itc.s1", "body_template": "[[BAD:TOKEN]]."},
+                    {"section_id": "sec73_itc.s2", "body_template": "Two."},
+                    {"section_id": "sec73_itc.s3", "body_template": "Three."},
+                ]
+            )
+        )
+        self.assertIs(result.status, DraftGenerationStatus.FAILED)
+        self.assertIs(
+            result.failure_code, DraftFailureCode.POST_VALIDATION_FAILED
+        )
+        self.assertEqual(result.sections, [])
+        self.assertEqual(
+            result.error_message,
+            "Specialist draft failed deterministic post-generation validation.",
+        )
+        self.assertIs(
+            result.post_validation.overall_status, ValidationStatus.FAIL
+        )
+
+    def test_fail_preserves_eligibility(self):
+        result, _ = run_draft(
+            response=make_response_json(
+                sections=[
+                    {"section_id": "sec73_itc.s1", "body_template": "[[BAD:TOKEN]]."},
+                    {"section_id": "sec73_itc.s2", "body_template": "Two."},
+                    {"section_id": "sec73_itc.s3", "body_template": "Three."},
+                ]
+            ),
+            validation_result=make_rich_validation(
+                draft_eligibility=DraftEligibility.ALLOWED
+            ),
+        )
+        self.assertIs(result.draft_eligibility, DraftEligibility.ALLOWED)
+
+
+class Step94ZeroLlmTests(unittest.TestCase):
+    """Zero new LLM calls and input immutability across Step 9.4."""
+
+    def test_success_still_exactly_one_call(self):
+        inputs = make_step94_happy_inputs()
+        response = make_response_json(
+            sections=[
+                {"section_id": sid, "body_template": body}
+                for sid, body in zip(ITC_SECTION_IDS, HAPPY_BODIES)
+            ]
+        )
+        _, mocked = run_draft(response=response, **inputs)
+        self.assertEqual(mocked.call_count, 1)
+
+    def test_failure_still_exactly_one_call(self):
+        result, mocked = run_draft(
+            response=make_response_json(
+                sections=[
+                    {"section_id": "sec73_itc.s1", "body_template": "[[BAD:TOKEN]]."},
+                    {"section_id": "sec73_itc.s2", "body_template": "Two."},
+                    {"section_id": "sec73_itc.s3", "body_template": "Three."},
+                ]
+            )
+        )
+        self.assertIs(
+            result.failure_code, DraftFailureCode.POST_VALIDATION_FAILED
+        )
+        self.assertEqual(mocked.call_count, 1)
+
+    def test_inputs_never_mutated_through_step94(self):
+        inputs = make_step94_happy_inputs()
+        snapshots = {
+            key: copy.deepcopy(value) for key, value in inputs.items()
+        }
+        response = make_response_json(
+            sections=[
+                {"section_id": sid, "body_template": body}
+                for sid, body in zip(ITC_SECTION_IDS, HAPPY_BODIES)
+            ]
+        )
+        run_draft(response=response, **inputs)
+        for key, value in inputs.items():
+            self.assertEqual(value, snapshots[key], key)
+
+    def test_render_does_not_mutate_sections(self):
+        interim = make_interim_sections(HAPPY_BODIES)
+        snapshot = copy.deepcopy(interim)
+        inputs = make_step94_happy_inputs()
+        engine._render_sections(
+            interim,
+            inputs["extraction_result"],
+            inputs["arithmetic_results"],
+            inputs["validation_result"],
+            inputs["deadline_result"],
+            inputs["preflight_result"],
+        )
+        self.assertEqual(interim, snapshot)
 
 
 if __name__ == "__main__":
