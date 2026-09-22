@@ -185,6 +185,7 @@ class PersistencePortTests(unittest.TestCase):
             methods,
             [
                 "add_document_ref",
+                "add_document_with_event",
                 "append_event",
                 "create_case",
                 "create_client",
