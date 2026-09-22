@@ -1416,6 +1416,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         self.assertEqual(
             headers(fake),
             [
+                "Client workspace",
                 "Saved cases",
                 "New notice intake",
                 "Classification and support",
@@ -2615,7 +2616,7 @@ class DurableIntakeUiTests(unittest.TestCase):
         self.assertEqual(runner.call_count, 1)
         self.assertEqual(
             fake.persistence_service_mock.call_count,
-            2,
+            3,
         )
         service.create_case_intake.assert_called_once()
         args = service.create_case_intake.call_args
@@ -2693,7 +2694,7 @@ class DurableIntakeUiTests(unittest.TestCase):
             text_values={keys["title"]: "Second notice"},
         )
 
-        service.list_clients.assert_called_once()
+        self.assertEqual(service.list_clients.call_count, 2)
         service.list_registrations.assert_called_once_with(
             ANY,
             "F-TEST",
