@@ -25,6 +25,7 @@ from modules.authorized_analysis_snapshot_service import (
     AuthorizedAnalysisSnapshotService,
 )
 from modules.authorized_case_service import AuthorizedCaseService
+from modules.draft_docx_export import export_draft_docx
 from modules.draft_work_product_service import (
     baseline_text_from_snapshot,
     list_draft_versions,
@@ -219,6 +220,27 @@ class AuthorizedDraftWorkProductService:
             draft_text=draft_text,
             actor_id=principal.user_id,
             created_at=created_at,
+        )
+
+    def export_version_docx(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+        draft_version_id: str,
+    ) -> bytes:
+        """Export one reviewed/approved immutable draft after authorization."""
+        case = self._case(principal, firm_id, case_id)
+        loaded = self.load_version(
+            principal,
+            firm_id,
+            case_id=case.case_id,
+            draft_version_id=draft_version_id,
+        )
+        return export_draft_docx(
+            loaded,
+            case_title=case.title,
         )
 
     def transition_review(
