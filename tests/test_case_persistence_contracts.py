@@ -271,6 +271,7 @@ class PersistencePortTests(unittest.TestCase):
                 "get_registration",
                 "get_snapshot",
                 "list_cases",
+                "list_cases_for_client",
                 "list_clients",
                 "list_document_refs",
                 "list_events",
