@@ -1,6 +1,7 @@
 """Tests for encrypted snapshot-bound legal briefs."""
 
 import hashlib
+import sqlite3
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
@@ -250,6 +251,62 @@ class LegalBriefPersistenceTests(unittest.TestCase):
                 created_at=NOW,
             )
         self.assertEqual(self.briefs.list_brief_refs("SNAP-1"), [])
+
+    def test_metadata_failure_rolls_back_encrypted_object(self):
+        from dataclasses import replace
+
+        missing_snapshot = replace(
+            self.snapshot,
+            snapshot_id="SNAP-MISSING",
+        )
+        with self.assertRaises(Exception):
+            persist_legal_brief(
+                self.briefs,
+                self.store,
+                case_id="CASE-1",
+                snapshot=missing_snapshot,
+                result=self.result,
+                as_of_date=date(2026, 8, 1),
+                proceeding_type=ProceedingType.GST_SEC73_ITC,
+                actor_id=ACTOR,
+                created_at=NOW,
+            )
+        self.assertEqual(
+            list(self.object_root.glob("*.dwaar")),
+            [],
+        )
+        self.assertEqual(
+            self.briefs.list_brief_refs("SNAP-MISSING"),
+            [],
+        )
+
+    def test_schema_v5_migrates_to_v6_with_legal_brief_table(self):
+        legacy_path = str(Path(self.temp_dir.name) / "legacy-v5.db")
+        LocalSQLiteCaseRepository(legacy_path)
+        with sqlite3.connect(legacy_path) as connection:
+            connection.execute(
+                """
+                UPDATE schema_meta SET value = '5'
+                WHERE key = 'schema_version'
+                """
+            )
+            connection.execute("DROP TABLE legal_briefs")
+        LocalSQLiteCaseRepository(legacy_path)
+        with sqlite3.connect(legacy_path) as connection:
+            version = connection.execute(
+                """
+                SELECT value FROM schema_meta
+                WHERE key = 'schema_version'
+                """
+            ).fetchone()[0]
+            table = connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='legal_briefs'
+                """
+            ).fetchone()
+        self.assertEqual(version, "6")
+        self.assertEqual(table[0], "legal_briefs")
 
     def test_list_is_snapshot_scoped_and_stable(self):
         first = persist_legal_brief(
