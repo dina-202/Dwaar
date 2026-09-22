@@ -10,6 +10,7 @@ from typing import List, Optional, Protocol
 from domain.analysis_snapshot_models import AnalysisSnapshotRef
 from domain.evidence_review_models import EvidenceReviewRef
 from domain.draft_work_product_models import DraftVersionRef
+from domain.filing_models import FilingRecord
 from domain.auth_models import FirmAccessGrant
 from domain.case_models import (
     CaseEvent,
@@ -136,6 +137,40 @@ class AnalysisSnapshotRepository(Protocol):
         self,
         case_id: str,
     ) -> List[AnalysisSnapshotRef]:
+        ...
+
+
+class FilingRepository(Protocol):
+    """Persistent filing metadata and atomic case/document/audit boundary."""
+
+    def save_filing(
+        self,
+        filing: FilingRecord,
+        filed_document: StoredDocumentRef,
+        acknowledgement_document: Optional[StoredDocumentRef],
+        updated_case: CaseRecord,
+        events: List[CaseEvent],
+    ) -> None:
+        ...
+
+    def get_filing(
+        self,
+        filing_id: str,
+    ) -> Optional[FilingRecord]:
+        ...
+
+    def list_filings(
+        self,
+        case_id: str,
+    ) -> List[FilingRecord]:
+        ...
+
+    def attach_acknowledgement(
+        self,
+        filing: FilingRecord,
+        acknowledgement_document: StoredDocumentRef,
+        events: List[CaseEvent],
+    ) -> None:
         ...
 
 
