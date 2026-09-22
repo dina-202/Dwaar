@@ -340,6 +340,59 @@ class DocumentPageText:
     ocr_dpi: Optional[int] = None
 
 
+class EvidenceReviewStatus(Enum):
+    """Human review state for a proposed evidence-to-requirement link."""
+
+    PENDING_REVIEW = "pending_review"
+    CONFIRMED = "confirmed"
+    REJECTED = "rejected"
+
+
+class EvidenceIntakeStatus(Enum):
+    """Outcome of supporting-document evidence candidate extraction."""
+
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    NO_INPUT = "no_input"
+
+
+@dataclass
+class EvidenceDocument:
+    """One supporting document supplied for evidence review."""
+
+    document_id: str
+    filename: str
+    pages: List[DocumentPageText]
+
+
+@dataclass
+class EvidenceCandidate:
+    """One source-grounded proposed link to an evidence requirement.
+
+    A candidate is not proof and never changes EvidenceChecklistItem.status
+    until a professional confirms it in a later review workflow.
+    """
+
+    candidate_id: str
+    evidence_id: str
+    document_id: str
+    source_text: str
+    source_page: int
+    source_origin: SourceTextOrigin
+    source_verification: SourceVerificationStatus
+    review_status: EvidenceReviewStatus = EvidenceReviewStatus.PENDING_REVIEW
+
+
+@dataclass
+class EvidenceIntakeResult:
+    """Evidence candidate extraction output; no automatic satisfaction."""
+
+    status: EvidenceIntakeStatus
+    candidates: List[EvidenceCandidate]
+    rejected_candidate_count: int = 0
+
+
 @dataclass
 class DeadlineResult:
     notice_date: Optional[date]
