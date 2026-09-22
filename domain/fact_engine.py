@@ -98,6 +98,8 @@ _ROLE_COMPATIBLE_FACT_TYPES: Dict[FactRole, frozenset] = {
     FactRole.GOODS_VALUE_OR_TAX_PAYABLE: _DOCUMENT_DETAIL_ONLY,
     FactRole.OWNER_CAME_FORWARD_STATUS: _DOCUMENT_DETAIL_ONLY,
     FactRole.ORDER_DATE_OR_ENFORCEMENT_STATUS: _DOCUMENT_DETAIL_ONLY,
+    FactRole.NOTICE_SERVICE_DATE: _DOCUMENT_DETAIL_ONLY,
+    FactRole.RESPONSE_PERIOD: _DOCUMENT_DETAIL_ONLY,
     FactRole.EXPLICIT_PROCEDURAL_DATE: _PROCEDURAL_DATE_TYPES,
 }
 
@@ -165,7 +167,8 @@ def _build_extraction_prompt(
         "- limitation_basis, goods_description, vehicle_number, "
         "detention_or_seizure_date, section129_notice_or_service_date, "
         "goods_value_or_tax_payable, owner_came_forward_status, "
-        "order_date_or_enforcement_status -> fact_type document_detail\n"
+        "order_date_or_enforcement_status, notice_service_date, "
+        "response_period -> fact_type document_detail\n"
         "- explicit_procedural_date -> fact_type stated_due_date, "
         "hearing_details or document_detail\n"
         "- none -> any fact_type\n"
@@ -181,6 +184,14 @@ def _build_extraction_prompt(
         "- If the selected source_text is merely a number, amount, date, "
         "identifier, or generic statement that does not itself identify the "
         "role, return none.\n"
+        "- Use notice_service_date only when source_text itself explicitly "
+        "states a service/served/receipt date for this notice or communication; "
+        "a bare date or issue date is not enough.\n"
+        "- Use response_period only when source_text itself explicitly states "
+        "a response/reply/explanation period such as 'within 15 days of "
+        "receipt' or 'within seven working days of service'. Copy the whole "
+        "operative phrase; never convert words to a number or infer a period "
+        "from law, form type, workflow, or model knowledge.\n"
         "- Never guess a fact_role.\n"
         "\n"
         "Rules:\n"
