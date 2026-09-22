@@ -8,6 +8,7 @@ cloud object storage without changing domain callers.
 from typing import List, Optional, Protocol
 
 from domain.analysis_snapshot_models import AnalysisSnapshotRef
+from domain.evidence_review_models import EvidenceReviewRef
 from domain.auth_models import FirmAccessGrant
 from domain.case_models import (
     CaseEvent,
@@ -106,6 +107,29 @@ class AnalysisSnapshotRepository(Protocol):
         self,
         case_id: str,
     ) -> List[AnalysisSnapshotRef]:
+        ...
+
+
+class EvidenceReviewRepository(Protocol):
+    """Persistent metadata/audit boundary for encrypted evidence reviews."""
+
+    def save_review(
+        self,
+        review: EvidenceReviewRef,
+        event: CaseEvent,
+    ) -> None:
+        ...
+
+    def get_review_ref(
+        self,
+        review_id: str,
+    ) -> Optional[EvidenceReviewRef]:
+        ...
+
+    def list_review_refs(
+        self,
+        snapshot_id: str,
+    ) -> List[EvidenceReviewRef]:
         ...
 
 

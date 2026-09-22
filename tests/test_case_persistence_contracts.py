@@ -25,6 +25,7 @@ from domain.persistence_ports import (
     AnalysisSnapshotRepository,
     CaseRepository,
     DocumentStore,
+    EvidenceReviewRepository,
 )
 
 
@@ -195,6 +196,29 @@ class PersistencePortTests(unittest.TestCase):
                 "get_snapshot_ref",
                 "list_snapshot_refs",
                 "save_snapshot",
+            ],
+        )
+
+    def test_evidence_review_repository_is_protocol(self):
+        self.assertTrue(
+            issubclass(EvidenceReviewRepository, Protocol)
+        )
+
+    def test_evidence_review_repository_methods_exact(self):
+        methods = [
+            name
+            for name, member in inspect.getmembers(
+                EvidenceReviewRepository,
+                predicate=inspect.isfunction,
+            )
+            if not name.startswith("_")
+        ]
+        self.assertEqual(
+            methods,
+            [
+                "get_review_ref",
+                "list_review_refs",
+                "save_review",
             ],
         )
 

@@ -27,11 +27,12 @@ from domain.case_models import (
 from domain.models import NoticeForm, ProceedingType
 
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 _PROHIBITED_EVENT_KEYS = frozenset(
     {
         "raw_text",
         "source_text",
+        "reviewer_note",
         "document_bytes",
         "payload_bytes",
         "access_token",
@@ -191,6 +192,39 @@ class LocalSQLiteCaseRepository:
 
                 CREATE INDEX IF NOT EXISTS ix_analysis_snapshots_case_created
                     ON analysis_snapshots(case_id, created_at, snapshot_id);
+
+                CREATE TABLE IF NOT EXISTS evidence_reviews (
+                    review_id TEXT PRIMARY KEY,
+                    case_id TEXT NOT NULL,
+                    snapshot_id TEXT NOT NULL,
+                    evidence_id TEXT NOT NULL,
+                    document_id TEXT NOT NULL,
+                    source_page INTEGER NOT NULL,
+                    source_text_sha256 TEXT NOT NULL,
+                    candidate_fingerprint TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    byte_size INTEGER NOT NULL,
+                    sha256_hex TEXT NOT NULL,
+                    storage_key TEXT NOT NULL UNIQUE,
+                    reviewed_at TEXT NOT NULL,
+                    reviewed_by TEXT NOT NULL,
+                    FOREIGN KEY (case_id) REFERENCES cases(case_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    FOREIGN KEY (snapshot_id)
+                        REFERENCES analysis_snapshots(snapshot_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    FOREIGN KEY (document_id)
+                        REFERENCES case_documents(document_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    UNIQUE (snapshot_id, candidate_fingerprint),
+                    CHECK (source_page >= 1),
+                    CHECK (byte_size > 0)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_evidence_reviews_snapshot_time
+                    ON evidence_reviews(
+                        snapshot_id, reviewed_at, review_id
+                    );
                 """
             )
             current = connection.execute(
@@ -203,10 +237,10 @@ class LocalSQLiteCaseRepository:
                 )
             else:
                 current_version = int(current["value"])
-                if current_version == 1:
-                    # Phase 3F.4 adds analysis_snapshots. The table is
-                    # created idempotently by the schema script above; this
-                    # explicit metadata bump records that migration.
+                if current_version in (1, 2):
+                    # v2 added analysis_snapshots; v3 adds evidence_reviews.
+                    # Both tables are created idempotently by the schema
+                    # script above, so this explicit bump records migration.
                     connection.execute(
                         """
                         UPDATE schema_meta

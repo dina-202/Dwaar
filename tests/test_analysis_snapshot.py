@@ -582,7 +582,7 @@ class SnapshotRepositoryAndEncryptionTests(unittest.TestCase):
                 expected_source_document=self.notice,
             )
 
-    def test_schema_v1_database_migrates_to_v2(self):
+    def test_schema_v1_database_migrates_to_v3(self):
         other_path = str(Path(self.temp_dir.name) / "legacy.db")
         legacy = LocalSQLiteCaseRepository(other_path)
         with sqlite3.connect(other_path) as connection:
@@ -609,8 +609,16 @@ class SnapshotRepositoryAndEncryptionTests(unittest.TestCase):
                 WHERE type='table' AND name='analysis_snapshots'
                 """
             ).fetchone()
-        self.assertEqual(version, "2")
+        self.assertEqual(version, "3")
         self.assertEqual(table[0], "analysis_snapshots")
+        with sqlite3.connect(other_path) as connection:
+            review_table = connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='evidence_reviews'
+                """
+            ).fetchone()
+        self.assertEqual(review_table[0], "evidence_reviews")
 
 
 if __name__ == "__main__":
