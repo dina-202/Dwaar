@@ -30,7 +30,11 @@ from domain.models import (
     DraftPermission,
     DraftPostValidationResult,
     DraftSection,
+    EvidenceCandidate,
     EvidenceChecklistItem,
+    EvidenceIntakeResult,
+    EvidenceIntakeStatus,
+    EvidenceReviewStatus,
     EvidenceStatus,
     ExtractedFact,
     FactExtractionResult,
@@ -471,6 +475,11 @@ def run_app(
             evidence_engine_module,
             "propose_evidence_candidates",
             evidence_mock,
+        ),
+        patch.object(
+            evidence_workspace_module,
+            "build_evidence_documents",
+            return_value=[],
         ),
     ):
         runpy.run_path(str(APP_PATH), run_name="__app_integration_test__")
@@ -953,6 +962,141 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
             rendered_headers.index("Review requirements"),
             rendered_headers.index("Specialist draft"),
         )
+
+
+class EvidenceWorkspaceUiTests(unittest.TestCase):
+    def _supporting_upload(self):
+        return _UploadedFile(
+            [],
+            name="gstr2b.pdf",
+            payload=b"%PDF supporting sentinel",
+        )
+
+    def _intake_result(self):
+        return EvidenceIntakeResult(
+            status=EvidenceIntakeStatus.SUCCESS,
+            candidates=[
+                EvidenceCandidate(
+                    candidate_id="EC-001",
+                    evidence_id="evidence.e1",
+                    document_id="D-001",
+                    source_text="Supporting source text",
+                    source_page=1,
+                    source_origin=SourceTextOrigin.EMBEDDED,
+                    source_verification=SourceVerificationStatus.VERIFIED,
+                )
+            ],
+        )
+
+    def test_supporting_upload_renders_candidate_workspace(self):
+        fake, _, _, evidence_mock, _, _ = run_app(
+            supporting_uploads=[self._supporting_upload()],
+            evidence_intake_result=self._intake_result(),
+        )
+        text = log_text(fake)
+        self.assertIn("Supporting evidence workspace", headers(fake))
+        self.assertIn("EC-001", text)
+        self.assertIn("evidence.e1", text)
+        self.assertIn("Supporting source text", text)
+        evidence_mock.assert_called_once()
+
+    def test_unchanged_session_reuses_notice_and_evidence_results(self):
+        shared_state = {}
+        support = [self._supporting_upload()]
+        intake = self._intake_result()
+
+        first = run_app(
+            supporting_uploads=support,
+            session_state=shared_state,
+            evidence_intake_result=intake,
+        )
+        self.assertEqual(first[2].call_count, 1)
+        self.assertEqual(first[3].call_count, 1)
+
+        second = run_app(
+            supporting_uploads=support,
+            session_state=shared_state,
+            evidence_intake_result=intake,
+        )
+        self.assertEqual(second[2].call_count, 0)
+        self.assertEqual(second[3].call_count, 0)
+
+    def test_supporting_file_change_recomputes_evidence_not_notice(self):
+        shared_state = {}
+        intake = self._intake_result()
+        run_app(
+            supporting_uploads=[self._supporting_upload()],
+            session_state=shared_state,
+            evidence_intake_result=intake,
+        )
+        changed = _UploadedFile(
+            [],
+            name="different.pdf",
+            payload=b"%PDF changed supporting sentinel",
+        )
+        second = run_app(
+            supporting_uploads=[changed],
+            session_state=shared_state,
+            evidence_intake_result=intake,
+        )
+        self.assertEqual(second[2].call_count, 0)
+        self.assertEqual(second[3].call_count, 1)
+
+    def test_confirm_creates_review_record_without_mutating_phase2(self):
+        shared_state = {}
+        support = [self._supporting_upload()]
+        intake = self._intake_result()
+        workspace_key = evidence_workspace_module.evidence_workspace_key(
+            PDF_BYTES,
+            [("gstr2b.pdf", b"%PDF supporting sentinel")],
+            ["evidence.e1"],
+        )
+        button_key = f"confirm_{workspace_key}_EC-001"
+        note_key = f"evidence_note_{workspace_key}_EC-001"
+
+        original = make_result()
+        fake, _, runner, _, _, _ = run_app(
+            result=original,
+            supporting_uploads=support,
+            session_state=shared_state,
+            evidence_intake_result=intake,
+            button_values={button_key: True},
+            text_values={note_key: "Checked by CA"},
+        )
+
+        self.assertEqual(runner.call_count, 1)
+        reviews = shared_state["_dwaar_evidence_reviews"]
+        self.assertEqual(len(reviews), 1)
+        self.assertIs(
+            reviews[0].decision,
+            EvidenceReviewStatus.CONFIRMED,
+        )
+        self.assertEqual(reviews[0].reviewer_note, "Checked by CA")
+        self.assertIs(
+            original.draft_result.evidence_checklist[0].status,
+            EvidenceStatus.UNKNOWN,
+        )
+        self.assertIn("Evidence review records", log_text(fake))
+
+    def test_reject_creates_rejected_review_record(self):
+        shared_state = {}
+        support = [self._supporting_upload()]
+        intake = self._intake_result()
+        workspace_key = evidence_workspace_module.evidence_workspace_key(
+            PDF_BYTES,
+            [("gstr2b.pdf", b"%PDF supporting sentinel")],
+            ["evidence.e1"],
+        )
+        button_key = f"reject_{workspace_key}_EC-001"
+        run_app(
+            supporting_uploads=support,
+            session_state=shared_state,
+            evidence_intake_result=intake,
+            button_values={button_key: True},
+        )
+        reviews = shared_state["_dwaar_evidence_reviews"]
+        self.assertEqual(len(reviews), 1)
+        self.assertIs(reviews[0].decision, EvidenceReviewStatus.REJECTED)
 
 
 if __name__ == "__main__":
