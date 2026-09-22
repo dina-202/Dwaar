@@ -253,7 +253,8 @@ class ExistingClientIntakeIntegrationTests(DurableCaseIntakeIntegrationTests):
         )
 
     def test_reuse_creates_case_without_duplicate_client_or_registration(self):
-        case = self.persist_existing()
+        payload = make_pdf("Second saved notice")
+        case = self.persist_existing(notice_payload=payload)
 
         self.assertEqual(case.client_id, self.client.client_id)
         self.assertEqual(
@@ -276,7 +277,7 @@ class ExistingClientIntakeIntegrationTests(DurableCaseIntakeIntegrationTests):
         self.assertEqual(len(documents), 1)
         self.assertEqual(
             self.store.get(documents[0].storage_key),
-            make_pdf("Second saved notice"),
+            payload,
         )
 
     def test_existing_client_can_create_case_without_registration(self):
