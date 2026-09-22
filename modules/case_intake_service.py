@@ -247,3 +247,144 @@ def persist_new_case_intake(
         ) from persistence_error
 
     return case
+
+
+def persist_existing_client_case_intake(
+    repository: CaseRepository,
+    document_store: DocumentStore,
+    *,
+    firm_id: str,
+    client_id: str,
+    registration_id: Optional[str],
+    case_title: str,
+    proceeding_type: ProceedingType,
+    notice_form: NoticeForm,
+    response_deadline: Optional[date],
+    notice_filename: str,
+    notice_payload: bytes,
+    actor_id: str,
+    opened_at: datetime,
+) -> CaseRecord:
+    """Persist a new intake case for an explicitly selected existing client."""
+    if not isinstance(firm_id, str) or not firm_id.strip():
+        raise ValueError("firm_id must be a non-empty string")
+    if not isinstance(client_id, str) or not client_id.strip():
+        raise ValueError("client_id must be a non-empty string")
+    if registration_id is not None and (
+        not isinstance(registration_id, str) or not registration_id.strip()
+    ):
+        raise ValueError("registration_id must be a non-empty string or None")
+    if repository.get_firm(firm_id) is None:
+        raise LookupError("firm does not exist")
+
+    client = repository.get_client(client_id)
+    if client is None or client.firm_id != firm_id:
+        raise LookupError("client does not exist in the selected firm")
+
+    registration = None
+    if registration_id is not None:
+        registration = repository.get_registration(registration_id)
+        if registration is None or registration.client_id != client.client_id:
+            raise LookupError(
+                "registration does not exist for the selected client"
+            )
+
+    if not isinstance(proceeding_type, ProceedingType):
+        raise TypeError("proceeding_type must be a ProceedingType")
+    if not isinstance(notice_form, NoticeForm):
+        raise TypeError("notice_form must be a NoticeForm")
+    if response_deadline is not None and not isinstance(
+        response_deadline, date
+    ):
+        raise TypeError("response_deadline must be a date or None")
+    if not isinstance(actor_id, str) or not actor_id:
+        raise ValueError("actor_id must be a non-empty string")
+    if not isinstance(opened_at, datetime) or opened_at.tzinfo is None:
+        raise ValueError("opened_at must be timezone-aware")
+
+    normalized_case_title = _display_text(
+        case_title, "case_title", 250
+    )
+    normalized_filename = _filename(notice_filename)
+    _validate_pdf(notice_payload)
+
+    case = CaseRecord(
+        case_id=_id("CASE"),
+        firm_id=firm_id,
+        client_id=client.client_id,
+        registration_id=(
+            None
+            if registration is None
+            else registration.registration_id
+        ),
+        title=normalized_case_title,
+        status=CaseStatus.INTAKE,
+        proceeding_type=proceeding_type,
+        notice_form=notice_form,
+        opened_at=opened_at,
+        response_deadline=response_deadline,
+    )
+
+    storage_key = generate_storage_key()
+    sha256_hex = hashlib.sha256(notice_payload).hexdigest()
+    document = StoredDocumentRef(
+        document_id=_id("DOC"),
+        case_id=case.case_id,
+        kind=CaseDocumentKind.NOTICE,
+        original_filename=normalized_filename,
+        media_type="application/pdf",
+        byte_size=len(notice_payload),
+        sha256_hex=sha256_hex,
+        storage_key=storage_key,
+        created_at=opened_at,
+    )
+    events = [
+        CaseEvent(
+            event_id=_id("EV"),
+            case_id=case.case_id,
+            event_type=CaseEventType.CASE_CREATED,
+            occurred_at=opened_at,
+            actor_id=actor_id,
+            payload={
+                "status": CaseStatus.INTAKE.value,
+                "client_id": client.client_id,
+                "proceeding_type": proceeding_type.value,
+                "notice_form": notice_form.value,
+            },
+        ),
+        CaseEvent(
+            event_id=_id("EV"),
+            case_id=case.case_id,
+            event_type=CaseEventType.DOCUMENT_ADDED,
+            occurred_at=opened_at,
+            actor_id=actor_id,
+            payload={
+                "document_id": document.document_id,
+                "kind": document.kind.value,
+                "byte_size": str(document.byte_size),
+                "sha256": sha256_hex,
+            },
+        ),
+    ]
+
+    document_store.put(storage_key, notice_payload)
+    try:
+        repository.create_existing_client_case_intake(
+            case,
+            document,
+            events,
+        )
+    except Exception as persistence_error:
+        try:
+            document_store.delete(storage_key)
+        except Exception as rollback_error:
+            raise CaseIntakeConsistencyError(
+                "Existing-client case intake metadata failed and encrypted "
+                "notice rollback also failed."
+            ) from rollback_error
+        raise CaseIntakePersistenceError(
+            "Existing-client case intake metadata failed; encrypted notice "
+            "was rolled back."
+        ) from persistence_error
+
+    return case
