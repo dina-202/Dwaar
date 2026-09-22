@@ -13,6 +13,7 @@ from modules.authorized_case_service import AuthorizedCaseService
 from modules.authorized_draft_work_product_service import (
     AuthorizedDraftWorkProductService,
 )
+from modules.authorized_filing_service import AuthorizedFilingService
 from modules.authorized_evidence_review_service import (
     AuthorizedEvidenceReviewService,
 )
@@ -41,6 +42,7 @@ from modules.sqlite_draft_version_repository import (
 from modules.sqlite_evidence_review_repository import (
     LocalSQLiteEvidenceReviewRepository,
 )
+from modules.sqlite_filing_repository import LocalSQLiteFilingRepository
 
 
 class RuntimePersistenceConfigurationError(RuntimeError):
@@ -138,6 +140,32 @@ def build_authorized_evidence_workspace_service(
     return AuthorizedEvidenceWorkspaceService(
         case_service,
         access_repository,
+    )
+
+
+def build_authorized_filing_service(
+    environment: Optional[Mapping[str, str]] = None,
+) -> AuthorizedFilingService:
+    """Build authorized filing/acknowledgement lifecycle service."""
+    (
+        db_path,
+        case_repository,
+        access_repository,
+        document_store,
+    ) = _build_runtime_components(environment)
+    case_service = AuthorizedCaseService(
+        case_repository,
+        access_repository,
+        document_store,
+    )
+    filing_repository = LocalSQLiteFilingRepository(db_path)
+    draft_repository = LocalSQLiteDraftVersionRepository(db_path)
+    return AuthorizedFilingService(
+        case_service,
+        access_repository,
+        filing_repository,
+        draft_repository,
+        document_store,
     )
 
 

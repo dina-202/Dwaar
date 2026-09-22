@@ -32,6 +32,7 @@ from modules.runtime_persistence import (
     build_authorized_draft_work_product_service,
     build_authorized_evidence_review_service,
     build_authorized_evidence_workspace_service,
+    build_authorized_filing_service,
 )
 from modules.case_reopen_service import (
     SavedCaseReopenError,
@@ -1019,6 +1020,296 @@ def _render_draft_work_product_workspace(
                     "wordprocessingml.document"
                 ),
                 key=f"download_draft_{selected.draft_version_id}",
+            )
+
+
+def _render_filing_workspace(
+    principal,
+    active_firm,
+    reopened,
+):
+    st.header("Filing & acknowledgement")
+    st.caption(
+        "Filing records describe what was actually submitted to the portal. "
+        "The selected APPROVED draft is recorded as the filing basis; Dwaar "
+        "does not claim the uploaded filed PDF is textually identical to "
+        "that draft."
+    )
+
+    try:
+        filing_service = build_authorized_filing_service()
+        filings = filing_service.list_filings(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+        )
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Filing storage is not fully configured on this deployment."
+        )
+        return
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to view filing history "
+            "for this case."
+        )
+        return
+    except Exception:
+        st.error("Filing history could not be loaded.")
+        return
+
+    if filings:
+        st.dataframe(
+            [
+                {
+                    "filing_id": item.filing_id,
+                    "filing_reference": item.filing_reference,
+                    "approved_draft_version_id": (
+                        item.approved_draft_version_id
+                    ),
+                    "filed_response_document_id": (
+                        item.filed_response_document_id
+                    ),
+                    "acknowledgement_document_id": _display(
+                        item.acknowledgement_document_id
+                    ),
+                    "filed_at": item.filed_at.isoformat(),
+                    "filed_by": item.filed_by,
+                    "recorded_at": item.recorded_at.isoformat(),
+                }
+                for item in filings
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write("No filing records yet.")
+
+    can_record = (
+        AccessPermission.FILING_RECORD in active_firm.permissions
+        and AccessPermission.DOCUMENT_ADD in active_firm.permissions
+    )
+    if not can_record:
+        st.caption(
+            "Recording filings/acknowledgements requires FILING_RECORD "
+            "and DOCUMENT_ADD."
+        )
+        return
+
+    if reopened.case.status not in {
+        CaseStatus.DRAFT_REVIEW,
+        CaseStatus.FILED,
+        CaseStatus.HEARING,
+    }:
+        st.caption(
+            "The current case status does not permit recording a filing."
+        )
+    else:
+        try:
+            draft_service = build_authorized_draft_work_product_service()
+            draft_versions = draft_service.list_versions(
+                principal,
+                active_firm.firm_id,
+                case_id=reopened.case.case_id,
+            )
+        except Exception:
+            st.error(
+                "Approved draft history could not be loaded for filing."
+            )
+            return
+
+        approved_versions = [
+            item
+            for item in draft_versions
+            if item.review_status is DraftReviewStatus.APPROVED
+        ]
+        if not approved_versions:
+            st.warning(
+                "An APPROVED immutable draft version is required before "
+                "a filing can be recorded."
+            )
+        else:
+            draft_labels = {
+                (
+                    f"v{item.version_number} — "
+                    f"{item.draft_version_id}"
+                ): item
+                for item in reversed(approved_versions)
+            }
+            draft_label = st.selectbox(
+                "Approved filing-basis draft",
+                list(draft_labels),
+                key=f"filing_draft_{reopened.case.case_id}",
+            )
+            selected_draft = draft_labels[draft_label]
+
+            filing_reference = st.text_input(
+                "Portal / filing reference",
+                key=f"filing_reference_{reopened.case.case_id}",
+            )
+            filed_at_text = st.text_input(
+                "Actually filed at (ISO 8601 with timezone)",
+                value=datetime.now(timezone.utc).isoformat(
+                    timespec="minutes"
+                ),
+                key=f"filing_time_{reopened.case.case_id}",
+            )
+            filed_response = st.file_uploader(
+                "Upload the actual filed response PDF",
+                type="pdf",
+                key=f"filed_response_{reopened.case.case_id}",
+            )
+            acknowledgement = st.file_uploader(
+                "Upload acknowledgement PDF (optional)",
+                type="pdf",
+                key=f"filing_ack_{reopened.case.case_id}",
+            )
+
+            if st.button(
+                "Record filing",
+                key=f"record_filing_{reopened.case.case_id}",
+            ):
+                if filed_response is None:
+                    st.error(
+                        "Upload the actual filed response PDF before "
+                        "recording the filing."
+                    )
+                else:
+                    try:
+                        filed_at = datetime.fromisoformat(
+                            filed_at_text.strip()
+                        )
+                        if filed_at.tzinfo is None:
+                            raise ValueError
+                    except (TypeError, ValueError):
+                        st.error(
+                            "Filed time must be ISO 8601 and include a "
+                            "timezone offset."
+                        )
+                    else:
+                        recorded_at = datetime.now(timezone.utc)
+                        try:
+                            saved = filing_service.record_filing(
+                                principal,
+                                active_firm.firm_id,
+                                case_id=reopened.case.case_id,
+                                approved_draft_version_id=(
+                                    selected_draft.draft_version_id
+                                ),
+                                filing_reference=filing_reference,
+                                filed_response_filename=(
+                                    filed_response.name
+                                ),
+                                filed_response_payload=_uploaded_bytes(
+                                    filed_response
+                                ),
+                                acknowledgement_filename=(
+                                    None
+                                    if acknowledgement is None
+                                    else acknowledgement.name
+                                ),
+                                acknowledgement_payload=(
+                                    None
+                                    if acknowledgement is None
+                                    else _uploaded_bytes(
+                                        acknowledgement
+                                    )
+                                ),
+                                filed_at=filed_at,
+                                recorded_at=recorded_at,
+                            )
+                        except (ValueError, TypeError) as error:
+                            st.error(str(error))
+                        except PermissionError:
+                            st.error(
+                                "Your account is no longer authorized to "
+                                "record this filing."
+                            )
+                        except Exception:
+                            st.error("The filing could not be recorded.")
+                        else:
+                            filings = filing_service.list_filings(
+                                principal,
+                                active_firm.firm_id,
+                                case_id=reopened.case.case_id,
+                            )
+                            st.write(
+                                {
+                                    "recorded_filing_id": (
+                                        saved.filing_id
+                                    ),
+                                    "filing_reference": (
+                                        saved.filing_reference
+                                    ),
+                                    "filed_response_document_id": (
+                                        saved.filed_response_document_id
+                                    ),
+                                    "acknowledgement_document_id": (
+                                        saved.acknowledgement_document_id
+                                    ),
+                                }
+                            )
+
+    missing_ack = [
+        item
+        for item in filings
+        if item.acknowledgement_document_id is None
+    ]
+    if not missing_ack:
+        return
+
+    st.subheader("Attach acknowledgement later")
+    filing_labels = {
+        (
+            f"{item.filing_reference} — "
+            f"{item.filing_id}"
+        ): item
+        for item in missing_ack
+    }
+    selected_label = st.selectbox(
+        "Filing awaiting acknowledgement",
+        list(filing_labels),
+        key=f"filing_ack_target_{reopened.case.case_id}",
+    )
+    selected_filing = filing_labels[selected_label]
+    later_ack = st.file_uploader(
+        "Upload acknowledgement PDF for selected filing",
+        type="pdf",
+        key=f"late_filing_ack_{selected_filing.filing_id}",
+    )
+    if st.button(
+        "Attach acknowledgement",
+        key=f"attach_filing_ack_{selected_filing.filing_id}",
+    ):
+        if later_ack is None:
+            st.error("Upload an acknowledgement PDF first.")
+            return
+        try:
+            updated = filing_service.attach_acknowledgement(
+                principal,
+                active_firm.firm_id,
+                case_id=reopened.case.case_id,
+                filing_id=selected_filing.filing_id,
+                acknowledgement_filename=later_ack.name,
+                acknowledgement_payload=_uploaded_bytes(later_ack),
+                added_at=datetime.now(timezone.utc),
+            )
+        except (ValueError, TypeError) as error:
+            st.error(str(error))
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to attach this "
+                "acknowledgement."
+            )
+        except Exception:
+            st.error("The acknowledgement could not be attached.")
+        else:
+            st.write(
+                {
+                    "updated_filing_id": updated.filing_id,
+                    "acknowledgement_document_id": (
+                        updated.acknowledgement_document_id
+                    ),
+                }
             )
 
 
@@ -2011,6 +2302,11 @@ def _render_saved_cases_workspace(principal, active_firm):
         service,
     )
     _render_draft_work_product_workspace(
+        principal,
+        active_firm,
+        reopened,
+    )
+    _render_filing_workspace(
         principal,
         active_firm,
         reopened,

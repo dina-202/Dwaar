@@ -12,6 +12,7 @@ from modules.authorized_case_service import AuthorizedCaseService
 from modules.authorized_draft_work_product_service import (
     AuthorizedDraftWorkProductService,
 )
+from modules.authorized_filing_service import AuthorizedFilingService
 from modules.authorized_evidence_review_service import (
     AuthorizedEvidenceReviewService,
 )
@@ -25,6 +26,7 @@ from modules.runtime_persistence import (
     build_authorized_draft_work_product_service,
     build_authorized_evidence_review_service,
     build_authorized_evidence_workspace_service,
+    build_authorized_filing_service,
     document_key_from_environment,
     object_root_from_environment,
 )
@@ -86,6 +88,23 @@ class RuntimeAnalysisSnapshotFactoryTests(unittest.TestCase):
                 service,
                 AuthorizedAnalysisSnapshotService,
             )
+            self.assertTrue((root / "dwaar.db").exists())
+            self.assertTrue((root / "documents").is_dir())
+
+
+class RuntimeFilingFactoryTests(unittest.TestCase):
+    def test_factory_builds_authorized_filing_service(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw = base64.b64encode(b"k" * 32).decode("ascii")
+            service = build_authorized_filing_service(
+                {
+                    "DWAAR_DB_PATH": str(root / "dwaar.db"),
+                    "DWAAR_OBJECT_ROOT": str(root / "documents"),
+                    "DWAAR_DOCUMENT_KEY_B64": raw,
+                }
+            )
+            self.assertIsInstance(service, AuthorizedFilingService)
             self.assertTrue((root / "dwaar.db").exists())
             self.assertTrue((root / "documents").is_dir())
 

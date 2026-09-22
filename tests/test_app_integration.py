@@ -1,7 +1,7 @@
 """Offline integration tests for the Step-10.2 Streamlit shell."""
 
 import ast
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import pathlib
 import runpy
@@ -23,6 +23,7 @@ from domain.evidence_review_models import (
     EvidenceReviewRef,
     LoadedEvidenceReview,
 )
+from domain.filing_models import FilingRecord
 from domain.draft_work_product_models import (
     DraftReviewStatus,
     DraftVersionRef,
@@ -183,6 +184,7 @@ class FakeStreamlit:
         self,
         uploaded,
         supporting_uploads=None,
+        file_upload_values=None,
         button_values=None,
         text_values=None,
         session_state=None,
@@ -191,6 +193,7 @@ class FakeStreamlit:
     ):
         self.uploaded = uploaded
         self.supporting_uploads = supporting_uploads or []
+        self.file_upload_values = file_upload_values or {}
         self.button_values = button_values or {}
         self.text_values = text_values or {}
         self.session_state = {} if session_state is None else session_state
@@ -215,6 +218,9 @@ class FakeStreamlit:
 
     def file_uploader(self, *args, **kwargs):
         self._record("file_uploader", *args, **kwargs)
+        key = kwargs.get("key")
+        if key in self.file_upload_values:
+            return self.file_upload_values[key]
         label = args[0] if args else kwargs.get("label", "")
         if "supporting evidence" in str(label).lower():
             return self.supporting_uploads
@@ -509,6 +515,7 @@ def run_app(
     extraction_error=None,
     orchestrator_error=None,
     supporting_uploads=None,
+    file_upload_values=None,
     session_state=None,
     button_values=None,
     text_values=None,
@@ -529,6 +536,8 @@ def run_app(
     evidence_review_service_error=None,
     draft_service=None,
     draft_service_error=None,
+    filing_service=None,
+    filing_service_error=None,
     persisted_evidence_ref=None,
     persisted_evidence_error=None,
     reopen_result=None,
@@ -539,6 +548,7 @@ def run_app(
     fake = FakeStreamlit(
         uploaded,
         supporting_uploads=supporting_uploads,
+        file_upload_values=file_upload_values,
         button_values=button_values,
         text_values=text_values,
         session_state=session_state,
@@ -694,6 +704,15 @@ def run_app(
     if draft_service_error is not None:
         draft_service_mock.side_effect = draft_service_error
 
+    if filing_service is None:
+        filing_service = Mock()
+        filing_service.list_filings.return_value = []
+    elif isinstance(filing_service.list_filings.return_value, Mock):
+        filing_service.list_filings.return_value = []
+    filing_service_mock = Mock(return_value=filing_service)
+    if filing_service_error is not None:
+        filing_service_mock.side_effect = filing_service_error
+
     persisted_evidence_mock = Mock(return_value=persisted_evidence_ref)
     if persisted_evidence_error is not None:
         persisted_evidence_mock.side_effect = persisted_evidence_error
@@ -709,6 +728,7 @@ def run_app(
     fake.evidence_workspace_service_mock = evidence_workspace_service_mock
     fake.evidence_review_service_mock = evidence_review_service_mock
     fake.draft_service_mock = draft_service_mock
+    fake.filing_service_mock = filing_service_mock
     fake.persisted_evidence_mock = persisted_evidence_mock
     fake.reopen_mock = reopen_mock
 
@@ -749,6 +769,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_draft_work_product_service",
             draft_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_filing_service",
+            filing_service_mock,
         ),
         patch.object(
             case_evidence_service_module,
@@ -2364,6 +2389,354 @@ class DraftWorkProductUiTests(unittest.TestCase):
             log_text(fake),
         )
         draft_service.create_edited_version.assert_not_called()
+
+
+class FilingWorkspaceUiTests(unittest.TestCase):
+    def _firm(self, *, can_file=False):
+        permissions = {
+            AccessPermission.CASE_READ,
+            AccessPermission.DOCUMENT_READ,
+        }
+        if can_file:
+            permissions.update(
+                {
+                    AccessPermission.FILING_RECORD,
+                    AccessPermission.DOCUMENT_ADD,
+                }
+            )
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset(permissions),
+        )
+
+    def _case(self):
+        return CaseRecord(
+            case_id="CASE-1",
+            firm_id="F-TEST",
+            client_id="CLIENT-1",
+            registration_id=None,
+            title="Saved GST matter",
+            status=CaseStatus.DRAFT_REVIEW,
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _notice(self):
+        return StoredDocumentRef(
+            document_id="DOC-NOTICE",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="notice.pdf",
+            media_type="application/pdf",
+            byte_size=len(PDF_BYTES),
+            sha256_hex="a" * 64,
+            storage_key="objects/" + "a" * 32,
+            created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _reopened(self):
+        return ReopenedCaseAnalysis(
+            case=self._case(),
+            notice_document=self._notice(),
+            notice_pdf_bytes=PDF_BYTES,
+            document_pages=DOCUMENT_PAGES,
+            raw_text=RAW_TEXT,
+            analysis=make_result(),
+        )
+
+    def _approved_draft(self):
+        return DraftVersionRef(
+            draft_version_id="DRAFT-APPROVED",
+            case_id="CASE-1",
+            source_snapshot_id="SNAP-1",
+            parent_draft_version_id=None,
+            version_number=1,
+            generated_baseline=True,
+            content_sha256="c" * 64,
+            byte_size=100,
+            sha256_hex="d" * 64,
+            storage_key="objects/" + "d" * 32,
+            review_status=DraftReviewStatus.APPROVED,
+            created_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            created_by="OIDC-CREATOR",
+            reviewed_at=datetime(2026, 8, 4, tzinfo=timezone.utc),
+            reviewed_by="OIDC-REVIEWER",
+            approved_at=datetime(2026, 8, 5, tzinfo=timezone.utc),
+            approved_by="OIDC-APPROVER",
+        )
+
+    def _draft_service(self):
+        service = Mock()
+        approved = self._approved_draft()
+        service.list_versions.return_value = [approved]
+        service.load_version.return_value = LoadedDraftVersion(
+            metadata=approved,
+            payload={"draft_text": "## Response\n\nApproved response"},
+        )
+        service.export_version_docx.return_value = b"DOCX"
+        return service
+
+    def _filing(self, *, with_ack=False):
+        return FilingRecord(
+            filing_id="FILING-1",
+            case_id="CASE-1",
+            approved_draft_version_id="DRAFT-APPROVED",
+            filed_response_document_id="DOC-FILED",
+            acknowledgement_document_id=(
+                "DOC-ACK" if with_ack else None
+            ),
+            filing_reference="ARN-TEST-001",
+            filed_at=datetime(
+                2026, 9, 22, 22, 0,
+                tzinfo=timezone(timedelta(hours=5, minutes=30)),
+            ),
+            filed_by="OIDC-FILER",
+            recorded_at=datetime(
+                2026, 9, 22, 17, 0, tzinfo=timezone.utc
+            ),
+            acknowledgement_added_at=(
+                datetime(2026, 9, 22, 18, 0, tzinfo=timezone.utc)
+                if with_ack
+                else None
+            ),
+            acknowledgement_added_by=(
+                "OIDC-FILER" if with_ack else None
+            ),
+        )
+
+    def _case_service(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        service.list_documents.return_value = []
+        service.list_clients.return_value = []
+        service.list_case_work_queue.return_value = []
+        return service
+
+    def test_read_only_user_sees_filing_history_but_no_record_controls(self):
+        filing_service = Mock()
+        filing_service.list_filings.return_value = [
+            self._filing()
+        ]
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(can_file=False)],
+            persistence_service=self._case_service(),
+            filing_service=filing_service,
+            draft_service=self._draft_service(),
+            reopen_result=self._reopened(),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        self.assertIn("Filing & acknowledgement", headers(fake))
+        text = log_text(fake)
+        self.assertIn("ARN-TEST-001", text)
+        self.assertIn(
+            "requires FILING_RECORD and DOCUMENT_ADD",
+            text,
+        )
+        filing_service.record_filing.assert_not_called()
+
+    def test_filing_requires_approved_draft_version(self):
+        draft_service = self._draft_service()
+        working = DraftVersionRef(
+            **{
+                **self._approved_draft().__dict__,
+                "draft_version_id": "DRAFT-WORKING",
+                "review_status": DraftReviewStatus.WORKING,
+                "reviewed_at": None,
+                "reviewed_by": None,
+                "approved_at": None,
+                "approved_by": None,
+            }
+        )
+        draft_service.list_versions.return_value = [working]
+        draft_service.load_version.return_value = LoadedDraftVersion(
+            metadata=working,
+            payload={"draft_text": "Working"},
+        )
+        filing_service = Mock()
+        filing_service.list_filings.return_value = []
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(can_file=True)],
+            persistence_service=self._case_service(),
+            filing_service=filing_service,
+            draft_service=draft_service,
+            reopen_result=self._reopened(),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        self.assertIn(
+            "APPROVED immutable draft version is required",
+            log_text(fake),
+        )
+        filing_service.record_filing.assert_not_called()
+
+    def test_record_filing_passes_actual_pdf_reference_and_timestamp(self):
+        filing_service = Mock()
+        saved = self._filing()
+        filing_service.list_filings.side_effect = [[], [saved]]
+        filing_service.record_filing.return_value = saved
+        response = _UploadedFile(
+            [],
+            name="portal-filed.pdf",
+            payload=b"%PDF filed response",
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(can_file=True)],
+            persistence_service=self._case_service(),
+            filing_service=filing_service,
+            draft_service=self._draft_service(),
+            reopen_result=self._reopened(),
+            file_upload_values={
+                "filed_response_CASE-1": response,
+                "filing_ack_CASE-1": None,
+            },
+            text_values={
+                "filing_reference_CASE-1": "ARN-TEST-001",
+                "filing_time_CASE-1": (
+                    "2026-09-22T22:00:00+05:30"
+                ),
+            },
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "record_filing_CASE-1": True,
+            },
+        )
+
+        filing_service.record_filing.assert_called_once()
+        kwargs = filing_service.record_filing.call_args.kwargs
+        self.assertEqual(
+            kwargs["approved_draft_version_id"],
+            "DRAFT-APPROVED",
+        )
+        self.assertEqual(kwargs["filing_reference"], "ARN-TEST-001")
+        self.assertEqual(
+            kwargs["filed_response_filename"],
+            "portal-filed.pdf",
+        )
+        self.assertEqual(
+            kwargs["filed_response_payload"],
+            b"%PDF filed response",
+        )
+        self.assertIsNone(kwargs["acknowledgement_filename"])
+        self.assertIsNone(kwargs["acknowledgement_payload"])
+        self.assertIsNotNone(kwargs["filed_at"].tzinfo)
+        self.assertIsNotNone(kwargs["recorded_at"].tzinfo)
+        self.assertIn("recorded_filing_id", log_text(fake))
+
+    def test_missing_filed_response_blocks_recording(self):
+        filing_service = Mock()
+        filing_service.list_filings.return_value = []
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(can_file=True)],
+            persistence_service=self._case_service(),
+            filing_service=filing_service,
+            draft_service=self._draft_service(),
+            reopen_result=self._reopened(),
+            file_upload_values={
+                "filed_response_CASE-1": None,
+                "filing_ack_CASE-1": None,
+            },
+            text_values={
+                "filing_reference_CASE-1": "ARN-TEST-001",
+                "filing_time_CASE-1": (
+                    "2026-09-22T22:00:00+05:30"
+                ),
+            },
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "record_filing_CASE-1": True,
+            },
+        )
+        self.assertIn(
+            "Upload the actual filed response PDF",
+            log_text(fake),
+        )
+        filing_service.record_filing.assert_not_called()
+
+    def test_invalid_filed_time_blocks_recording(self):
+        filing_service = Mock()
+        filing_service.list_filings.return_value = []
+        response = _UploadedFile(
+            [],
+            name="filed.pdf",
+            payload=b"%PDF filed",
+        )
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(can_file=True)],
+            persistence_service=self._case_service(),
+            filing_service=filing_service,
+            draft_service=self._draft_service(),
+            reopen_result=self._reopened(),
+            file_upload_values={
+                "filed_response_CASE-1": response,
+            },
+            text_values={
+                "filing_reference_CASE-1": "ARN-TEST-001",
+                "filing_time_CASE-1": "2026-09-22 22:00",
+            },
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "record_filing_CASE-1": True,
+            },
+        )
+        self.assertIn(
+            "include a timezone offset",
+            log_text(fake),
+        )
+        filing_service.record_filing.assert_not_called()
+
+    def test_late_acknowledgement_calls_durable_service(self):
+        filing = self._filing()
+        updated = self._filing(with_ack=True)
+        filing_service = Mock()
+        filing_service.list_filings.return_value = [filing]
+        filing_service.attach_acknowledgement.return_value = updated
+        ack = _UploadedFile(
+            [],
+            name="ack.pdf",
+            payload=b"%PDF ack",
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(can_file=True)],
+            persistence_service=self._case_service(),
+            filing_service=filing_service,
+            draft_service=self._draft_service(),
+            reopen_result=self._reopened(),
+            file_upload_values={
+                "late_filing_ack_FILING-1": ack,
+            },
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "attach_filing_ack_FILING-1": True,
+            },
+        )
+
+        filing_service.attach_acknowledgement.assert_called_once()
+        kwargs = (
+            filing_service.attach_acknowledgement.call_args.kwargs
+        )
+        self.assertEqual(kwargs["filing_id"], "FILING-1")
+        self.assertEqual(
+            kwargs["acknowledgement_filename"],
+            "ack.pdf",
+        )
+        self.assertEqual(
+            kwargs["acknowledgement_payload"],
+            b"%PDF ack",
+        )
+        self.assertIsNotNone(kwargs["added_at"].tzinfo)
+        self.assertIn("DOC-ACK", log_text(fake))
 
 
 class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):

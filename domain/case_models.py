@@ -49,6 +49,7 @@ class CaseEventType(Enum):
     DRAFT_CREATED = "draft_created"
     DRAFT_REVIEWED = "draft_reviewed"
     FILING_RECORDED = "filing_recorded"
+    FILING_ACKNOWLEDGEMENT_RECORDED = "filing_acknowledgement_recorded"
     HEARING_RECORDED = "hearing_recorded"
     ORDER_RECORDED = "order_recorded"
 
