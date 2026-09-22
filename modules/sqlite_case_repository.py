@@ -32,6 +32,7 @@ _PROHIBITED_EVENT_KEYS = frozenset(
     {
         "raw_text",
         "source_text",
+        "reviewer_note",
         "document_bytes",
         "payload_bytes",
         "access_token",
