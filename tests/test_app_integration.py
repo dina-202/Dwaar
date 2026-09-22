@@ -489,7 +489,7 @@ class UploadAndFailureTests(unittest.TestCase):
         fake, _, runner, events, today_calls = run_app(
             orchestrator_error=ValueError("private infrastructure detail")
         )
-        runner.assert_called_once_with(RAW_TEXT, TODAY)
+        runner.assert_called_once_with([RAW_TEXT], TODAY)
         self.assertEqual(events, ["read", "extract", "orchestrator"])
         self.assertEqual(today_calls, 1)
         text = log_text(fake)
@@ -853,7 +853,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         fake, _, runner, _, _ = run_app()
         displayed = [call for call in fake.calls if RAW_TEXT in repr(call)]
         self.assertEqual(displayed, [("text", (RAW_TEXT,), {})])
-        runner.assert_called_once_with(RAW_TEXT, TODAY)
+        runner.assert_called_once_with([RAW_TEXT], TODAY)
         self.assertNotIn("raw_text", Phase2AnalysisResult.__dataclass_fields__)
 
     def test_absent_optional_sections_preserve_relative_order(self):
