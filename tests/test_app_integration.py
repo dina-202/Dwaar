@@ -1296,6 +1296,8 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         self.assertEqual(
             headers(fake),
             [
+                "Saved cases",
+                "New notice intake",
                 "Classification and support",
                 "Fact extraction",
                 "Preflight and deadline",
@@ -1333,6 +1335,188 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
             rendered_headers.index("Specialist draft"),
         )
 
+
+class SavedCaseWorkspaceUiTests(unittest.TestCase):
+    def _read_only_firm(self, *, document_read=True):
+        permissions = {AccessPermission.CASE_READ}
+        if document_read:
+            permissions.add(AccessPermission.DOCUMENT_READ)
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset(permissions),
+        )
+
+    def _create_only_firm(self):
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset({AccessPermission.CASE_CREATE}),
+        )
+
+    def _case(self):
+        return CaseRecord(
+            case_id="CASE-1",
+            firm_id="F-TEST",
+            client_id="CLIENT-1",
+            registration_id=None,
+            title="Saved matter",
+            status=CaseStatus.INTAKE,
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _notice(self):
+        return StoredDocumentRef(
+            document_id="DOC-1",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="saved-notice.pdf",
+            media_type="application/pdf",
+            byte_size=len(PDF_BYTES),
+            sha256_hex="a" * 64,
+            storage_key="objects/" + "b" * 32,
+            created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _reopened(self):
+        return ReopenedCaseAnalysis(
+            case=self._case(),
+            notice_document=self._notice(),
+            notice_pdf_bytes=PDF_BYTES,
+            document_pages=DOCUMENT_PAGES,
+            raw_text=RAW_TEXT,
+            analysis=make_result(),
+        )
+
+    def test_read_only_user_sees_saved_cases_but_no_new_uploader(self):
+        service = Mock()
+        service.list_cases.return_value = []
+        fake, extractor, runner, _, _, _ = run_app(
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+        )
+        self.assertIn("Saved cases", headers(fake))
+        self.assertNotIn("New notice intake", headers(fake))
+        self.assertEqual(calls_named(fake, "file_uploader"), [])
+        extractor.assert_not_called()
+        runner.assert_not_called()
+        service.list_cases.assert_called_once()
+
+    def test_create_only_user_sees_new_uploader_but_not_saved_cases(self):
+        service = Mock()
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._create_only_firm()],
+            persistence_service=service,
+        )
+        self.assertNotIn("Saved cases", headers(fake))
+        self.assertIn("New notice intake", headers(fake))
+        self.assertEqual(len(calls_named(fake, "file_uploader")), 1)
+        service.list_cases.assert_not_called()
+
+    def test_case_read_without_document_read_shows_metadata_only(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._read_only_firm(document_read=False)
+            ],
+            persistence_service=service,
+        )
+        text = log_text(fake)
+        self.assertIn("CASE-1", text)
+        self.assertIn("Saved matter", text)
+        self.assertIn("do not have permission", text)
+        self.assertEqual(
+            [
+                call
+                for call in calls_named(fake, "button")
+                if call[1] and call[1][0] == "Open saved case"
+            ],
+            [],
+        )
+
+    def test_open_saved_case_reanalyzes_verified_persisted_notice(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        reopened = self._reopened()
+
+        fake, extractor, runner, _, _, today_calls = run_app(
+            upload=False,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_result=reopened,
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        self.assertEqual(extractor.call_count, 0)
+        self.assertEqual(runner.call_count, 0)
+        self.assertGreaterEqual(today_calls, 1)
+        fake.reopen_mock.assert_called_once()
+        args = fake.reopen_mock.call_args.args
+        self.assertIs(args[0], service)
+        self.assertIsInstance(args[1], AuthenticatedPrincipal)
+        self.assertEqual(args[2], "F-TEST")
+        self.assertEqual(args[3], "CASE-1")
+        self.assertEqual(args[4], TODAY)
+
+        text = log_text(fake)
+        self.assertIn("Opened case", text)
+        self.assertIn("CASE-1", text)
+        self.assertIn("recomputed_from_encrypted_notice", text)
+        self.assertIn(
+            "analysis snapshot itself is not durable yet",
+            text,
+        )
+        self.assertIn(RAW_TEXT, text)
+
+    def test_opened_case_is_reused_on_unrelated_rerun(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        shared_state = {}
+        reopened = self._reopened()
+
+        first = run_app(
+            upload=False,
+            session_state=shared_state,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_result=reopened,
+            button_values={"open_saved_case_CASE-1": True},
+        )
+        first[0].reopen_mock.assert_called_once()
+
+        second = run_app(
+            upload=False,
+            session_state=shared_state,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_result=reopened,
+        )
+        second[0].reopen_mock.assert_not_called()
+        self.assertIn("Opened case", log_text(second[0]))
+
+    def test_reopen_failure_does_not_leak_internal_detail(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_error=SavedCaseReopenError(
+                "private storage/parser detail"
+            ),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+        text = log_text(fake)
+        self.assertIn(
+            "saved notice could not be safely reopened",
+            text.lower(),
+        )
+        self.assertNotIn("private storage/parser detail", text)
 
 class DurableIntakeUiTests(unittest.TestCase):
     def _save_keys(self):
@@ -1379,7 +1563,10 @@ class DurableIntakeUiTests(unittest.TestCase):
         )
 
         self.assertEqual(runner.call_count, 1)
-        fake.persistence_service_mock.assert_called_once_with()
+        self.assertEqual(
+            fake.persistence_service_mock.call_count,
+            2,
+        )
         service.create_case_intake.assert_called_once()
         args = service.create_case_intake.call_args
         self.assertIsInstance(args.args[0], AuthenticatedPrincipal)
