@@ -66,6 +66,7 @@ from domain.models import (
 from modules import evidence_workspace as evidence_workspace_module
 from modules import pdf_reader
 from modules import runtime_access as runtime_access_module
+from modules import runtime_persistence as runtime_persistence_module
 from modules.runtime_access import (
     AvailableFirmAccess,
     RuntimeAccessConfigurationError,
@@ -470,6 +471,8 @@ def run_app(
     access_error=None,
     database_path_error=None,
     selectbox_values=None,
+    persistence_service=None,
+    persistence_error=None,
 ):
     events = []
     uploaded = _UploadedFile(events) if upload else None
@@ -535,8 +538,18 @@ def run_app(
     firms_mock = Mock(return_value=available_firms)
     if access_error is not None:
         firms_mock.side_effect = access_error
+    persistence_service_mock = Mock(
+        return_value=(
+            persistence_service
+            if persistence_service is not None
+            else Mock()
+        )
+    )
+    if persistence_error is not None:
+        persistence_service_mock.side_effect = persistence_error
     fake.db_path_mock = db_path_mock
     fake.firms_mock = firms_mock
+    fake.persistence_service_mock = persistence_service_mock
 
     with (
         patch.dict(sys.modules, {"streamlit": fake}),
@@ -550,6 +563,11 @@ def run_app(
             runtime_access_module,
             "load_available_firms",
             firms_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_case_service",
+            persistence_service_mock,
         ),
         patch.object(pdf_reader, "extract_document_pages", extract_mock),
         patch.object(
@@ -775,6 +793,7 @@ class SourceBoundaryTests(unittest.TestCase):
                 "modules.evidence_workspace",
                 "modules.pdf_reader",
                 "modules.runtime_access",
+                "modules.runtime_persistence",
                 "modules.runtime_security",
             },
         )
