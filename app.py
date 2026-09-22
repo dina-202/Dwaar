@@ -713,9 +713,15 @@ def _render_saved_cases_workspace(principal, active_firm):
         AccessPermission.DOCUMENT_READ in active_firm.permissions
     )
     if not can_open_notice:
+        _render_snapshot_history(
+            principal,
+            active_firm,
+            selected_case,
+            None,
+        )
         st.caption(
-            "You can view case metadata but do not have permission to "
-            "read stored notice documents."
+            "You can view case metadata and analysis-history metadata but "
+            "do not have permission to read stored notice-derived content."
         )
         return
 
