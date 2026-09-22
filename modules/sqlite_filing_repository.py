@@ -197,6 +197,19 @@ class LocalSQLiteFilingRepository:
                 "Filing case identity is inconsistent."
             )
         self._validate_events(events, case_id=filing.case_id)
+        filing_events = [
+            event
+            for event in events
+            if event.event_type is CaseEventType.FILING_RECORDED
+        ]
+        if len(filing_events) != 1:
+            raise RepositoryConflictError(
+                "Filing transaction requires exactly one FILING_RECORDED event."
+            )
+        if filing_events[0].actor_id != filing.filed_by:
+            raise RepositoryConflictError(
+                "Filing audit actor must match filed_by."
+            )
 
         with self._connect() as connection:
             current_case = connection.execute(
@@ -337,6 +350,24 @@ class LocalSQLiteFilingRepository:
                 "Acknowledgement identity is inconsistent."
             )
         self._validate_events(events, case_id=filing.case_id)
+        acknowledgement_events = [
+            event
+            for event in events
+            if event.event_type
+            is CaseEventType.FILING_ACKNOWLEDGEMENT_RECORDED
+        ]
+        if len(acknowledgement_events) != 1:
+            raise RepositoryConflictError(
+                "Acknowledgement transaction requires exactly one "
+                "FILING_ACKNOWLEDGEMENT_RECORDED event."
+            )
+        if (
+            acknowledgement_events[0].actor_id
+            != filing.acknowledgement_added_by
+        ):
+            raise RepositoryConflictError(
+                "Acknowledgement audit actor is inconsistent."
+            )
 
         with self._connect() as connection:
             row = connection.execute(
