@@ -413,6 +413,111 @@ class EventTests(RepositoryFixture):
         self.assertEqual(self.repo.list_events("CASE-001")[0], value)
 
 
+class AtomicDocumentAuditTests(RepositoryFixture):
+    def setUp(self):
+        super().setUp()
+        self.seed_case()
+
+    def document(self, document_id="DOC-ATOMIC", case_id="CASE-001"):
+        return StoredDocumentRef(
+            document_id=document_id,
+            case_id=case_id,
+            kind=CaseDocumentKind.SUPPORTING_EVIDENCE,
+            original_filename="evidence.pdf",
+            media_type="application/pdf",
+            byte_size=321,
+            sha256_hex="c" * 64,
+            storage_key=f"opaque/{document_id}",
+            created_at=NOW,
+        )
+
+    def event(
+        self,
+        event_id="EV-ATOMIC",
+        case_id="CASE-001",
+        payload=None,
+    ):
+        return CaseEvent(
+            event_id=event_id,
+            case_id=case_id,
+            event_type=CaseEventType.DOCUMENT_ADDED,
+            occurred_at=NOW,
+            actor_id="USER-001",
+            payload=(
+                {"document_id": "DOC-ATOMIC", "kind": "supporting_evidence"}
+                if payload is None
+                else payload
+            ),
+        )
+
+    def test_document_and_event_commit_together(self):
+        document = self.document()
+        event = self.event()
+        self.repo.add_document_with_event(document, event)
+        self.assertEqual(
+            self.repo.list_document_refs("CASE-001"),
+            [document],
+        )
+        self.assertEqual(
+            self.repo.list_events("CASE-001"),
+            [event],
+        )
+
+    def test_invalid_event_payload_rolls_back_document(self):
+        document = self.document()
+        event = self.event(payload={"raw_text": "forbidden"})
+        with self.assertRaises(ValueError):
+            self.repo.add_document_with_event(document, event)
+        self.assertEqual(
+            self.repo.list_document_refs("CASE-001"),
+            [],
+        )
+        self.assertEqual(self.repo.list_events("CASE-001"), [])
+
+    def test_duplicate_event_id_rolls_back_new_document(self):
+        self.repo.append_event(self.event())
+        document = self.document(document_id="DOC-SECOND")
+        event = self.event(event_id="EV-ATOMIC")
+        with self.assertRaises(RepositoryConflictError):
+            self.repo.add_document_with_event(document, event)
+        self.assertEqual(
+            self.repo.list_document_refs("CASE-001"),
+            [],
+        )
+        self.assertEqual(
+            [item.event_id for item in self.repo.list_events("CASE-001")],
+            ["EV-ATOMIC"],
+        )
+
+    def test_document_conflict_does_not_add_event(self):
+        existing = self.document()
+        self.repo.add_document_ref(existing)
+        duplicate = self.document()
+        event = self.event(event_id="EV-NEW")
+        with self.assertRaises(RepositoryConflictError):
+            self.repo.add_document_with_event(duplicate, event)
+        self.assertEqual(
+            [item.document_id for item in self.repo.list_document_refs("CASE-001")],
+            ["DOC-ATOMIC"],
+        )
+        self.assertEqual(self.repo.list_events("CASE-001"), [])
+
+    def test_case_mismatch_is_rejected_before_writes(self):
+        with self.assertRaisesRegex(
+            RepositoryConflictError,
+            "same case",
+        ):
+            self.repo.add_document_with_event(
+                self.document(),
+                self.event(case_id="OTHER-CASE"),
+            )
+        self.assertEqual(
+            self.repo.list_document_refs("CASE-001"),
+            [],
+        )
+        self.assertEqual(self.repo.list_events("CASE-001"), [])
+
+
 class SnapshotTests(RepositoryFixture):
     def test_snapshot_combines_case_documents_and_events(self):
         self.seed_case()
