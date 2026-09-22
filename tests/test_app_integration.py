@@ -2011,6 +2011,354 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
         self.assertNotIn("private path/key detail", text)
 
 
+class DraftWorkProductUiTests(unittest.TestCase):
+    def _firm(
+        self,
+        *,
+        case_update=False,
+        draft_review=False,
+        document_read=True,
+    ):
+        permissions = {AccessPermission.CASE_READ}
+        if document_read:
+            permissions.add(AccessPermission.DOCUMENT_READ)
+        if case_update:
+            permissions.add(AccessPermission.CASE_UPDATE)
+        if draft_review:
+            permissions.add(AccessPermission.DRAFT_REVIEW)
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset(permissions),
+        )
+
+    def _case(self):
+        return CaseRecord(
+            case_id="CASE-1",
+            firm_id="F-TEST",
+            client_id="CLIENT-1",
+            registration_id=None,
+            title="Saved GST matter",
+            status=CaseStatus.ANALYZED,
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _notice(self):
+        return StoredDocumentRef(
+            document_id="DOC-NOTICE",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="notice.pdf",
+            media_type="application/pdf",
+            byte_size=len(PDF_BYTES),
+            sha256_hex="a" * 64,
+            storage_key="objects/" + "a" * 32,
+            created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _reopened(self):
+        return ReopenedCaseAnalysis(
+            case=self._case(),
+            notice_document=self._notice(),
+            notice_pdf_bytes=PDF_BYTES,
+            document_pages=DOCUMENT_PAGES,
+            raw_text=RAW_TEXT,
+            analysis=make_result(),
+        )
+
+    def _snapshot(self):
+        return AnalysisSnapshotRef(
+            snapshot_id="SNAP-1",
+            case_id="CASE-1",
+            source_document_id="DOC-NOTICE",
+            source_document_sha256="a" * 64,
+            schema_version=SNAPSHOT_SCHEMA_VERSION,
+            engine_version=ANALYSIS_ENGINE_VERSION,
+            byte_size=100,
+            sha256_hex="b" * 64,
+            storage_key="objects/" + "b" * 32,
+            created_at=datetime(2026, 8, 2, tzinfo=timezone.utc),
+            created_by="OIDC-" + "e" * 64,
+        )
+
+    def _version(
+        self,
+        *,
+        version_id="DRAFT-1",
+        version_number=1,
+        status=DraftReviewStatus.WORKING,
+        parent=None,
+        generated=True,
+    ):
+        return DraftVersionRef(
+            draft_version_id=version_id,
+            case_id="CASE-1",
+            source_snapshot_id="SNAP-1",
+            parent_draft_version_id=parent,
+            version_number=version_number,
+            generated_baseline=generated,
+            content_sha256="c" * 64,
+            byte_size=100,
+            sha256_hex="d" * 64,
+            storage_key="objects/" + "d" * 32,
+            review_status=status,
+            created_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            created_by="OIDC-" + "e" * 64,
+            reviewed_at=(
+                datetime(2026, 8, 4, tzinfo=timezone.utc)
+                if status in {
+                    DraftReviewStatus.REVIEWED,
+                    DraftReviewStatus.APPROVED,
+                }
+                else None
+            ),
+            reviewed_by=(
+                "OIDC-REVIEWER"
+                if status in {
+                    DraftReviewStatus.REVIEWED,
+                    DraftReviewStatus.APPROVED,
+                }
+                else None
+            ),
+            approved_at=(
+                datetime(2026, 8, 5, tzinfo=timezone.utc)
+                if status is DraftReviewStatus.APPROVED
+                else None
+            ),
+            approved_by=(
+                "OIDC-APPROVER"
+                if status is DraftReviewStatus.APPROVED
+                else None
+            ),
+        )
+
+    def _loaded(self, version, text="## Facts\n\nDurable draft text"):
+        return LoadedDraftVersion(
+            metadata=version,
+            payload={"draft_text": text},
+        )
+
+    def _case_service(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        service.list_documents.return_value = []
+        service.list_clients.return_value = []
+        service.list_case_work_queue.return_value = []
+        return service
+
+    def test_no_snapshot_warns_before_generated_baseline(self):
+        service = self._case_service()
+        draft_service = Mock()
+        draft_service.list_versions.return_value = []
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = []
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(case_update=True)
+            ],
+            persistence_service=service,
+            snapshot_service=snapshot_service,
+            draft_service=draft_service,
+            reopen_result=self._reopened(),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        self.assertIn("Draft work product", headers(fake))
+        self.assertIn(
+            "Save an analysis snapshot before creating a durable draft",
+            log_text(fake),
+        )
+        draft_service.create_generated_baseline.assert_not_called()
+
+    def test_case_updater_can_seed_baseline_from_saved_snapshot(self):
+        service = self._case_service()
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot()
+        ]
+        draft_service = Mock()
+        draft_service.list_versions.side_effect = [
+            [],
+            [self._version()],
+        ]
+        draft_service.create_generated_baseline.return_value = (
+            self._version()
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(case_update=True)
+            ],
+            persistence_service=service,
+            snapshot_service=snapshot_service,
+            draft_service=draft_service,
+            reopen_result=self._reopened(),
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "create_draft_baseline_CASE-1_SNAP-1": True,
+            },
+        )
+
+        draft_service.create_generated_baseline.assert_called_once()
+        kwargs = draft_service.create_generated_baseline.call_args.kwargs
+        self.assertEqual(kwargs["case_id"], "CASE-1")
+        self.assertEqual(kwargs["snapshot_id"], "SNAP-1")
+        self.assertIsNotNone(kwargs["created_at"].tzinfo)
+        self.assertIn("created_draft_version_id", log_text(fake))
+
+    def test_edit_creates_new_child_version_without_overwriting_parent(self):
+        service = self._case_service()
+        version = self._version()
+        child = self._version(
+            version_id="DRAFT-2",
+            version_number=2,
+            parent="DRAFT-1",
+            generated=False,
+        )
+        draft_service = Mock()
+        draft_service.list_versions.return_value = [version]
+        draft_service.load_version.return_value = self._loaded(version)
+        draft_service.create_edited_version.return_value = child
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot()
+        ]
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(case_update=True)
+            ],
+            persistence_service=service,
+            snapshot_service=snapshot_service,
+            draft_service=draft_service,
+            reopen_result=self._reopened(),
+            text_values={
+                "draft_editor_DRAFT-1": (
+                    "## Facts\n\nCA edited durable text"
+                )
+            },
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "save_draft_edit_DRAFT-1": True,
+            },
+        )
+
+        draft_service.create_edited_version.assert_called_once()
+        kwargs = draft_service.create_edited_version.call_args.kwargs
+        self.assertEqual(
+            kwargs["parent_draft_version_id"],
+            "DRAFT-1",
+        )
+        self.assertEqual(
+            kwargs["draft_text"],
+            "## Facts\n\nCA edited durable text",
+        )
+        self.assertIn("DRAFT-2", log_text(fake))
+
+    def test_draft_reviewer_can_mark_working_version_reviewed(self):
+        service = self._case_service()
+        version = self._version()
+        reviewed = self._version(status=DraftReviewStatus.REVIEWED)
+        draft_service = Mock()
+        draft_service.list_versions.return_value = [version]
+        draft_service.load_version.return_value = self._loaded(version)
+        draft_service.transition_review.return_value = reviewed
+        draft_service.export_version_docx.return_value = b"DOCX-BYTES"
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(draft_review=True)
+            ],
+            persistence_service=service,
+            draft_service=draft_service,
+            reopen_result=self._reopened(),
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "draft_review_DRAFT-1_reviewed": True,
+            },
+        )
+
+        draft_service.transition_review.assert_called_once()
+        kwargs = draft_service.transition_review.call_args.kwargs
+        self.assertIs(
+            kwargs["target_status"],
+            DraftReviewStatus.REVIEWED,
+        )
+        self.assertIn("reviewed_draft_version_id", log_text(fake))
+        self.assertEqual(
+            len(calls_named(fake, "download_button")),
+            1,
+        )
+
+    def test_working_draft_has_no_export_button(self):
+        service = self._case_service()
+        version = self._version()
+        draft_service = Mock()
+        draft_service.list_versions.return_value = [version]
+        draft_service.load_version.return_value = self._loaded(version)
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm()],
+            persistence_service=service,
+            draft_service=draft_service,
+            reopen_result=self._reopened(),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        self.assertEqual(calls_named(fake, "download_button"), [])
+        draft_service.export_version_docx.assert_not_called()
+
+    def test_historical_version_is_read_only_and_cannot_be_edited(self):
+        service = self._case_service()
+        old = self._version()
+        latest = self._version(
+            version_id="DRAFT-2",
+            version_number=2,
+            parent="DRAFT-1",
+            generated=False,
+        )
+        draft_service = Mock()
+        draft_service.list_versions.return_value = [old, latest]
+        draft_service.load_version.return_value = self._loaded(old)
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(case_update=True)
+            ],
+            persistence_service=service,
+            draft_service=draft_service,
+            reopen_result=self._reopened(),
+            selectbox_values={
+                "draft_version_selector_CASE-1": (
+                    "v1 — working — DRAFT-1"
+                )
+            },
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        historical_views = [
+            call
+            for call in calls_named(fake, "text_area")
+            if call[2].get("key") == "draft_view_DRAFT-1"
+        ]
+        self.assertEqual(len(historical_views), 1)
+        self.assertTrue(historical_views[0][2]["disabled"])
+        self.assertIn(
+            "Historical draft versions are immutable",
+            log_text(fake),
+        )
+        draft_service.create_edited_version.assert_not_called()
+
+
 class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
     def _firm(
         self,
