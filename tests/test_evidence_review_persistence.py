@@ -451,6 +451,14 @@ class EvidenceReviewRepositoryEncryptionTests(
         self.assertEqual(store.delete.call_count, 1)
 
 
+class EvidenceReviewAuditMetadataTests(unittest.TestCase):
+    def test_reviewer_note_key_is_globally_prohibited_from_audit_metadata(self):
+        with self.assertRaisesRegex(ValueError, "prohibited"):
+            LocalSQLiteCaseRepository._validate_event_payload(
+                {"reviewer_note": "private reviewer note"}
+            )
+
+
 class EvidenceReviewSchemaMigrationTests(unittest.TestCase):
     def test_schema_v2_database_migrates_to_v3(self):
         with tempfile.TemporaryDirectory() as temp:
