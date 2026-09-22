@@ -460,7 +460,7 @@ class EvidenceReviewAuditMetadataTests(unittest.TestCase):
 
 
 class EvidenceReviewSchemaMigrationTests(unittest.TestCase):
-    def test_schema_v2_database_migrates_to_v5(self):
+    def test_schema_v2_database_migrates_to_v6(self):
         with tempfile.TemporaryDirectory() as temp:
             path = str(Path(temp) / "legacy-v2.db")
             LocalSQLiteCaseRepository(path)
@@ -488,7 +488,7 @@ class EvidenceReviewSchemaMigrationTests(unittest.TestCase):
                     WHERE type='table' AND name='evidence_reviews'
                     """
                 ).fetchone()
-            self.assertEqual(version, "5")
+            self.assertEqual(version, "6")
             self.assertEqual(table[0], "evidence_reviews")
             draft_table = connection.execute(
                 """
