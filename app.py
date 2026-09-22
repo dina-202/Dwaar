@@ -669,10 +669,6 @@ def _render_persisted_evidence_workspace(
     reopened,
     case_service,
 ):
-    live_checklist = reopened.analysis.draft_result.evidence_checklist
-    if not live_checklist:
-        return
-
     st.header("Persisted supporting evidence")
     st.caption(
         "Supporting PDFs are encrypted case documents. Durable human "
