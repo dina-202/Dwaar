@@ -881,6 +881,7 @@ class SourceBoundaryTests(unittest.TestCase):
                 "domain.evidence_review",
                 "domain.models",
                 "domain.phase2_orchestrator",
+                "modules.case_reopen_service",
                 "modules.evidence_workspace",
                 "modules.pdf_reader",
                 "modules.runtime_access",
