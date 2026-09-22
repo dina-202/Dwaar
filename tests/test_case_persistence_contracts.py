@@ -27,6 +27,7 @@ from domain.persistence_ports import (
     DocumentStore,
     DraftVersionRepository,
     EvidenceReviewRepository,
+    FilingRepository,
 )
 
 
@@ -80,6 +81,7 @@ class EnumContractTests(unittest.TestCase):
                 "draft_created",
                 "draft_reviewed",
                 "filing_recorded",
+                "filing_acknowledgement_recorded",
                 "hearing_recorded",
                 "order_recorded",
             ],
@@ -198,6 +200,28 @@ class PersistencePortTests(unittest.TestCase):
                 "get_snapshot_ref",
                 "list_snapshot_refs",
                 "save_snapshot",
+            ],
+        )
+
+    def test_filing_repository_is_protocol(self):
+        self.assertTrue(issubclass(FilingRepository, Protocol))
+
+    def test_filing_repository_methods_exact(self):
+        methods = [
+            name
+            for name, member in inspect.getmembers(
+                FilingRepository,
+                predicate=inspect.isfunction,
+            )
+            if not name.startswith("_")
+        ]
+        self.assertEqual(
+            methods,
+            [
+                "attach_acknowledgement",
+                "get_filing",
+                "list_filings",
+                "save_filing",
             ],
         )
 
