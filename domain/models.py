@@ -229,7 +229,8 @@ class FactType(Enum):
 class FactRole(Enum):
     """Closed semantic role vocabulary (ARCHITECTURE_SPEC_v1_1 §19.2).
 
-    Exactly 22 members. A role describes the machine-readable semantic use
+    Phase 3B extends the original closed vocabulary with two explicit
+    deadline-input roles. A role describes the machine-readable semantic use
     of a fact; it does NOT determine legal liability and it does NOT
     choose FactStatus (§19.6). Values follow the repo convention:
     lowercase member names. NONE is the default for facts whose role is
@@ -263,6 +264,11 @@ class FactRole(Enum):
     OWNER_CAME_FORWARD_STATUS = "owner_came_forward_status"
     EXPLICIT_PROCEDURAL_DATE = "explicit_procedural_date"
     ORDER_DATE_OR_ENFORCEMENT_STATUS = "order_date_or_enforcement_status"
+
+    # Phase 3B: document-native deadline inputs. These roles mean the
+    # selected source span itself explicitly identifies the concept.
+    NOTICE_SERVICE_DATE = "notice_service_date"
+    RESPONSE_PERIOD = "response_period"
 
 
 # --- Phase 2 Step 6.3 enum (ARCHITECTURE_SPEC_v1_1 §18.1) -------------------
