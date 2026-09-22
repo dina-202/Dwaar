@@ -301,9 +301,14 @@ class DocumentReferenceTests(RepositoryFixture):
             )
 
     def test_duplicate_storage_key_is_rejected(self):
-        self.repo.add_document_ref(self.document("DOC-001"))
+        first = self.document("DOC-001")
+        second = replace(
+            self.document("DOC-002"),
+            storage_key=first.storage_key,
+        )
+        self.repo.add_document_ref(first)
         with self.assertRaises(RepositoryConflictError):
-            self.repo.add_document_ref(self.document("DOC-002"))
+            self.repo.add_document_ref(second)
 
     def test_document_requires_existing_case(self):
         with self.assertRaises(RepositoryConflictError):
