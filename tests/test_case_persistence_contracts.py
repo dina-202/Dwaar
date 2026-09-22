@@ -25,6 +25,7 @@ from domain.persistence_ports import (
     AnalysisSnapshotRepository,
     CaseRepository,
     DocumentStore,
+    DraftVersionRepository,
     EvidenceReviewRepository,
 )
 
@@ -197,6 +198,28 @@ class PersistencePortTests(unittest.TestCase):
                 "get_snapshot_ref",
                 "list_snapshot_refs",
                 "save_snapshot",
+            ],
+        )
+
+    def test_draft_version_repository_is_protocol(self):
+        self.assertTrue(issubclass(DraftVersionRepository, Protocol))
+
+    def test_draft_version_repository_methods_exact(self):
+        methods = [
+            name
+            for name, member in inspect.getmembers(
+                DraftVersionRepository,
+                predicate=inspect.isfunction,
+            )
+            if not name.startswith("_")
+        ]
+        self.assertEqual(
+            methods,
+            [
+                "get_version_ref",
+                "list_version_refs",
+                "save_version",
+                "transition_review_status",
             ],
         )
 
