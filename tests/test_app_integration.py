@@ -24,6 +24,10 @@ from domain.evidence_review_models import (
     LoadedEvidenceReview,
 )
 from domain.client_workspace_models import ClientWorkspace
+from domain.case_operations_models import (
+    CaseWorkItem,
+    WorkQueueDeadlineStatus,
+)
 from domain.case_models import (
     CaseDocumentKind,
     CaseRecord,
@@ -589,11 +593,17 @@ def run_app(
         persistence_service.list_cases.return_value = []
         persistence_service.list_clients.return_value = []
         persistence_service.list_registrations.return_value = []
+        persistence_service.list_case_work_queue.return_value = []
     else:
         if isinstance(persistence_service.list_cases.return_value, Mock):
             persistence_service.list_cases.return_value = []
         if isinstance(persistence_service.list_clients.return_value, Mock):
             persistence_service.list_clients.return_value = []
+        if isinstance(
+            persistence_service.list_case_work_queue.return_value,
+            Mock,
+        ):
+            persistence_service.list_case_work_queue.return_value = []
         if isinstance(
             persistence_service.list_registrations.return_value,
             Mock,
@@ -1416,6 +1426,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         self.assertEqual(
             headers(fake),
             [
+                "Case work queue",
                 "Client workspace",
                 "Saved cases",
                 "New notice intake",
@@ -2424,6 +2435,228 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
         )
         self.assertNotIn("private llm/storage detail", text)
 
+
+
+class CaseWorkQueueUiTests(unittest.TestCase):
+    def _firm(self, *, update=False):
+        permissions = {
+            AccessPermission.CASE_READ,
+            AccessPermission.DOCUMENT_READ,
+        }
+        if update:
+            permissions.add(AccessPermission.CASE_UPDATE)
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset(permissions),
+        )
+
+    def _case(self, *, status=CaseStatus.INTAKE):
+        return CaseRecord(
+            case_id="CASE-URGENT",
+            firm_id="F-TEST",
+            client_id="CLIENT-1",
+            registration_id=None,
+            title="Urgent notice",
+            status=status,
+            proceeding_type=ProceedingType.GST_SEC73_GENERAL,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            response_deadline=date(2026, 8, 29),
+            closed_at=(
+                datetime(2026, 9, 20, tzinfo=timezone.utc)
+                if status is CaseStatus.CLOSED
+                else None
+            ),
+        )
+
+    def _work_item(self, *, status=CaseStatus.INTAKE):
+        return CaseWorkItem(
+            case_id="CASE-URGENT",
+            client_id="CLIENT-1",
+            client_name="Acme Private Limited",
+            title="Urgent notice",
+            status=status,
+            response_deadline=date(2026, 8, 29),
+            days_remaining=(
+                None if status is CaseStatus.CLOSED else -1
+            ),
+            deadline_status=(
+                WorkQueueDeadlineStatus.CLOSED
+                if status is CaseStatus.CLOSED
+                else WorkQueueDeadlineStatus.OVERDUE
+            ),
+            assigned_to=None,
+            reviewer_id=None,
+        )
+
+    def _service(self, *, status=CaseStatus.INTAKE):
+        service = Mock()
+        item = self._work_item(status=status)
+        case = self._case(status=status)
+        service.list_case_work_queue.return_value = [item]
+        service.list_cases.return_value = [case]
+        service.list_clients.return_value = []
+        return service, item, case
+
+    def test_read_only_queue_renders_priority_without_update_controls(self):
+        service, item, _ = self._service()
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(update=False)],
+            persistence_service=service,
+        )
+
+        self.assertIn("Case work queue", headers(fake))
+        text = log_text(fake)
+        self.assertIn(item.client_name, text)
+        self.assertIn("overdue", text)
+        self.assertIn("-1", text)
+        self.assertIn(
+            "cannot update case operations",
+            text,
+        )
+        service.list_case_work_queue.assert_called_once_with(
+            ANY,
+            "F-TEST",
+            today=TODAY,
+        )
+        service.list_assignable_user_ids.assert_not_called()
+        service.update_case_operations.assert_not_called()
+
+    def test_focus_queue_case_moves_it_to_saved_cases(self):
+        service, item, _ = self._service()
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(update=False)],
+            persistence_service=service,
+            button_values={
+                f"focus_queue_case_{item.case_id}": True,
+            },
+        )
+
+        self.assertEqual(
+            fake.session_state["_dwaar_focused_case_id"],
+            item.case_id,
+        )
+        self.assertIn(
+            "Use Open saved case below",
+            log_text(fake),
+        )
+
+    def test_update_user_can_save_controlled_case_operations(self):
+        service, item, original_case = self._service()
+        service.allowed_case_status_targets.return_value = (
+            CaseStatus.INTAKE,
+            CaseStatus.ANALYZED,
+        )
+        service.list_assignable_user_ids.return_value = [
+            "OIDC-ASSIGNEE",
+            "OIDC-REVIEWER",
+        ]
+        updated = CaseRecord(
+            case_id=original_case.case_id,
+            firm_id=original_case.firm_id,
+            client_id=original_case.client_id,
+            registration_id=None,
+            title=original_case.title,
+            status=CaseStatus.ANALYZED,
+            proceeding_type=original_case.proceeding_type,
+            notice_form=original_case.notice_form,
+            opened_at=original_case.opened_at,
+            response_deadline=date(2026, 10, 1),
+            assigned_to="OIDC-ASSIGNEE",
+            reviewer_id="OIDC-REVIEWER",
+        )
+        service.update_case_operations.return_value = updated
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(update=True)],
+            persistence_service=service,
+            selectbox_values={
+                f"case_ops_status_{item.case_id}": "analyzed",
+                f"case_ops_assignee_{item.case_id}": "OIDC-ASSIGNEE",
+                f"case_ops_reviewer_{item.case_id}": "OIDC-REVIEWER",
+            },
+            text_values={
+                f"case_ops_deadline_{item.case_id}": "2026-10-01",
+            },
+            button_values={
+                f"save_case_ops_{item.case_id}": True,
+            },
+        )
+
+        service.update_case_operations.assert_called_once()
+        kwargs = service.update_case_operations.call_args.kwargs
+        self.assertEqual(kwargs["case_id"], item.case_id)
+        self.assertIs(kwargs["status"], CaseStatus.ANALYZED)
+        self.assertEqual(
+            kwargs["response_deadline"],
+            date(2026, 10, 1),
+        )
+        self.assertEqual(kwargs["assigned_to"], "OIDC-ASSIGNEE")
+        self.assertEqual(kwargs["reviewer_id"], "OIDC-REVIEWER")
+        self.assertIsNotNone(kwargs["updated_at"].tzinfo)
+        self.assertIn("updated_case_id", log_text(fake))
+        self.assertEqual(
+            fake.session_state["_dwaar_focused_case_id"],
+            item.case_id,
+        )
+
+    def test_invalid_deadline_does_not_call_update(self):
+        service, item, _ = self._service()
+        service.allowed_case_status_targets.return_value = (
+            CaseStatus.INTAKE,
+        )
+        service.list_assignable_user_ids.return_value = []
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(update=True)],
+            persistence_service=service,
+            text_values={
+                f"case_ops_deadline_{item.case_id}": "01/10/2026",
+            },
+            button_values={
+                f"save_case_ops_{item.case_id}": True,
+            },
+        )
+
+        self.assertIn(
+            "Response deadline must use YYYY-MM-DD",
+            log_text(fake),
+        )
+        service.update_case_operations.assert_not_called()
+
+    def test_closed_case_is_visible_but_has_no_update_controls(self):
+        service, item, _ = self._service(status=CaseStatus.CLOSED)
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(update=True)],
+            persistence_service=service,
+        )
+        self.assertIn(
+            "Closed cases are terminal",
+            log_text(fake),
+        )
+        service.allowed_case_status_targets.assert_not_called()
+        service.list_assignable_user_ids.assert_not_called()
+        service.update_case_operations.assert_not_called()
+
+    def test_queue_failure_is_generic(self):
+        service, _, _ = self._service()
+        service.list_case_work_queue.side_effect = RuntimeError(
+            "private database detail"
+        )
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(update=False)],
+            persistence_service=service,
+        )
+        text = log_text(fake)
+        self.assertIn("case work queue could not be loaded", text)
+        self.assertNotIn("private database detail", text)
 
 
 class ClientWorkspaceUiTests(unittest.TestCase):
