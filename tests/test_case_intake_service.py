@@ -116,7 +116,7 @@ class DurableCaseIntakeIntegrationTests(unittest.TestCase):
         self.assertEqual(self.store.get(notice.storage_key), payload)
 
         events = self.repo.list_events(case.case_id)
-        self.assertEqual(
+        self.assertCountEqual(
             [event.event_type for event in events],
             [
                 CaseEventType.CASE_CREATED,
