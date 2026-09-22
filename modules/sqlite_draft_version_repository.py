@@ -174,14 +174,28 @@ class LocalSQLiteDraftVersionRepository:
                     "Draft source snapshot belongs to another case."
                 )
 
+            previous = connection.execute(
+                """
+                SELECT MAX(version_number) AS max_version
+                FROM draft_versions
+                WHERE case_id = ?
+                """,
+                (version.case_id,),
+            ).fetchone()
+            expected_next = (
+                1
+                if previous["max_version"] is None
+                else previous["max_version"] + 1
+            )
+            if version.version_number != expected_next:
+                raise RepositoryConflictError(
+                    "Draft version number must be next for the case."
+                )
+
             if version.parent_draft_version_id is None:
                 if not version.generated_baseline:
                     raise RepositoryConflictError(
                         "Root draft version must be generated baseline."
-                    )
-                if version.version_number != 1:
-                    raise RepositoryConflictError(
-                        "Root draft version must be version 1."
                     )
             else:
                 parent = connection.execute(
