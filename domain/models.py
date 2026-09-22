@@ -385,6 +385,22 @@ class EvidenceCandidate:
 
 
 @dataclass
+class EvidenceReviewRecord:
+    """Immutable-style human decision over one evidence candidate."""
+
+    review_id: str
+    candidate_id: str
+    evidence_id: str
+    document_id: str
+    source_text: str
+    source_page: int
+    source_origin: SourceTextOrigin
+    source_verification: SourceVerificationStatus
+    decision: EvidenceReviewStatus
+    reviewer_note: Optional[str] = None
+
+
+@dataclass
 class EvidenceIntakeResult:
     """Evidence candidate extraction output; no automatic satisfaction."""
 
