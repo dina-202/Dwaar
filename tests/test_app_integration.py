@@ -75,6 +75,7 @@ from domain.models import (
     ValidationItem,
     ValidationStatus,
 )
+from modules import case_evidence_service as case_evidence_service_module
 from modules import case_reopen_service as case_reopen_service_module
 from modules.analysis_snapshot import build_snapshot_payload
 from modules import evidence_workspace as evidence_workspace_module
@@ -496,6 +497,10 @@ def run_app(
     persistence_error=None,
     snapshot_service=None,
     snapshot_service_error=None,
+    evidence_workspace_service=None,
+    evidence_workspace_service_error=None,
+    persisted_evidence_ref=None,
+    persisted_evidence_error=None,
     reopen_result=None,
     reopen_error=None,
 ):
@@ -590,6 +595,20 @@ def run_app(
     if snapshot_service_error is not None:
         snapshot_service_mock.side_effect = snapshot_service_error
 
+    if evidence_workspace_service is None:
+        evidence_workspace_service = Mock()
+    evidence_workspace_service_mock = Mock(
+        return_value=evidence_workspace_service
+    )
+    if evidence_workspace_service_error is not None:
+        evidence_workspace_service_mock.side_effect = (
+            evidence_workspace_service_error
+        )
+
+    persisted_evidence_mock = Mock(return_value=persisted_evidence_ref)
+    if persisted_evidence_error is not None:
+        persisted_evidence_mock.side_effect = persisted_evidence_error
+
     reopen_mock = Mock(return_value=reopen_result)
     if reopen_error is not None:
         reopen_mock.side_effect = reopen_error
@@ -598,6 +617,8 @@ def run_app(
     fake.firms_mock = firms_mock
     fake.persistence_service_mock = persistence_service_mock
     fake.snapshot_service_mock = snapshot_service_mock
+    fake.evidence_workspace_service_mock = evidence_workspace_service_mock
+    fake.persisted_evidence_mock = persisted_evidence_mock
     fake.reopen_mock = reopen_mock
 
     with (
@@ -622,6 +643,16 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_analysis_snapshot_service",
             snapshot_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_evidence_workspace_service",
+            evidence_workspace_service_mock,
+        ),
+        patch.object(
+            case_evidence_service_module,
+            "add_supporting_evidence_pdf",
+            persisted_evidence_mock,
         ),
         patch.object(
             case_reopen_service_module,
@@ -901,10 +932,12 @@ class SourceBoundaryTests(unittest.TestCase):
                 "datetime",
                 "streamlit",
                 "domain.auth_models",
+                "domain.case_models",
                 "domain.evidence_engine",
                 "domain.evidence_review",
                 "domain.models",
                 "domain.phase2_orchestrator",
+                "modules.case_evidence_service",
                 "modules.case_reopen_service",
                 "modules.evidence_workspace",
                 "modules.pdf_reader",
@@ -1873,6 +1906,268 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
             text,
         )
         self.assertNotIn("private path/key detail", text)
+
+
+class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
+    def _firm(
+        self,
+        *,
+        document_add=False,
+        evidence_review=False,
+    ):
+        permissions = {
+            AccessPermission.CASE_READ,
+            AccessPermission.DOCUMENT_READ,
+        }
+        if document_add:
+            permissions.add(AccessPermission.DOCUMENT_ADD)
+        if evidence_review:
+            permissions.add(AccessPermission.EVIDENCE_REVIEW)
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset(permissions),
+        )
+
+    def _case(self):
+        return CaseRecord(
+            case_id="CASE-1",
+            firm_id="F-TEST",
+            client_id="CLIENT-1",
+            registration_id=None,
+            title="Saved matter",
+            status=CaseStatus.ANALYZED,
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _notice(self):
+        return StoredDocumentRef(
+            document_id="DOC-NOTICE",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="notice.pdf",
+            media_type="application/pdf",
+            byte_size=len(PDF_BYTES),
+            sha256_hex="a" * 64,
+            storage_key="objects/" + "a" * 32,
+            created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _evidence_ref(self, document_id="DOC-EVIDENCE-1"):
+        return StoredDocumentRef(
+            document_id=document_id,
+            case_id="CASE-1",
+            kind=CaseDocumentKind.SUPPORTING_EVIDENCE,
+            original_filename="gstr2b.pdf",
+            media_type="application/pdf",
+            byte_size=321,
+            sha256_hex="b" * 64,
+            storage_key="objects/" + "b" * 32,
+            created_at=datetime(2026, 8, 2, tzinfo=timezone.utc),
+        )
+
+    def _reopened(self):
+        return ReopenedCaseAnalysis(
+            case=self._case(),
+            notice_document=self._notice(),
+            notice_pdf_bytes=PDF_BYTES,
+            document_pages=DOCUMENT_PAGES,
+            raw_text=RAW_TEXT,
+            analysis=make_result(),
+        )
+
+    def _case_service(self, docs):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        service.list_documents.return_value = list(docs)
+        return service
+
+    def test_document_add_user_can_attach_encrypted_supporting_pdf(self):
+        service = self._case_service([self._notice()])
+        persisted = self._evidence_ref()
+        shared_state = {
+            "_dwaar_evidence_workspace_key": "stale",
+            "_dwaar_evidence_intake_result": object(),
+            "_dwaar_evidence_reviews": [object()],
+        }
+        upload = _UploadedFile(
+            [],
+            name="gstr2b.pdf",
+            payload=b"%PDF supporting evidence",
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            session_state=shared_state,
+            supporting_uploads=[upload],
+            available_firms=[self._firm(document_add=True)],
+            persistence_service=service,
+            persisted_evidence_ref=persisted,
+            reopen_result=self._reopened(),
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "attach_evidence_CASE-1": True,
+            },
+        )
+
+        fake.persisted_evidence_mock.assert_called_once()
+        args = fake.persisted_evidence_mock.call_args
+        self.assertIs(args.args[0], service)
+        self.assertIsInstance(args.args[1], AuthenticatedPrincipal)
+        self.assertEqual(args.args[2], "F-TEST")
+        self.assertEqual(args.kwargs["case_id"], "CASE-1")
+        self.assertEqual(args.kwargs["filename"], "gstr2b.pdf")
+        self.assertEqual(
+            args.kwargs["payload"],
+            b"%PDF supporting evidence",
+        )
+        self.assertIsNotNone(args.kwargs["created_at"].tzinfo)
+        self.assertIn("DOC-EVIDENCE-1", log_text(fake))
+        self.assertNotIn("_dwaar_evidence_workspace_key", shared_state)
+        self.assertNotIn("_dwaar_evidence_intake_result", shared_state)
+        self.assertNotIn("_dwaar_evidence_reviews", shared_state)
+
+    def test_without_document_add_attachment_control_is_hidden(self):
+        evidence_ref = self._evidence_ref()
+        service = self._case_service(
+            [self._notice(), evidence_ref]
+        )
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(evidence_review=True)],
+            persistence_service=service,
+            reopen_result=self._reopened(),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        attach_uploaders = [
+            call
+            for call in calls_named(fake, "file_uploader")
+            if call[1]
+            and "attach supporting evidence" in call[1][0].lower()
+        ]
+        self.assertEqual(attach_uploaders, [])
+        self.assertIn(
+            "Attaching supporting evidence requires DOCUMENT_ADD",
+            log_text(fake),
+        )
+
+    def test_evidence_review_permission_controls_matching_action(self):
+        evidence_ref = self._evidence_ref()
+        service = self._case_service(
+            [self._notice(), evidence_ref]
+        )
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(document_add=True)],
+            persistence_service=service,
+            reopen_result=self._reopened(),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        analyze_buttons = [
+            call
+            for call in calls_named(fake, "button")
+            if call[1] and call[1][0] == "Analyze attached evidence"
+        ]
+        self.assertEqual(analyze_buttons, [])
+        self.assertIn(
+            "Evidence matching/review requires EVIDENCE_REVIEW",
+            log_text(fake),
+        )
+        fake.evidence_workspace_service_mock.assert_not_called()
+
+    def test_matching_uses_persisted_document_ids_and_remains_advisory(self):
+        evidence_ref = self._evidence_ref("DOC-PERSISTED-77")
+        service = self._case_service(
+            [self._notice(), evidence_ref]
+        )
+        candidate = EvidenceCandidate(
+            candidate_id="EC-001",
+            evidence_id="evidence.e1",
+            document_id="DOC-PERSISTED-77",
+            source_text="Persisted GSTR-2B source",
+            source_page=2,
+            source_origin=SourceTextOrigin.EMBEDDED,
+            source_verification=SourceVerificationStatus.VERIFIED,
+        )
+        intake = EvidenceIntakeResult(
+            status=EvidenceIntakeStatus.SUCCESS,
+            candidates=[candidate],
+            rejected_candidate_count=0,
+        )
+        workspace = Mock()
+        workspace.document_refs = [evidence_ref]
+        workspace.intake_result = intake
+        evidence_service = Mock()
+        evidence_service.analyze_case_evidence.return_value = workspace
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(
+                    document_add=True,
+                    evidence_review=True,
+                )
+            ],
+            persistence_service=service,
+            evidence_workspace_service=evidence_service,
+            reopen_result=self._reopened(),
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "analyze_persisted_evidence_CASE-1": True,
+            },
+        )
+
+        evidence_service.analyze_case_evidence.assert_called_once()
+        args = evidence_service.analyze_case_evidence.call_args
+        self.assertIsInstance(args.args[0], AuthenticatedPrincipal)
+        self.assertEqual(args.args[1], "F-TEST")
+        self.assertEqual(args.kwargs["case_id"], "CASE-1")
+        self.assertEqual(
+            args.kwargs["evidence_checklist"],
+            self._reopened().analysis.draft_result.evidence_checklist,
+        )
+        text = log_text(fake)
+        self.assertIn("DOC-PERSISTED-77", text)
+        self.assertIn("Persisted GSTR-2B source", text)
+        self.assertIn(
+            "Confirm/Reject decisions are still session-only",
+            text,
+        )
+
+    def test_persisted_evidence_analysis_failure_is_generic(self):
+        evidence_ref = self._evidence_ref()
+        service = self._case_service(
+            [self._notice(), evidence_ref]
+        )
+        evidence_service = Mock()
+        evidence_service.analyze_case_evidence.side_effect = RuntimeError(
+            "private llm/storage detail"
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(evidence_review=True)
+            ],
+            persistence_service=service,
+            evidence_workspace_service=evidence_service,
+            reopen_result=self._reopened(),
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "analyze_persisted_evidence_CASE-1": True,
+            },
+        )
+
+        text = log_text(fake)
+        self.assertIn(
+            "Persisted evidence could not be analyzed",
+            text,
+        )
+        self.assertNotIn("private llm/storage detail", text)
 
 
 class DurableIntakeUiTests(unittest.TestCase):

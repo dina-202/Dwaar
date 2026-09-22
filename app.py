@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 import streamlit as st
 
 from domain.auth_models import AccessPermission
+from domain.case_models import CaseDocumentKind
 from domain.evidence_engine import propose_evidence_candidates
 from domain.evidence_review import (
     create_evidence_review,
@@ -27,11 +28,13 @@ from modules.runtime_persistence import (
     RuntimePersistenceConfigurationError,
     build_authorized_analysis_snapshot_service,
     build_authorized_case_service,
+    build_authorized_evidence_workspace_service,
 )
 from modules.case_reopen_service import (
     SavedCaseReopenError,
     reopen_case_analysis,
 )
+from modules.case_evidence_service import add_supporting_evidence_pdf
 from modules.runtime_access import (
     RuntimeAccessConfigurationError,
     RuntimeAccessConsistencyError,
@@ -659,6 +662,272 @@ def _render_snapshot_history(
     _render_historical_snapshot(loaded)
 
 
+def _render_persisted_evidence_workspace(
+    principal,
+    active_firm,
+    reopened,
+    case_service,
+):
+    evidence_checklist = reopened.analysis.draft_result.evidence_checklist
+    if not evidence_checklist:
+        return
+
+    st.header("Persisted supporting evidence")
+    st.caption(
+        "Supporting PDFs attached here are encrypted case documents. "
+        "AI matching remains advisory; Confirm/Reject decisions are still "
+        "session-only until snapshot-bound review persistence is added."
+    )
+
+    try:
+        attached = [
+            item
+            for item in case_service.list_documents(
+                principal,
+                active_firm.firm_id,
+                case_id=reopened.case.case_id,
+            )
+            if item.kind is CaseDocumentKind.SUPPORTING_EVIDENCE
+        ]
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to read supporting "
+            "evidence for this case."
+        )
+        return
+    except Exception:
+        st.error("Supporting evidence attachments could not be loaded.")
+        return
+
+    if attached:
+        st.dataframe(
+            [
+                {
+                    "document_id": item.document_id,
+                    "filename": item.original_filename,
+                    "byte_size": item.byte_size,
+                    "sha256": item.sha256_hex,
+                    "created_at": item.created_at.isoformat(),
+                }
+                for item in attached
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write("No supporting evidence attached yet.")
+
+    if AccessPermission.DOCUMENT_ADD in active_firm.permissions:
+        uploads = st.file_uploader(
+            "Attach supporting evidence PDFs",
+            type="pdf",
+            accept_multiple_files=True,
+            key=f"persisted_evidence_uploads_{reopened.case.case_id}",
+        )
+        if uploads and st.button(
+            "Attach selected evidence",
+            key=f"attach_evidence_{reopened.case.case_id}",
+        ):
+            successes = []
+            failures = []
+            for uploaded_file in uploads:
+                try:
+                    saved = add_supporting_evidence_pdf(
+                        case_service,
+                        principal,
+                        active_firm.firm_id,
+                        case_id=reopened.case.case_id,
+                        filename=uploaded_file.name,
+                        payload=_uploaded_bytes(uploaded_file),
+                        created_at=datetime.now(timezone.utc),
+                    )
+                except Exception:
+                    failures.append(uploaded_file.name)
+                else:
+                    successes.append(saved)
+
+            _reset_evidence_workspace()
+            if successes:
+                st.write(
+                    {
+                        "attached_document_ids": [
+                            item.document_id for item in successes
+                        ]
+                    }
+                )
+            if failures:
+                st.error(
+                    "Some supporting evidence files could not be attached: "
+                    + ", ".join(failures)
+                )
+            # Streamlit rerun will refresh the persisted attachment table.
+            return
+    else:
+        st.caption(
+            "Attaching supporting evidence requires DOCUMENT_ADD."
+        )
+
+    if not attached:
+        return
+
+    if AccessPermission.EVIDENCE_REVIEW not in active_firm.permissions:
+        st.caption(
+            "Evidence matching/review requires EVIDENCE_REVIEW."
+        )
+        return
+
+    analyze_key = f"analyze_persisted_evidence_{reopened.case.case_id}"
+    if st.button("Analyze attached evidence", key=analyze_key):
+        try:
+            evidence_service = build_authorized_evidence_workspace_service()
+            with st.spinner("Matching persisted evidence to checklist..."):
+                workspace = evidence_service.analyze_case_evidence(
+                    principal,
+                    active_firm.firm_id,
+                    case_id=reopened.case.case_id,
+                    evidence_checklist=evidence_checklist,
+                )
+        except RuntimePersistenceConfigurationError:
+            st.error(
+                "Evidence storage is not fully configured on this deployment."
+            )
+            return
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to review evidence "
+                "for this case."
+            )
+            return
+        except Exception:
+            st.error("Persisted evidence could not be analyzed.")
+            return
+
+        st.session_state[_EVIDENCE_KEY] = (
+            f"persisted:{reopened.case.case_id}:"
+            + ":".join(
+                item.document_id
+                for item in workspace.document_refs
+            )
+        )
+        st.session_state[_EVIDENCE_INTAKE] = workspace.intake_result
+        st.session_state[_EVIDENCE_REVIEWS] = []
+
+    intake_result = st.session_state.get(_EVIDENCE_INTAKE)
+    if intake_result is None:
+        return
+
+    reviews = st.session_state.setdefault(_EVIDENCE_REVIEWS, [])
+    st.write(
+        {
+            "evidence_intake_status": intake_result.status.value,
+            "candidate_count": len(intake_result.candidates),
+            "rejected_candidate_count": (
+                intake_result.rejected_candidate_count
+            ),
+        }
+    )
+
+    if intake_result.candidates:
+        st.dataframe(
+            [
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "evidence_id": candidate.evidence_id,
+                    "document_id": candidate.document_id,
+                    "source_page": candidate.source_page,
+                    "source_text": candidate.source_text,
+                    "source_origin": candidate.source_origin.value,
+                    "source_verification": (
+                        candidate.source_verification.value
+                    ),
+                    "review_status": candidate.review_status.value,
+                }
+                for candidate in intake_result.candidates
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write("No source-grounded evidence candidates were proposed.")
+
+    reviewed_ids = set(reviewed_candidate_ids(reviews))
+    workspace_key = st.session_state.get(
+        _EVIDENCE_KEY,
+        f"persisted:{reopened.case.case_id}",
+    )
+    for candidate in intake_result.candidates:
+        if candidate.candidate_id in reviewed_ids:
+            continue
+
+        st.subheader(f"Review {candidate.candidate_id}")
+        st.write(
+            {
+                "evidence_id": candidate.evidence_id,
+                "document_id": candidate.document_id,
+                "source_page": candidate.source_page,
+                "source_text": candidate.source_text,
+                "source_origin": candidate.source_origin.value,
+                "source_verification": (
+                    candidate.source_verification.value
+                ),
+            }
+        )
+        note = st.text_input(
+            "Reviewer note (optional)",
+            key=f"evidence_note_{workspace_key}_{candidate.candidate_id}",
+        )
+        if st.button(
+            f"Confirm {candidate.candidate_id}",
+            key=f"confirm_{workspace_key}_{candidate.candidate_id}",
+        ):
+            reviews.append(
+                create_evidence_review(
+                    candidate,
+                    EvidenceReviewStatus.CONFIRMED,
+                    reviews,
+                    note,
+                )
+            )
+            reviewed_ids.add(candidate.candidate_id)
+
+        if (
+            candidate.candidate_id not in reviewed_ids
+            and st.button(
+                f"Reject {candidate.candidate_id}",
+                key=f"reject_{workspace_key}_{candidate.candidate_id}",
+            )
+        ):
+            reviews.append(
+                create_evidence_review(
+                    candidate,
+                    EvidenceReviewStatus.REJECTED,
+                    reviews,
+                    note,
+                )
+            )
+            reviewed_ids.add(candidate.candidate_id)
+
+    if reviews:
+        st.subheader("Session evidence review records")
+        st.dataframe(
+            [
+                {
+                    "review_id": review.review_id,
+                    "candidate_id": review.candidate_id,
+                    "evidence_id": review.evidence_id,
+                    "document_id": review.document_id,
+                    "source_page": review.source_page,
+                    "decision": review.decision.value,
+                    "source_origin": review.source_origin.value,
+                    "source_verification": (
+                        review.source_verification.value
+                    ),
+                    "reviewer_note": _display(review.reviewer_note),
+                }
+                for review in reviews
+            ],
+            hide_index=True,
+        )
+
+
 def _render_saved_cases_workspace(principal, active_firm):
     if AccessPermission.CASE_READ not in active_firm.permissions:
         return
@@ -840,9 +1109,11 @@ def _render_saved_cases_workspace(principal, active_firm):
         active_firm,
         reopened,
     )
-    _render_evidence_workspace(
-        reopened.notice_pdf_bytes,
-        reopened.analysis,
+    _render_persisted_evidence_workspace(
+        principal,
+        active_firm,
+        reopened,
+        service,
     )
     with st.expander("Extracted saved notice text"):
         st.text(reopened.raw_text)
