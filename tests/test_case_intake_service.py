@@ -17,13 +17,16 @@ from domain.auth_models import (
 from domain.case_models import (
     CaseEventType,
     CaseStatus,
+    Client,
     Firm,
+    TaxRegistration,
 )
 from domain.models import NoticeForm, ProceedingType
 from modules.authorized_case_service import AuthorizedCaseService
 from modules.case_intake_service import (
     CaseIntakeConsistencyError,
     CaseIntakePersistenceError,
+    persist_existing_client_case_intake,
     persist_new_case_intake,
 )
 from modules.encrypted_document_store import EncryptedLocalDocumentStore
@@ -208,6 +211,171 @@ class DurableCaseIntakeIntegrationTests(unittest.TestCase):
         put.assert_not_called()
 
 
+class ExistingClientIntakeIntegrationTests(DurableCaseIntakeIntegrationTests):
+    def setUp(self):
+        super().setUp()
+        self.client = Client(
+            "CLIENT-EXISTING",
+            "F-1",
+            "Existing Taxpayer",
+            NOW,
+        )
+        self.registration = TaxRegistration(
+            "REG-EXISTING",
+            self.client.client_id,
+            "IN-GST",
+            "GSTIN",
+            "06ABCDE1234F1Z5",
+            NOW,
+        )
+        self.repo.create_client(self.client)
+        self.repo.create_registration(self.registration)
+
+    def persist_existing(self, **overrides):
+        values = {
+            "firm_id": "F-1",
+            "client_id": self.client.client_id,
+            "registration_id": self.registration.registration_id,
+            "case_title": "Second notice for existing taxpayer",
+            "proceeding_type": ProceedingType.GST_SEC73_ITC,
+            "notice_form": NoticeForm.DRC_01,
+            "response_deadline": date(2026, 10, 20),
+            "notice_filename": "second-notice.pdf",
+            "notice_payload": make_pdf("Second saved notice"),
+            "actor_id": "OIDC-" + "a" * 64,
+            "opened_at": NOW,
+        }
+        values.update(overrides)
+        return persist_existing_client_case_intake(
+            self.repo,
+            self.store,
+            **values,
+        )
+
+    def test_reuse_creates_case_without_duplicate_client_or_registration(self):
+        case = self.persist_existing()
+
+        self.assertEqual(case.client_id, self.client.client_id)
+        self.assertEqual(
+            case.registration_id,
+            self.registration.registration_id,
+        )
+        self.assertEqual(
+            self.repo.list_clients("F-1"),
+            [self.client],
+        )
+        self.assertEqual(
+            self.repo.list_registrations(self.client.client_id),
+            [self.registration],
+        )
+        self.assertEqual(
+            [item.case_id for item in self.repo.list_cases("F-1")],
+            [case.case_id],
+        )
+        documents = self.repo.list_document_refs(case.case_id)
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(
+            self.store.get(documents[0].storage_key),
+            make_pdf("Second saved notice"),
+        )
+
+    def test_existing_client_can_create_case_without_registration(self):
+        case = self.persist_existing(registration_id=None)
+        self.assertEqual(case.client_id, self.client.client_id)
+        self.assertIsNone(case.registration_id)
+        self.assertEqual(len(self.repo.list_clients("F-1")), 1)
+        self.assertEqual(
+            len(self.repo.list_registrations(self.client.client_id)),
+            1,
+        )
+
+    def test_client_from_another_firm_fails_before_encrypted_write(self):
+        self.repo.create_firm(Firm("F-2", "Other Firm", NOW))
+        other = Client("CLIENT-OTHER", "F-2", "Other", NOW)
+        self.repo.create_client(other)
+        with mock.patch.object(self.store, "put") as put:
+            with self.assertRaisesRegex(LookupError, "selected firm"):
+                self.persist_existing(client_id=other.client_id)
+        put.assert_not_called()
+        self.assertEqual(self.repo.list_cases("F-1"), [])
+
+    def test_registration_from_another_client_fails_before_encrypted_write(self):
+        other = Client("CLIENT-OTHER", "F-1", "Other", NOW)
+        self.repo.create_client(other)
+        other_registration = TaxRegistration(
+            "REG-OTHER",
+            other.client_id,
+            "IN-GST",
+            "GSTIN",
+            "27ABCDE1234F1Z5",
+            NOW,
+        )
+        self.repo.create_registration(other_registration)
+
+        with mock.patch.object(self.store, "put") as put:
+            with self.assertRaisesRegex(LookupError, "selected client"):
+                self.persist_existing(
+                    registration_id=other_registration.registration_id
+                )
+        put.assert_not_called()
+        self.assertEqual(self.repo.list_cases("F-1"), [])
+
+    def test_existing_client_intake_relational_failure_rolls_back_ciphertext(self):
+        with mock.patch.object(
+            self.repo,
+            "create_existing_client_case_intake",
+            side_effect=RuntimeError("database failed"),
+        ):
+            with self.assertRaises(CaseIntakePersistenceError):
+                self.persist_existing()
+        self.assertEqual(list(Path(self.object_root).glob("*.dwaar")), [])
+
+
+class ClientDiscoveryRepositoryTests(DurableCaseIntakeIntegrationTests):
+    def test_clients_are_firm_scoped_and_stably_ordered(self):
+        self.repo.create_firm(Firm("F-2", "Other Firm", NOW))
+        alpha = Client("C-A", "F-1", "alpha", NOW)
+        beta = Client("C-B", "F-1", "Beta", NOW)
+        hidden = Client("C-X", "F-2", "Aardvark", NOW)
+        for client in (beta, hidden, alpha):
+            self.repo.create_client(client)
+
+        self.assertEqual(
+            [item.client_id for item in self.repo.list_clients("F-1")],
+            ["C-A", "C-B"],
+        )
+        self.assertEqual(
+            [item.client_id for item in self.repo.list_clients("F-2")],
+            ["C-X"],
+        )
+
+    def test_registrations_are_client_scoped(self):
+        one = Client("C-1", "F-1", "One", NOW)
+        two = Client("C-2", "F-1", "Two", NOW)
+        self.repo.create_client(one)
+        self.repo.create_client(two)
+        r2 = TaxRegistration(
+            "R-2", "C-1", "IN-GST", "GSTIN", "27ZZZZZ9999Z1Z9", NOW
+        )
+        r1 = TaxRegistration(
+            "R-1", "C-1", "IN-GST", "GSTIN", "06AAAAA0000A1Z5", NOW
+        )
+        hidden = TaxRegistration(
+            "R-X", "C-2", "IN-GST", "GSTIN", "29BBBBB1111B1Z5", NOW
+        )
+        for registration in (r2, hidden, r1):
+            self.repo.create_registration(registration)
+
+        self.assertEqual(
+            [item.registration_id for item in self.repo.list_registrations("C-1")],
+            ["R-1", "R-2"],
+        )
+        self.assertEqual(
+            [item.registration_id for item in self.repo.list_registrations("C-2")],
+            ["R-X"],
+        )
+
+
 class IntakeFailureBoundaryTests(unittest.TestCase):
     def test_repository_failure_deletes_encrypted_object(self):
         repository = mock.Mock()
@@ -274,6 +442,100 @@ class IntakeFailureBoundaryTests(unittest.TestCase):
                     opened_at=NOW,
                 )
 
+
+class AuthorizedClientReuseTests(unittest.TestCase):
+    def _service(self, permissions):
+        case_repo = mock.Mock()
+        access_repo = mock.Mock()
+        document_store = mock.Mock()
+        principal = AuthenticatedPrincipal("OIDC-" + "e" * 64)
+        access_repo.get_grant.return_value = FirmAccessGrant(
+            user_id=principal.user_id,
+            firm_id="F-1",
+            permissions=frozenset(permissions),
+            active=True,
+        )
+        return (
+            AuthorizedCaseService(
+                case_repo,
+                access_repo,
+                document_store,
+            ),
+            case_repo,
+            principal,
+        )
+
+    def test_client_discovery_requires_case_read_and_is_firm_scoped(self):
+        service, repo, principal = self._service(
+            {AccessPermission.CASE_READ}
+        )
+        clients = [Client("C-1", "F-1", "Client", NOW)]
+        repo.list_clients.return_value = clients
+        self.assertEqual(
+            service.list_clients(principal, "F-1"),
+            clients,
+        )
+        repo.list_clients.assert_called_once_with("F-1")
+
+    def test_registration_discovery_rejects_client_from_other_firm(self):
+        service, repo, principal = self._service(
+            {AccessPermission.CASE_READ}
+        )
+        repo.get_client.return_value = Client(
+            "C-X", "F-2", "Other", NOW
+        )
+        with self.assertRaises(LookupError):
+            service.list_registrations(
+                principal,
+                "F-1",
+                client_id="C-X",
+            )
+        repo.list_registrations.assert_not_called()
+
+    @mock.patch(
+        "modules.authorized_case_service.persist_existing_client_case_intake"
+    )
+    def test_existing_client_intake_uses_authenticated_actor(
+        self,
+        persist_mock,
+    ):
+        service, repo, principal = self._service(
+            {AccessPermission.CASE_CREATE}
+        )
+        client = Client("C-1", "F-1", "Client", NOW)
+        registration = TaxRegistration(
+            "R-1",
+            client.client_id,
+            "IN-GST",
+            "GSTIN",
+            "06AAAAA0000A1Z5",
+            NOW,
+        )
+        repo.get_client.return_value = client
+        repo.get_registration.return_value = registration
+        expected = mock.Mock()
+        persist_mock.return_value = expected
+
+        result = service.create_existing_client_case_intake(
+            principal,
+            "F-1",
+            client_id=client.client_id,
+            registration_id=registration.registration_id,
+            case_title="Matter",
+            proceeding_type=ProceedingType.GST_SEC73_GENERAL,
+            notice_form=NoticeForm.DRC_01,
+            response_deadline=None,
+            notice_filename="notice.pdf",
+            notice_payload=b"%PDF fixture",
+            opened_at=NOW,
+        )
+
+        self.assertIs(result, expected)
+        kwargs = persist_mock.call_args.kwargs
+        self.assertEqual(kwargs["firm_id"], "F-1")
+        self.assertEqual(kwargs["client_id"], "C-1")
+        self.assertEqual(kwargs["registration_id"], "R-1")
+        self.assertEqual(kwargs["actor_id"], principal.user_id)
 
 class AuthorizedDurableIntakeTests(unittest.TestCase):
     @mock.patch("modules.authorized_case_service.persist_new_case_intake")
