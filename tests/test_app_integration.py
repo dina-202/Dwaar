@@ -23,6 +23,7 @@ from domain.evidence_review_models import (
     EvidenceReviewRef,
     LoadedEvidenceReview,
 )
+from domain.filing_models import FilingRecord
 from domain.draft_work_product_models import (
     DraftReviewStatus,
     DraftVersionRef,
@@ -183,6 +184,7 @@ class FakeStreamlit:
         self,
         uploaded,
         supporting_uploads=None,
+        file_upload_values=None,
         button_values=None,
         text_values=None,
         session_state=None,
@@ -191,6 +193,7 @@ class FakeStreamlit:
     ):
         self.uploaded = uploaded
         self.supporting_uploads = supporting_uploads or []
+        self.file_upload_values = file_upload_values or {}
         self.button_values = button_values or {}
         self.text_values = text_values or {}
         self.session_state = {} if session_state is None else session_state
@@ -215,6 +218,9 @@ class FakeStreamlit:
 
     def file_uploader(self, *args, **kwargs):
         self._record("file_uploader", *args, **kwargs)
+        key = kwargs.get("key")
+        if key in self.file_upload_values:
+            return self.file_upload_values[key]
         label = args[0] if args else kwargs.get("label", "")
         if "supporting evidence" in str(label).lower():
             return self.supporting_uploads
@@ -509,6 +515,7 @@ def run_app(
     extraction_error=None,
     orchestrator_error=None,
     supporting_uploads=None,
+    file_upload_values=None,
     session_state=None,
     button_values=None,
     text_values=None,
@@ -529,6 +536,8 @@ def run_app(
     evidence_review_service_error=None,
     draft_service=None,
     draft_service_error=None,
+    filing_service=None,
+    filing_service_error=None,
     persisted_evidence_ref=None,
     persisted_evidence_error=None,
     reopen_result=None,
@@ -539,6 +548,7 @@ def run_app(
     fake = FakeStreamlit(
         uploaded,
         supporting_uploads=supporting_uploads,
+        file_upload_values=file_upload_values,
         button_values=button_values,
         text_values=text_values,
         session_state=session_state,
@@ -694,6 +704,15 @@ def run_app(
     if draft_service_error is not None:
         draft_service_mock.side_effect = draft_service_error
 
+    if filing_service is None:
+        filing_service = Mock()
+        filing_service.list_filings.return_value = []
+    elif isinstance(filing_service.list_filings.return_value, Mock):
+        filing_service.list_filings.return_value = []
+    filing_service_mock = Mock(return_value=filing_service)
+    if filing_service_error is not None:
+        filing_service_mock.side_effect = filing_service_error
+
     persisted_evidence_mock = Mock(return_value=persisted_evidence_ref)
     if persisted_evidence_error is not None:
         persisted_evidence_mock.side_effect = persisted_evidence_error
@@ -709,6 +728,7 @@ def run_app(
     fake.evidence_workspace_service_mock = evidence_workspace_service_mock
     fake.evidence_review_service_mock = evidence_review_service_mock
     fake.draft_service_mock = draft_service_mock
+    fake.filing_service_mock = filing_service_mock
     fake.persisted_evidence_mock = persisted_evidence_mock
     fake.reopen_mock = reopen_mock
 
@@ -749,6 +769,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_draft_work_product_service",
             draft_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_filing_service",
+            filing_service_mock,
         ),
         patch.object(
             case_evidence_service_module,
