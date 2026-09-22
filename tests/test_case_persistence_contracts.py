@@ -20,7 +20,11 @@ from domain.case_models import (
     utc_now,
 )
 from domain.models import NoticeForm, ProceedingType
-from domain.persistence_ports import CaseRepository, DocumentStore
+from domain.persistence_ports import (
+    AccessGrantRepository,
+    CaseRepository,
+    DocumentStore,
+)
 
 
 NOW = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)
@@ -169,6 +173,26 @@ class TimeContractTests(unittest.TestCase):
 class PersistencePortTests(unittest.TestCase):
     def test_case_repository_is_protocol(self):
         self.assertTrue(issubclass(CaseRepository, Protocol))
+
+    def test_access_grant_repository_is_protocol(self):
+        self.assertTrue(issubclass(AccessGrantRepository, Protocol))
+
+    def test_access_grant_repository_methods_exact(self):
+        methods = [
+            name
+            for name, member in inspect.getmembers(
+                AccessGrantRepository, predicate=inspect.isfunction
+            )
+            if not name.startswith("_")
+        ]
+        self.assertEqual(
+            methods,
+            [
+                "get_grant",
+                "list_grants_for_user",
+                "save_grant",
+            ],
+        )
 
     def test_document_store_is_protocol(self):
         self.assertTrue(issubclass(DocumentStore, Protocol))
