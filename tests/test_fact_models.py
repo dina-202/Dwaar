@@ -106,6 +106,8 @@ EXPECTED_FACT_ROLES = {
     "OWNER_CAME_FORWARD_STATUS": "owner_came_forward_status",
     "EXPLICIT_PROCEDURAL_DATE": "explicit_procedural_date",
     "ORDER_DATE_OR_ENFORCEMENT_STATUS": "order_date_or_enforcement_status",
+    "NOTICE_SERVICE_DATE": "notice_service_date",
+    "RESPONSE_PERIOD": "response_period",
 }
 
 # The exact pre-Step-6.1 ExtractedFact field contract, unchanged (§17.2).
@@ -157,8 +159,8 @@ class FactRoleContractTests(unittest.TestCase):
     def test_fact_role_imports_and_is_enum(self):
         self.assertTrue(issubclass(FactRole, Enum))
 
-    def test_fact_role_has_exactly_22_members(self):
-        self.assertEqual(len(FactRole), 22)
+    def test_fact_role_has_exactly_24_members(self):
+        self.assertEqual(len(FactRole), 24)
 
     def test_fact_role_members_and_values_exact(self):
         # Order + names + values pinned in one shot: exactly the §19.2
