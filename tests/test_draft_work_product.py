@@ -193,6 +193,14 @@ class DraftBaselineTests(unittest.TestCase):
                     )
 
 
+class DraftAuditMetadataTests(unittest.TestCase):
+    def test_draft_text_key_is_globally_prohibited_from_audit_metadata(self):
+        with self.assertRaisesRegex(ValueError, "prohibited"):
+            LocalSQLiteCaseRepository._validate_event_payload(
+                {"draft_text": "private professional draft"}
+            )
+
+
 class DraftPersistenceFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
