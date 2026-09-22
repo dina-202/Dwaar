@@ -12,6 +12,20 @@ from domain.models import (
 from modules import evidence_workspace
 
 
+class NoticeAnalysisKeyTests(unittest.TestCase):
+    def test_same_notice_bytes_produce_same_key(self):
+        self.assertEqual(
+            evidence_workspace.notice_analysis_key(b"notice"),
+            evidence_workspace.notice_analysis_key(b"notice"),
+        )
+
+    def test_notice_byte_change_invalidates_key(self):
+        self.assertNotEqual(
+            evidence_workspace.notice_analysis_key(b"notice-a"),
+            evidence_workspace.notice_analysis_key(b"notice-b"),
+        )
+
+
 class EvidenceWorkspaceKeyTests(unittest.TestCase):
     def test_same_inputs_produce_same_key(self):
         files = [("a.pdf", b"A"), ("b.pdf", b"B")]
