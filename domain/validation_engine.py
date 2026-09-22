@@ -69,6 +69,7 @@ from domain.models import (
     RequirementStatus,
     ReviewLevel,
     ReviewRequirement,
+    SourceVerificationStatus,
     SpecialRuleHandling,
     SupportLevel,
     ValidationEngineResult,
@@ -95,6 +96,7 @@ _FACT_INVARIANTS: Tuple[Tuple[str, str], ...] = (
     ("fact.alleged_draft_permission", "Alleged-fact draft-permission invariant"),
     ("fact.fact_id_present", "Fact-ID presence invariant"),
     ("fact.source_text_present", "Fact source-text presence invariant"),
+    ("fact.source_verification", "Fact source-verification invariant"),
     ("fact.fact_id_unique", "Fact-ID uniqueness invariant"),
     ("fact.role_compatibility", "FactRole compatibility invariant"),
 )
@@ -399,7 +401,7 @@ def _fact_invariants(
     checks: List[ValidationItem],
     facts,
 ) -> None:
-    """Emit exactly the ten §19.60 invariant items. Read-only: facts are
+    """Emit the Phase-2 invariants plus Phase-3 source verification. Read-only: facts are
     never mutated."""
     offenders_by_check: Dict[str, list] = {}
 
@@ -439,6 +441,10 @@ def _fact_invariants(
     offenders_by_check["fact.source_text_present"] = [
         f for f in facts
         if not (isinstance(f.source_text, str) and f.source_text.strip())
+    ]
+    offenders_by_check["fact.source_verification"] = [
+        f for f in facts
+        if f.source_verification is not SourceVerificationStatus.VERIFIED
     ]
 
     # fact.fact_id_unique: duplicated non-empty IDs, each ID once, in first
