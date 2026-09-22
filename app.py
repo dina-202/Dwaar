@@ -25,6 +25,7 @@ from modules.evidence_workspace import (
 from modules.pdf_reader import extract_document_pages
 from modules.runtime_persistence import (
     RuntimePersistenceConfigurationError,
+    build_authorized_analysis_snapshot_service,
     build_authorized_case_service,
 )
 from modules.case_reopen_service import (
@@ -295,6 +296,8 @@ _ACTIVE_FIRM_KEY = "_dwaar_active_firm_id"
 _SAVED_INTAKES = "_dwaar_saved_intake_cases"
 _OPENED_CASE_ID = "_dwaar_opened_case_id"
 _OPENED_CASE_ANALYSIS = "_dwaar_opened_case_analysis"
+_LOADED_SNAPSHOT_ID = "_dwaar_loaded_snapshot_id"
+_LOADED_SNAPSHOT = "_dwaar_loaded_snapshot"
 
 
 def _uploaded_bytes(uploaded_file):
@@ -318,6 +321,8 @@ def _reset_notice_workspace():
         _SAVED_INTAKES,
         _OPENED_CASE_ID,
         _OPENED_CASE_ANALYSIS,
+        _LOADED_SNAPSHOT_ID,
+        _LOADED_SNAPSHOT,
     ):
         st.session_state.pop(key, None)
     _reset_evidence_workspace()
@@ -436,6 +441,217 @@ def _require_app_access():
     return principal, active_firm
 
 
+def _render_historical_snapshot(loaded):
+    payload = loaded.payload
+    metadata = loaded.metadata
+
+    st.subheader("Historical analysis snapshot")
+    st.write(
+        {
+            "snapshot_id": metadata.snapshot_id,
+            "created_at": _display(metadata.created_at),
+            "created_by": metadata.created_by,
+            "schema_version": metadata.schema_version,
+            "engine_version": metadata.engine_version,
+            "source_document_id": metadata.source_document_id,
+            "source_document_sha256": metadata.source_document_sha256,
+            "snapshot_sha256": metadata.sha256_hex,
+        }
+    )
+    st.caption(
+        "Historical record only. This snapshot is not fed back into the "
+        "current analysis, drafting, evidence, or filing pipeline."
+    )
+
+    st.write({"classification": payload["classification"]})
+    st.write({"deadline": payload["deadline"]})
+    st.write(
+        {
+            "validation_summary": {
+                "overall_status": payload["validation"]["overall_status"],
+                "draft_eligibility": payload["validation"][
+                    "draft_eligibility"
+                ],
+                "case_severity": payload["validation"]["case_severity"],
+            }
+        }
+    )
+
+    facts = payload["extraction"]["facts"]
+    if facts:
+        st.dataframe(facts, hide_index=True)
+    else:
+        st.write("No facts were stored in this snapshot.")
+
+    arithmetic = payload["arithmetic"]
+    if arithmetic:
+        st.dataframe(arithmetic, hide_index=True)
+
+    draft_sections = payload["draft"]["sections"]
+    if draft_sections:
+        st.subheader("Historical rendered draft")
+        for section in draft_sections:
+            st.markdown(
+                f"**{section['title']}**\n\n"
+                + section["rendered_text"]
+            )
+
+
+def _render_snapshot_history(
+    principal,
+    active_firm,
+    selected_case,
+    reopened,
+):
+    try:
+        snapshot_service = build_authorized_analysis_snapshot_service()
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Analysis history storage is not fully configured on this "
+            "deployment."
+        )
+        return
+    except Exception:
+        st.error("Analysis history could not be initialized.")
+        return
+
+    can_read_payload = (
+        AccessPermission.DOCUMENT_READ in active_firm.permissions
+    )
+    can_save = (
+        reopened is not None
+        and can_read_payload
+        and AccessPermission.CASE_UPDATE in active_firm.permissions
+    )
+
+    if can_save and st.button(
+        "Save current analysis snapshot",
+        key=f"save_analysis_snapshot_{selected_case.case_id}",
+    ):
+        try:
+            saved = snapshot_service.save_current_analysis(
+                principal,
+                active_firm.firm_id,
+                case_id=selected_case.case_id,
+                analysis=reopened.analysis,
+                created_at=datetime.now(timezone.utc),
+            )
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to save analysis "
+                "history for this case."
+            )
+        except LookupError:
+            st.error("The case or source notice is no longer available.")
+        except Exception:
+            st.error("The analysis snapshot could not be saved.")
+        else:
+            st.write(
+                {
+                    "saved_snapshot_id": saved.snapshot_id,
+                    "schema_version": saved.schema_version,
+                    "engine_version": saved.engine_version,
+                }
+            )
+
+    try:
+        history = snapshot_service.list_snapshot_history(
+            principal,
+            active_firm.firm_id,
+            case_id=selected_case.case_id,
+        )
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to view analysis history."
+        )
+        return
+    except LookupError:
+        st.error("The saved case is no longer available.")
+        return
+    except Exception:
+        st.error("Analysis history could not be loaded.")
+        return
+
+    st.subheader("Analysis history")
+    if not history:
+        st.write("No saved analysis snapshots yet.")
+        return
+
+    newest_first = list(reversed(history))
+    st.dataframe(
+        [
+            {
+                "snapshot_id": item.snapshot_id,
+                "created_at": _display(item.created_at),
+                "schema_version": item.schema_version,
+                "engine_version": item.engine_version,
+                "source_document_id": item.source_document_id,
+                "snapshot_sha256": item.sha256_hex,
+            }
+            for item in newest_first
+        ],
+        hide_index=True,
+    )
+
+    if not can_read_payload:
+        st.caption(
+            "You can view snapshot metadata but do not have permission "
+            "to read historical notice-derived analysis contents."
+        )
+        return
+
+    labels = {
+        (
+            f"{item.created_at.isoformat()} — "
+            f"{item.engine_version} — {item.snapshot_id}"
+        ): item
+        for item in newest_first
+    }
+    selected_label = st.selectbox(
+        "Historical analysis snapshot",
+        list(labels),
+        key=f"dwaar_snapshot_selector_{selected_case.case_id}",
+    )
+    selected_snapshot = labels[selected_label]
+
+    if st.button(
+        "View historical snapshot",
+        key=f"view_snapshot_{selected_snapshot.snapshot_id}",
+    ):
+        try:
+            loaded = snapshot_service.load_snapshot(
+                principal,
+                active_firm.firm_id,
+                case_id=selected_case.case_id,
+                snapshot_id=selected_snapshot.snapshot_id,
+            )
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to read this "
+                "historical analysis."
+            )
+            return
+        except LookupError:
+            st.error("The analysis snapshot is no longer available.")
+            return
+        except Exception:
+            st.error("The historical analysis could not be loaded.")
+            return
+
+        st.session_state[_LOADED_SNAPSHOT_ID] = (
+            selected_snapshot.snapshot_id
+        )
+        st.session_state[_LOADED_SNAPSHOT] = loaded
+
+    if (
+        st.session_state.get(_LOADED_SNAPSHOT_ID)
+        == selected_snapshot.snapshot_id
+    ):
+        loaded = st.session_state.get(_LOADED_SNAPSHOT)
+        if loaded is not None:
+            _render_historical_snapshot(loaded)
+
+
 def _render_saved_cases_workspace(principal, active_firm):
     if AccessPermission.CASE_READ not in active_firm.permissions:
         return
@@ -537,12 +753,22 @@ def _render_saved_cases_workspace(principal, active_firm):
 
         st.session_state[_OPENED_CASE_ID] = selected_case.case_id
         st.session_state[_OPENED_CASE_ANALYSIS] = reopened
+        st.session_state.pop(_LOADED_SNAPSHOT_ID, None)
+        st.session_state.pop(_LOADED_SNAPSHOT, None)
         _reset_evidence_workspace()
 
     if st.session_state.get(_OPENED_CASE_ID) != selected_case.case_id:
         return
 
     reopened = st.session_state.get(_OPENED_CASE_ANALYSIS)
+
+    _render_snapshot_history(
+        principal,
+        active_firm,
+        selected_case,
+        reopened,
+    )
+
     if reopened is None:
         return
 
