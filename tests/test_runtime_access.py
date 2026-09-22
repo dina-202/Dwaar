@@ -15,6 +15,7 @@ from modules.runtime_access import (
     RuntimeAccessConfigurationError,
     database_path_from_environment,
     load_available_firms,
+    load_available_firms_for_permissions,
 )
 from modules.sqlite_access_grant_repository import (
     LocalSQLiteAccessGrantRepository,
@@ -101,14 +102,12 @@ class RuntimeFirmAccessTests(unittest.TestCase):
             self.db_path,
             AccessPermission.CASE_CREATE,
         )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].firm_id, "F-1")
+        self.assertEqual(result[0].display_name, "Alpha & Co")
         self.assertEqual(
-            result,
-            [
-                result[0].__class__(
-                    firm_id="F-1",
-                    display_name="Alpha & Co",
-                )
-            ],
+            result[0].permissions,
+            frozenset({AccessPermission.CASE_CREATE}),
         )
 
     def test_other_users_grants_are_not_returned(self):
@@ -144,6 +143,48 @@ class RuntimeFirmAccessTests(unittest.TestCase):
             [item.firm_id for item in result],
             ["F-1", "F-2"],
         )
+
+    def test_any_requested_permission_returns_firm_with_full_grant(self):
+        self.save(
+            "F-1",
+            {
+                AccessPermission.CASE_READ,
+                AccessPermission.DOCUMENT_READ,
+            },
+        )
+        self.save(
+            "F-2",
+            {AccessPermission.CASE_CREATE},
+        )
+        result = load_available_firms_for_permissions(
+            AuthenticatedPrincipal("U-1"),
+            self.db_path,
+            {
+                AccessPermission.CASE_READ,
+                AccessPermission.CASE_CREATE,
+            },
+        )
+        self.assertEqual(
+            [item.firm_id for item in result],
+            ["F-1", "F-2"],
+        )
+        self.assertEqual(
+            result[0].permissions,
+            frozenset(
+                {
+                    AccessPermission.CASE_READ,
+                    AccessPermission.DOCUMENT_READ,
+                }
+            ),
+        )
+
+    def test_empty_permission_set_is_rejected(self):
+        with self.assertRaises(TypeError):
+            load_available_firms_for_permissions(
+                AuthenticatedPrincipal("U-1"),
+                self.db_path,
+                set(),
+            )
 
     def test_permission_type_is_closed(self):
         with self.assertRaises(TypeError):

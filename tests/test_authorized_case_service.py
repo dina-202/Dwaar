@@ -203,6 +203,53 @@ class AuthorizedCaseServiceTests(unittest.TestCase):
                 replace(existing, title="Changed"),
             )
 
+    def test_list_documents_requires_document_read_and_case_tenant(self):
+        doc = StoredDocumentRef(
+            document_id="DOC-1",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="notice.pdf",
+            media_type="application/pdf",
+            byte_size=1,
+            sha256_hex="a" * 64,
+            storage_key="objects/" + "b" * 32,
+            created_at=NOW,
+        )
+        service = self.service(
+            cases=[case_record()],
+            documents={"CASE-1": [doc]},
+            grants=[
+                grant(
+                    permissions={AccessPermission.DOCUMENT_READ}
+                )
+            ],
+        )
+        self.assertEqual(
+            service.list_documents(
+                AuthenticatedPrincipal("U-1"),
+                "F-1",
+                case_id="CASE-1",
+            ),
+            [doc],
+        )
+
+    def test_list_documents_cross_firm_case_is_unavailable(self):
+        service = self.service(
+            cases=[case_record("CASE-B", "F-2")],
+            grants=[
+                grant(
+                    firm_id="F-1",
+                    permissions={AccessPermission.DOCUMENT_READ},
+                )
+            ],
+        )
+        with self.assertRaises(LookupError):
+            service.list_documents(
+                AuthenticatedPrincipal("U-1"),
+                "F-1",
+                case_id="CASE-B",
+            )
+
     @mock.patch("modules.authorized_case_service.persist_pdf_document")
     def test_add_document_uses_authenticated_user_as_actor(
         self,

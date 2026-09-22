@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Mapping, Optional
+from typing import FrozenSet, Iterable, List, Mapping, Optional
 
 from domain.auth_models import (
     AccessPermission,
@@ -29,6 +29,7 @@ class RuntimeAccessConsistencyError(RuntimeError):
 class AvailableFirmAccess:
     firm_id: str
     display_name: str
+    permissions: FrozenSet[AccessPermission] = frozenset()
 
 
 def database_path_from_environment(
@@ -49,14 +50,34 @@ def load_available_firms(
     db_path: str,
     required_permission: AccessPermission,
 ) -> List[AvailableFirmAccess]:
-    """Return active firms where the principal has one exact permission."""
+    """Backward-compatible one-permission firm discovery."""
+    return load_available_firms_for_permissions(
+        principal,
+        db_path,
+        {required_permission},
+    )
+
+
+def load_available_firms_for_permissions(
+    principal: AuthenticatedPrincipal,
+    db_path: str,
+    required_permissions: Iterable[AccessPermission],
+) -> List[AvailableFirmAccess]:
+    """Return active firms having at least one requested permission."""
     if not isinstance(principal, AuthenticatedPrincipal):
         raise TypeError("principal must be an AuthenticatedPrincipal")
     if not isinstance(db_path, str) or not db_path.strip():
         raise ValueError("db_path must be a non-empty string")
-    if not isinstance(required_permission, AccessPermission):
+    permissions = frozenset(required_permissions)
+    if (
+        not permissions
+        or any(
+            not isinstance(permission, AccessPermission)
+            for permission in permissions
+        )
+    ):
         raise TypeError(
-            "required_permission must be an AccessPermission"
+            "required_permissions must contain AccessPermission values"
         )
 
     access_repository = LocalSQLiteAccessGrantRepository(db_path)
@@ -66,7 +87,8 @@ def load_available_firms(
     for grant in access_repository.list_grants_for_user(principal.user_id):
         if not grant.active:
             continue
-        if required_permission not in grant.permissions:
+        matching = grant.permissions.intersection(permissions)
+        if not matching:
             continue
 
         firm = case_repository.get_firm(grant.firm_id)
@@ -78,6 +100,7 @@ def load_available_firms(
             AvailableFirmAccess(
                 firm_id=firm.firm_id,
                 display_name=firm.display_name,
+                permissions=grant.permissions,
             )
         )
 

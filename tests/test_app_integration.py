@@ -1,7 +1,7 @@
 """Offline integration tests for the Step-10.2 Streamlit shell."""
 
 import ast
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import pathlib
 import runpy
@@ -13,6 +13,12 @@ from domain import evidence_engine as evidence_engine_module
 from domain import evidence_review as evidence_review_module
 from domain import phase2_orchestrator as orchestrator_module
 from domain.auth_models import AccessPermission, AuthenticatedPrincipal
+from domain.case_models import (
+    CaseDocumentKind,
+    CaseRecord,
+    CaseStatus,
+    StoredDocumentRef,
+)
 from domain.models import (
     ArithmeticCalculationType,
     ArithmeticResult,
@@ -63,6 +69,7 @@ from domain.models import (
     ValidationItem,
     ValidationStatus,
 )
+from modules import case_reopen_service as case_reopen_service_module
 from modules import evidence_workspace as evidence_workspace_module
 from modules import pdf_reader
 from modules import runtime_access as runtime_access_module
@@ -71,6 +78,10 @@ from modules.runtime_access import (
     AvailableFirmAccess,
     RuntimeAccessConfigurationError,
     RuntimeAccessConsistencyError,
+)
+from modules.case_reopen_service import (
+    ReopenedCaseAnalysis,
+    SavedCaseReopenError,
 )
 from modules.runtime_persistence import (
     RuntimePersistenceConfigurationError,
@@ -476,6 +487,8 @@ def run_app(
     selectbox_values=None,
     persistence_service=None,
     persistence_error=None,
+    reopen_result=None,
+    reopen_error=None,
 ):
     events = []
     uploaded = _UploadedFile(events) if upload else None
@@ -497,6 +510,13 @@ def run_app(
             AvailableFirmAccess(
                 firm_id="F-TEST",
                 display_name="Test Firm",
+                permissions=frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
             )
         ]
 
@@ -541,18 +561,25 @@ def run_app(
     firms_mock = Mock(return_value=available_firms)
     if access_error is not None:
         firms_mock.side_effect = access_error
+    if persistence_service is None:
+        persistence_service = Mock()
+        persistence_service.list_cases.return_value = []
+    elif isinstance(persistence_service.list_cases.return_value, Mock):
+        persistence_service.list_cases.return_value = []
     persistence_service_mock = Mock(
-        return_value=(
-            persistence_service
-            if persistence_service is not None
-            else Mock()
-        )
+        return_value=persistence_service
     )
     if persistence_error is not None:
         persistence_service_mock.side_effect = persistence_error
+
+    reopen_mock = Mock(return_value=reopen_result)
+    if reopen_error is not None:
+        reopen_mock.side_effect = reopen_error
+
     fake.db_path_mock = db_path_mock
     fake.firms_mock = firms_mock
     fake.persistence_service_mock = persistence_service_mock
+    fake.reopen_mock = reopen_mock
 
     with (
         patch.dict(sys.modules, {"streamlit": fake}),
@@ -564,13 +591,18 @@ def run_app(
         ),
         patch.object(
             runtime_access_module,
-            "load_available_firms",
+            "load_available_firms_for_permissions",
             firms_mock,
         ),
         patch.object(
             runtime_persistence_module,
             "build_authorized_case_service",
             persistence_service_mock,
+        ),
+        patch.object(
+            case_reopen_service_module,
+            "reopen_case_analysis",
+            reopen_mock,
         ),
         patch.object(pdf_reader, "extract_document_pages", extract_mock),
         patch.object(
@@ -637,14 +669,20 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
         extractor.assert_not_called()
         runner.assert_not_called()
         self.assertEqual(calls_named(fake, "file_uploader"), [])
-        self.assertIn("not provisioned to create cases", log_text(fake))
+        self.assertIn("not provisioned to access cases", log_text(fake))
         self.assertIn("OIDC-", log_text(fake))
         fake.db_path_mock.assert_called_once_with()
         fake.firms_mock.assert_called_once()
         _, args, _ = fake.firms_mock.mock_calls[0]
         self.assertIsInstance(args[0], AuthenticatedPrincipal)
         self.assertEqual(args[1], "test-dwaar.db")
-        self.assertIs(args[2], AccessPermission.CASE_CREATE)
+        self.assertEqual(
+            args[2],
+            {
+                AccessPermission.CASE_CREATE,
+                AccessPermission.CASE_READ,
+            },
+        )
 
     def test_expired_oidc_identity_stops_before_firm_lookup(self):
         fake, extractor, runner, _, _, _ = run_app(
@@ -695,13 +733,39 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
         args = fake.firms_mock.call_args.args
         self.assertIsInstance(args[0], AuthenticatedPrincipal)
         self.assertEqual(args[1], "test-dwaar.db")
-        self.assertIs(args[2], AccessPermission.CASE_CREATE)
+        self.assertEqual(
+            args[2],
+            {
+                AccessPermission.CASE_CREATE,
+                AccessPermission.CASE_READ,
+            },
+        )
         self.assertIn("Active firm: Test Firm (F-TEST)", log_text(fake))
 
     def test_multi_firm_selection_uses_selected_firm(self):
         firms = [
-            AvailableFirmAccess("F-1", "Alpha"),
-            AvailableFirmAccess("F-2", "Beta"),
+            AvailableFirmAccess(
+                "F-1",
+                "Alpha",
+                frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
+            ),
+            AvailableFirmAccess(
+                "F-2",
+                "Beta",
+                frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
+            ),
         ]
         fake, *_ = run_app(
             upload=False,
@@ -730,8 +794,28 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             "_dwaar_saved_intake_cases": {"old": "CASE-OLD"},
         }
         firms = [
-            AvailableFirmAccess("F-1", "Alpha"),
-            AvailableFirmAccess("F-2", "Beta"),
+            AvailableFirmAccess(
+                "F-1",
+                "Alpha",
+                frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
+            ),
+            AvailableFirmAccess(
+                "F-2",
+                "Beta",
+                frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
+            ),
         ]
         fake, *_ = run_app(
             upload=False,
@@ -797,6 +881,7 @@ class SourceBoundaryTests(unittest.TestCase):
                 "domain.evidence_review",
                 "domain.models",
                 "domain.phase2_orchestrator",
+                "modules.case_reopen_service",
                 "modules.evidence_workspace",
                 "modules.pdf_reader",
                 "modules.runtime_access",
@@ -1215,6 +1300,8 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         self.assertEqual(
             headers(fake),
             [
+                "Saved cases",
+                "New notice intake",
                 "Classification and support",
                 "Fact extraction",
                 "Preflight and deadline",
@@ -1253,6 +1340,188 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         )
 
 
+class SavedCaseWorkspaceUiTests(unittest.TestCase):
+    def _read_only_firm(self, *, document_read=True):
+        permissions = {AccessPermission.CASE_READ}
+        if document_read:
+            permissions.add(AccessPermission.DOCUMENT_READ)
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset(permissions),
+        )
+
+    def _create_only_firm(self):
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset({AccessPermission.CASE_CREATE}),
+        )
+
+    def _case(self):
+        return CaseRecord(
+            case_id="CASE-1",
+            firm_id="F-TEST",
+            client_id="CLIENT-1",
+            registration_id=None,
+            title="Saved matter",
+            status=CaseStatus.INTAKE,
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _notice(self):
+        return StoredDocumentRef(
+            document_id="DOC-1",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="saved-notice.pdf",
+            media_type="application/pdf",
+            byte_size=len(PDF_BYTES),
+            sha256_hex="a" * 64,
+            storage_key="objects/" + "b" * 32,
+            created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _reopened(self):
+        return ReopenedCaseAnalysis(
+            case=self._case(),
+            notice_document=self._notice(),
+            notice_pdf_bytes=PDF_BYTES,
+            document_pages=DOCUMENT_PAGES,
+            raw_text=RAW_TEXT,
+            analysis=make_result(),
+        )
+
+    def test_read_only_user_sees_saved_cases_but_no_new_uploader(self):
+        service = Mock()
+        service.list_cases.return_value = []
+        fake, extractor, runner, _, _, _ = run_app(
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+        )
+        self.assertIn("Saved cases", headers(fake))
+        self.assertNotIn("New notice intake", headers(fake))
+        self.assertEqual(calls_named(fake, "file_uploader"), [])
+        extractor.assert_not_called()
+        runner.assert_not_called()
+        service.list_cases.assert_called_once()
+
+    def test_create_only_user_sees_new_uploader_but_not_saved_cases(self):
+        service = Mock()
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._create_only_firm()],
+            persistence_service=service,
+        )
+        self.assertNotIn("Saved cases", headers(fake))
+        self.assertIn("New notice intake", headers(fake))
+        self.assertEqual(len(calls_named(fake, "file_uploader")), 1)
+        service.list_cases.assert_not_called()
+
+    def test_case_read_without_document_read_shows_metadata_only(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._read_only_firm(document_read=False)
+            ],
+            persistence_service=service,
+        )
+        text = log_text(fake)
+        self.assertIn("CASE-1", text)
+        self.assertIn("Saved matter", text)
+        self.assertIn("do not have permission", text)
+        self.assertEqual(
+            [
+                call
+                for call in calls_named(fake, "button")
+                if call[1] and call[1][0] == "Open saved case"
+            ],
+            [],
+        )
+
+    def test_open_saved_case_reanalyzes_verified_persisted_notice(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        reopened = self._reopened()
+
+        fake, extractor, runner, _, _, today_calls = run_app(
+            upload=False,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_result=reopened,
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        self.assertEqual(extractor.call_count, 0)
+        self.assertEqual(runner.call_count, 0)
+        self.assertGreaterEqual(today_calls, 1)
+        fake.reopen_mock.assert_called_once()
+        args = fake.reopen_mock.call_args.args
+        self.assertIs(args[0], service)
+        self.assertIsInstance(args[1], AuthenticatedPrincipal)
+        self.assertEqual(args[2], "F-TEST")
+        self.assertEqual(args[3], "CASE-1")
+        self.assertEqual(args[4], TODAY)
+
+        text = log_text(fake)
+        self.assertIn("Opened case", text)
+        self.assertIn("CASE-1", text)
+        self.assertIn("recomputed_from_encrypted_notice", text)
+        self.assertIn(
+            "analysis snapshot itself is not durable yet",
+            text,
+        )
+        self.assertIn(RAW_TEXT, text)
+
+    def test_opened_case_is_reused_on_unrelated_rerun(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        shared_state = {}
+        reopened = self._reopened()
+
+        first = run_app(
+            upload=False,
+            session_state=shared_state,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_result=reopened,
+            button_values={"open_saved_case_CASE-1": True},
+        )
+        first[0].reopen_mock.assert_called_once()
+
+        second = run_app(
+            upload=False,
+            session_state=shared_state,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_result=reopened,
+        )
+        second[0].reopen_mock.assert_not_called()
+        self.assertIn("Opened case", log_text(second[0]))
+
+    def test_reopen_failure_does_not_leak_internal_detail(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_error=SavedCaseReopenError(
+                "private storage/parser detail"
+            ),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+        text = log_text(fake)
+        self.assertIn(
+            "saved notice could not be safely reopened",
+            text.lower(),
+        )
+        self.assertNotIn("private storage/parser detail", text)
+
 class DurableIntakeUiTests(unittest.TestCase):
     def _save_keys(self):
         notice_key = evidence_workspace_module.notice_analysis_key(
@@ -1270,7 +1539,10 @@ class DurableIntakeUiTests(unittest.TestCase):
     def test_analysis_renders_save_panel_without_persisting(self):
         fake, *_ = run_app()
         self.assertIn("Save as intake case", headers(fake))
-        fake.persistence_service_mock.assert_not_called()
+        self.assertGreaterEqual(
+            fake.persistence_service_mock.call_count,
+            1,
+        )
         self.assertIn(
             "current analysis is not yet persisted",
             log_text(fake),
@@ -1295,7 +1567,10 @@ class DurableIntakeUiTests(unittest.TestCase):
         )
 
         self.assertEqual(runner.call_count, 1)
-        fake.persistence_service_mock.assert_called_once_with()
+        self.assertEqual(
+            fake.persistence_service_mock.call_count,
+            2,
+        )
         service.create_case_intake.assert_called_once()
         args = service.create_case_intake.call_args
         self.assertIsInstance(args.args[0], AuthenticatedPrincipal)
@@ -1355,7 +1630,10 @@ class DurableIntakeUiTests(unittest.TestCase):
             persistence_service=second_service,
         )
         self.assertEqual(runner.call_count, 0)
-        fake.persistence_service_mock.assert_not_called()
+        self.assertGreaterEqual(
+            fake.persistence_service_mock.call_count,
+            1,
+        )
         second_service.create_case_intake.assert_not_called()
         self.assertIn("CASE-SAVED-1", log_text(fake))
 
