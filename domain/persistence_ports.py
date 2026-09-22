@@ -34,12 +34,20 @@ class CaseRepository(Protocol):
     def get_client(self, client_id: str) -> Optional[Client]:
         ...
 
+    def list_clients(self, firm_id: str) -> List[Client]:
+        ...
+
     def create_registration(self, registration: TaxRegistration) -> None:
         ...
 
     def get_registration(
         self, registration_id: str
     ) -> Optional[TaxRegistration]:
+        ...
+
+    def list_registrations(
+        self, client_id: str
+    ) -> List[TaxRegistration]:
         ...
 
     def create_case(self, case: CaseRecord) -> None:
@@ -49,6 +57,14 @@ class CaseRepository(Protocol):
         self,
         client: Client,
         registration: Optional[TaxRegistration],
+        case: CaseRecord,
+        document: StoredDocumentRef,
+        events: List[CaseEvent],
+    ) -> None:
+        ...
+
+    def create_existing_client_case_intake(
+        self,
         case: CaseRecord,
         document: StoredDocumentRef,
         events: List[CaseEvent],
