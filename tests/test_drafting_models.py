@@ -828,6 +828,8 @@ class Step8ContractCompatibilityTests(unittest.TestCase):
                 "allowed_in_draft",
                 "fact_type",
                 "fact_role",
+                "source_origin",
+                "source_verification",
             ],
         )
         fact = ExtractedFact("F-001", "claim", FactStatus.CONFIRMED)
