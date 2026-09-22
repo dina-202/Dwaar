@@ -264,7 +264,10 @@ class PublicApiAndPurityTests(unittest.TestCase):
             and inspect.isfunction(value)
             and value.__module__ == orchestrator.__name__
         ]
-        self.assertEqual(public_functions, ["run_phase2_analysis"])
+        self.assertEqual(
+            public_functions,
+            ["run_phase2_analysis", "run_phase2_analysis_from_pages"],
+        )
 
     def test_exact_signature_and_required_today(self):
         signature = inspect.signature(orchestrator.run_phase2_analysis)
@@ -272,6 +275,13 @@ class PublicApiAndPurityTests(unittest.TestCase):
         self.assertIs(signature.parameters["raw_text"].annotation, str)
         self.assertIs(signature.parameters["today"].annotation, date)
         self.assertIs(signature.parameters["today"].default, inspect.Parameter.empty)
+        self.assertIs(signature.return_annotation, Phase2AnalysisResult)
+
+    def test_page_aware_signature_is_additive_and_exact(self):
+        signature = inspect.signature(orchestrator.run_phase2_analysis_from_pages)
+        self.assertEqual(list(signature.parameters), ["page_texts", "today"])
+        self.assertEqual(str(signature.parameters["page_texts"].annotation), "typing.List[str]")
+        self.assertIs(signature.parameters["today"].annotation, date)
         self.assertIs(signature.return_annotation, Phase2AnalysisResult)
 
     def test_no_extra_api_parameters(self):
