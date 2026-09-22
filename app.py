@@ -302,6 +302,7 @@ _OPENED_CASE_ID = "_dwaar_opened_case_id"
 _OPENED_CASE_ANALYSIS = "_dwaar_opened_case_analysis"
 _OPENED_SNAPSHOT_ID = "_dwaar_opened_snapshot_id"
 _OPENED_SNAPSHOT = "_dwaar_opened_snapshot"
+_FOCUSED_CASE_ID = "_dwaar_focused_case_id"
 
 
 def _uploaded_bytes(uploaded_file):
@@ -327,6 +328,7 @@ def _reset_notice_workspace():
         _OPENED_CASE_ANALYSIS,
         _OPENED_SNAPSHOT_ID,
         _OPENED_SNAPSHOT,
+        _FOCUSED_CASE_ID,
     ):
         st.session_state.pop(key, None)
     _reset_evidence_workspace()
@@ -1106,6 +1108,138 @@ def _render_persisted_evidence_workspace(
             )
 
 
+def _render_client_workspace(principal, active_firm):
+    if AccessPermission.CASE_READ not in active_firm.permissions:
+        return
+
+    st.header("Client workspace")
+    try:
+        service = build_authorized_case_service()
+        clients = service.list_clients(
+            principal,
+            active_firm.firm_id,
+        )
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Durable case storage is not fully configured on this "
+            "deployment."
+        )
+        return
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to read clients in "
+            "this firm."
+        )
+        return
+    except Exception:
+        st.error("Client workspace could not be loaded.")
+        return
+
+    if not clients:
+        st.write("No saved clients yet.")
+        return
+
+    labels = {
+        f"{client.display_name} — {client.client_id}": client
+        for client in clients
+    }
+    selected_label = st.selectbox(
+        "Client",
+        list(labels),
+        key="dwaar_client_workspace_selector",
+    )
+    selected_client = labels[selected_label]
+
+    try:
+        workspace = service.get_client_workspace(
+            principal,
+            active_firm.firm_id,
+            client_id=selected_client.client_id,
+        )
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to view this client."
+        )
+        return
+    except LookupError:
+        st.error("The selected client is no longer available.")
+        return
+    except Exception:
+        st.error("Client history could not be loaded.")
+        return
+
+    st.write(
+        {
+            "client_id": workspace.client.client_id,
+            "client_name": workspace.client.display_name,
+            "registration_count": len(workspace.registrations),
+            "case_count": len(workspace.cases),
+        }
+    )
+
+    st.subheader("Tax registrations")
+    if workspace.registrations:
+        st.dataframe(
+            [
+                {
+                    "registration_id": item.registration_id,
+                    "jurisdiction": item.jurisdiction,
+                    "identifier_type": item.identifier_type,
+                    "identifier_value": item.identifier_value,
+                }
+                for item in workspace.registrations
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write("No tax registrations saved for this client.")
+
+    st.subheader("Notice history")
+    if not workspace.cases:
+        st.write("No saved cases for this client yet.")
+        return
+
+    st.dataframe(
+        [
+            {
+                "case_id": case.case_id,
+                "title": case.title,
+                "status": case.status.value,
+                "notice_form": case.notice_form.value,
+                "proceeding_type": case.proceeding_type.value,
+                "opened_at": case.opened_at.isoformat(),
+                "response_deadline": _display(case.response_deadline),
+                "registration_id": _display(case.registration_id),
+            }
+            for case in workspace.cases
+        ],
+        hide_index=True,
+    )
+
+    case_labels = {
+        f"{case.title} — {case.case_id}": case
+        for case in workspace.cases
+    }
+    selected_case_label = st.selectbox(
+        "Client case",
+        list(case_labels),
+        key=f"dwaar_client_case_selector_{selected_client.client_id}",
+    )
+    selected_case = case_labels[selected_case_label]
+
+    if st.button(
+        "Focus this case in Saved cases",
+        key=f"focus_client_case_{selected_case.case_id}",
+    ):
+        st.session_state[_FOCUSED_CASE_ID] = selected_case.case_id
+        st.write(
+            {
+                "focused_case_id": selected_case.case_id,
+                "next_step": "Use Open saved case below.",
+            }
+        )
+
+
 def _render_saved_cases_workspace(principal, active_firm):
     if AccessPermission.CASE_READ not in active_firm.permissions:
         return
@@ -1136,6 +1270,17 @@ def _render_saved_cases_workspace(principal, active_firm):
     if not cases:
         st.write("No saved cases yet.")
         return
+
+    focused_case_id = st.session_state.get(_FOCUSED_CASE_ID)
+    if focused_case_id is not None:
+        cases = sorted(
+            cases,
+            key=lambda item: (
+                item.case_id != focused_case_id,
+                -item.opened_at.timestamp(),
+                item.case_id,
+            ),
+        )
 
     st.dataframe(
         [
@@ -1726,6 +1871,7 @@ _principal, _active_firm = _require_app_access()
 st.title("📋 Dwaar")
 st.caption("GST notice workspace for professional review.")
 
+_render_client_workspace(_principal, _active_firm)
 _render_saved_cases_workspace(_principal, _active_firm)
 
 if AccessPermission.CASE_CREATE in _active_firm.permissions:

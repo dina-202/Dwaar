@@ -23,6 +23,7 @@ from domain.evidence_review_models import (
     EvidenceReviewRef,
     LoadedEvidenceReview,
 )
+from domain.client_workspace_models import ClientWorkspace
 from domain.case_models import (
     CaseDocumentKind,
     CaseRecord,
@@ -598,6 +599,29 @@ def run_app(
             Mock,
         ):
             persistence_service.list_registrations.return_value = []
+    if isinstance(
+        persistence_service.get_client_workspace.return_value,
+        Mock,
+    ):
+        clients_for_workspace = persistence_service.list_clients.return_value
+        if clients_for_workspace:
+            workspace_client = clients_for_workspace[0]
+            workspace_registrations = (
+                persistence_service.list_registrations.return_value
+            )
+            workspace_cases = [
+                item
+                for item in persistence_service.list_cases.return_value
+                if getattr(item, "client_id", None)
+                == workspace_client.client_id
+            ]
+            persistence_service.get_client_workspace.return_value = (
+                ClientWorkspace(
+                    client=workspace_client,
+                    registrations=workspace_registrations,
+                    cases=workspace_cases,
+                )
+            )
     persistence_service_mock = Mock(
         return_value=persistence_service
     )
@@ -1392,6 +1416,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         self.assertEqual(
             headers(fake),
             [
+                "Client workspace",
                 "Saved cases",
                 "New notice intake",
                 "Classification and support",
@@ -2401,6 +2426,142 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
 
 
 
+class ClientWorkspaceUiTests(unittest.TestCase):
+    def _service(self):
+        service = Mock()
+        client = Client(
+            "CLIENT-1",
+            "F-TEST",
+            "Acme Private Limited",
+            datetime(2026, 7, 1, tzinfo=timezone.utc),
+        )
+        registration = TaxRegistration(
+            "REG-1",
+            client.client_id,
+            "IN-GST",
+            "GSTIN",
+            "06ABCDE1234F1Z5",
+            datetime(2026, 7, 1, tzinfo=timezone.utc),
+        )
+        older = CaseRecord(
+            case_id="CASE-OLD",
+            firm_id="F-TEST",
+            client_id=client.client_id,
+            registration_id=registration.registration_id,
+            title="Older DRC-01",
+            status=CaseStatus.INTAKE,
+            proceeding_type=ProceedingType.GST_SEC73_GENERAL,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+        newer = CaseRecord(
+            case_id="CASE-NEW",
+            firm_id="F-TEST",
+            client_id=client.client_id,
+            registration_id=registration.registration_id,
+            title="Newer DRC-01",
+            status=CaseStatus.ANALYZED,
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
+        service.list_clients.return_value = [client]
+        service.list_registrations.return_value = [registration]
+        service.list_cases.return_value = [newer, older]
+        service.get_client_workspace.return_value = ClientWorkspace(
+            client=client,
+            registrations=[registration],
+            cases=[newer, older],
+        )
+        return service, client, registration, newer, older
+
+    def test_client_workspace_renders_registration_and_notice_history(self):
+        service, client, registration, newer, older = self._service()
+        fake, *_ = run_app(
+            upload=False,
+            persistence_service=service,
+        )
+
+        self.assertIn("Client workspace", headers(fake))
+        text = log_text(fake)
+        self.assertIn(client.display_name, text)
+        self.assertIn(registration.identifier_value, text)
+        self.assertIn(newer.case_id, text)
+        self.assertIn(older.case_id, text)
+        service.get_client_workspace.assert_called_once_with(
+            ANY,
+            "F-TEST",
+            client_id=client.client_id,
+        )
+
+    def test_focus_from_client_workspace_moves_case_to_saved_case_selector(self):
+        service, client, _, newer, older = self._service()
+        selected_case_label = f"{older.title} — {older.case_id}"
+        fake, *_ = run_app(
+            upload=False,
+            persistence_service=service,
+            selectbox_values={
+                "dwaar_client_workspace_selector": (
+                    f"{client.display_name} — {client.client_id}"
+                ),
+                f"dwaar_client_case_selector_{client.client_id}": (
+                    selected_case_label
+                ),
+            },
+            button_values={
+                f"focus_client_case_{older.case_id}": True,
+            },
+        )
+
+        self.assertEqual(
+            fake.session_state["_dwaar_focused_case_id"],
+            older.case_id,
+        )
+        saved_case_selects = [
+            call
+            for call in calls_named(fake, "selectbox")
+            if call[2].get("key") == "dwaar_saved_case_selector"
+        ]
+        self.assertEqual(len(saved_case_selects), 1)
+        saved_options = saved_case_selects[0][1][1]
+        self.assertTrue(saved_options[0].endswith(older.case_id))
+        self.assertIn(
+            "Use Open saved case below",
+            log_text(fake),
+        )
+
+    def test_read_only_case_access_still_gets_client_workspace(self):
+        service, *_ = self._service()
+        firm = AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset({AccessPermission.CASE_READ}),
+        )
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[firm],
+            persistence_service=service,
+        )
+        self.assertIn("Client workspace", headers(fake))
+        self.assertIn(
+            "new notice upload requires CASE_CREATE",
+            log_text(fake),
+        )
+
+    def test_client_workspace_failure_does_not_leak_internal_detail(self):
+        service, *_ = self._service()
+        service.get_client_workspace.side_effect = RuntimeError(
+            "private sqlite detail"
+        )
+        fake, *_ = run_app(
+            upload=False,
+            persistence_service=service,
+        )
+        text = log_text(fake)
+        self.assertIn("Client history could not be loaded", text)
+        self.assertNotIn("private sqlite detail", text)
+
+
 class DurableIntakeUiTests(unittest.TestCase):
     def _save_keys(self):
         notice_key = evidence_workspace_module.notice_analysis_key(
@@ -2455,7 +2616,7 @@ class DurableIntakeUiTests(unittest.TestCase):
         self.assertEqual(runner.call_count, 1)
         self.assertEqual(
             fake.persistence_service_mock.call_count,
-            2,
+            3,
         )
         service.create_case_intake.assert_called_once()
         args = service.create_case_intake.call_args
@@ -2533,7 +2694,7 @@ class DurableIntakeUiTests(unittest.TestCase):
             text_values={keys["title"]: "Second notice"},
         )
 
-        service.list_clients.assert_called_once()
+        self.assertEqual(service.list_clients.call_count, 2)
         service.list_registrations.assert_called_once_with(
             ANY,
             "F-TEST",

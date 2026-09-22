@@ -77,6 +77,11 @@ class CaseRepository(Protocol):
     def list_cases(self, firm_id: str) -> List[CaseRecord]:
         ...
 
+    def list_cases_for_client(
+        self, client_id: str
+    ) -> List[CaseRecord]:
+        ...
+
     def update_case(self, case: CaseRecord) -> None:
         ...
 
