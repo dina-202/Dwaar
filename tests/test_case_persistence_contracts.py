@@ -28,6 +28,7 @@ from domain.persistence_ports import (
     DraftVersionRepository,
     EvidenceReviewRepository,
     FilingRepository,
+    LegalBriefRepository,
 )
 
 
@@ -76,6 +77,7 @@ class EnumContractTests(unittest.TestCase):
                 "document_added",
                 "document_removed",
                 "analysis_saved",
+                "legal_brief_saved",
                 "evidence_candidates_generated",
                 "evidence_reviewed",
                 "draft_created",
@@ -200,6 +202,27 @@ class PersistencePortTests(unittest.TestCase):
                 "get_snapshot_ref",
                 "list_snapshot_refs",
                 "save_snapshot",
+            ],
+        )
+
+    def test_legal_brief_repository_is_protocol(self):
+        self.assertTrue(issubclass(LegalBriefRepository, Protocol))
+
+    def test_legal_brief_repository_methods_exact(self):
+        methods = [
+            name
+            for name, member in inspect.getmembers(
+                LegalBriefRepository,
+                predicate=inspect.isfunction,
+            )
+            if not name.startswith("_")
+        ]
+        self.assertEqual(
+            methods,
+            [
+                "get_brief_ref",
+                "list_brief_refs",
+                "save_brief",
             ],
         )
 

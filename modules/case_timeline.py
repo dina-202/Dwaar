@@ -15,6 +15,7 @@ _CATEGORY = {
     CaseEventType.DOCUMENT_ADDED: TimelineCategory.DOCUMENT,
     CaseEventType.DOCUMENT_REMOVED: TimelineCategory.DOCUMENT,
     CaseEventType.ANALYSIS_SAVED: TimelineCategory.ANALYSIS,
+    CaseEventType.LEGAL_BRIEF_SAVED: TimelineCategory.ANALYSIS,
     CaseEventType.EVIDENCE_CANDIDATES_GENERATED: TimelineCategory.EVIDENCE,
     CaseEventType.EVIDENCE_REVIEWED: TimelineCategory.EVIDENCE,
     CaseEventType.DRAFT_CREATED: TimelineCategory.DRAFT,
@@ -64,6 +65,14 @@ def _render(event: CaseEvent) -> tuple[str, str]:
             "Snapshot "
             + _value(p, "snapshot_id", "recorded")
             + " was preserved."
+        )
+    if t is CaseEventType.LEGAL_BRIEF_SAVED:
+        return "Verified legal brief saved", (
+            "Legal brief "
+            + _value(p, "legal_brief_id", "recorded")
+            + " was preserved against analysis snapshot "
+            + _value(p, "snapshot_id", "recorded")
+            + "."
         )
     if t is CaseEventType.EVIDENCE_CANDIDATES_GENERATED:
         return "Evidence candidates generated", (
