@@ -13,6 +13,12 @@ from domain import evidence_engine as evidence_engine_module
 from domain import evidence_review as evidence_review_module
 from domain import phase2_orchestrator as orchestrator_module
 from domain.auth_models import AccessPermission, AuthenticatedPrincipal
+from domain.case_models import (
+    CaseDocumentKind,
+    CaseRecord,
+    CaseStatus,
+    StoredDocumentRef,
+)
 from domain.models import (
     ArithmeticCalculationType,
     ArithmeticResult,
@@ -63,6 +69,7 @@ from domain.models import (
     ValidationItem,
     ValidationStatus,
 )
+from modules import case_reopen_service as case_reopen_service_module
 from modules import evidence_workspace as evidence_workspace_module
 from modules import pdf_reader
 from modules import runtime_access as runtime_access_module
@@ -72,6 +79,7 @@ from modules.runtime_access import (
     RuntimeAccessConfigurationError,
     RuntimeAccessConsistencyError,
 )
+from modules.case_reopen_service import ReopenedCaseAnalysis
 from modules.runtime_persistence import (
     RuntimePersistenceConfigurationError,
 )
@@ -476,6 +484,8 @@ def run_app(
     selectbox_values=None,
     persistence_service=None,
     persistence_error=None,
+    reopen_result=None,
+    reopen_error=None,
 ):
     events = []
     uploaded = _UploadedFile(events) if upload else None
@@ -548,18 +558,23 @@ def run_app(
     firms_mock = Mock(return_value=available_firms)
     if access_error is not None:
         firms_mock.side_effect = access_error
+    if persistence_service is None:
+        persistence_service = Mock()
+        persistence_service.list_cases.return_value = []
     persistence_service_mock = Mock(
-        return_value=(
-            persistence_service
-            if persistence_service is not None
-            else Mock()
-        )
+        return_value=persistence_service
     )
     if persistence_error is not None:
         persistence_service_mock.side_effect = persistence_error
+
+    reopen_mock = Mock(return_value=reopen_result)
+    if reopen_error is not None:
+        reopen_mock.side_effect = reopen_error
+
     fake.db_path_mock = db_path_mock
     fake.firms_mock = firms_mock
     fake.persistence_service_mock = persistence_service_mock
+    fake.reopen_mock = reopen_mock
 
     with (
         patch.dict(sys.modules, {"streamlit": fake}),
@@ -578,6 +593,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_case_service",
             persistence_service_mock,
+        ),
+        patch.object(
+            case_reopen_service_module,
+            "reopen_case_analysis",
+            reopen_mock,
         ),
         patch.object(pdf_reader, "extract_document_pages", extract_mock),
         patch.object(
@@ -1329,7 +1349,10 @@ class DurableIntakeUiTests(unittest.TestCase):
     def test_analysis_renders_save_panel_without_persisting(self):
         fake, *_ = run_app()
         self.assertIn("Save as intake case", headers(fake))
-        fake.persistence_service_mock.assert_not_called()
+        self.assertGreaterEqual(
+            fake.persistence_service_mock.call_count,
+            1,
+        )
         self.assertIn(
             "current analysis is not yet persisted",
             log_text(fake),
@@ -1414,7 +1437,10 @@ class DurableIntakeUiTests(unittest.TestCase):
             persistence_service=second_service,
         )
         self.assertEqual(runner.call_count, 0)
-        fake.persistence_service_mock.assert_not_called()
+        self.assertGreaterEqual(
+            fake.persistence_service_mock.call_count,
+            1,
+        )
         second_service.create_case_intake.assert_not_called()
         self.assertIn("CASE-SAVED-1", log_text(fake))
 
