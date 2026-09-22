@@ -40,6 +40,7 @@ from domain.case_timeline_models import (
 )
 from domain.case_models import (
     CaseDocumentKind,
+    CaseEventType,
     CaseRecord,
     CaseStatus,
     Client,
