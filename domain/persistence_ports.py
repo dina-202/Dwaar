@@ -9,6 +9,7 @@ from typing import List, Optional, Protocol
 
 from domain.analysis_snapshot_models import AnalysisSnapshotRef
 from domain.evidence_review_models import EvidenceReviewRef
+from domain.draft_work_product_models import DraftVersionRef
 from domain.auth_models import FirmAccessGrant
 from domain.case_models import (
     CaseEvent,
@@ -135,6 +136,36 @@ class AnalysisSnapshotRepository(Protocol):
         self,
         case_id: str,
     ) -> List[AnalysisSnapshotRef]:
+        ...
+
+
+class DraftVersionRepository(Protocol):
+    """Persistent metadata/audit boundary for encrypted draft versions."""
+
+    def save_version(
+        self,
+        version: DraftVersionRef,
+        event: CaseEvent,
+    ) -> None:
+        ...
+
+    def get_version_ref(
+        self,
+        draft_version_id: str,
+    ) -> Optional[DraftVersionRef]:
+        ...
+
+    def list_version_refs(
+        self,
+        case_id: str,
+    ) -> List[DraftVersionRef]:
+        ...
+
+    def transition_review_status(
+        self,
+        version: DraftVersionRef,
+        event: CaseEvent,
+    ) -> None:
         ...
 
 
