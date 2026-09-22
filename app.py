@@ -28,6 +28,7 @@ from modules.runtime_persistence import (
     RuntimePersistenceConfigurationError,
     build_authorized_analysis_snapshot_service,
     build_authorized_case_service,
+    build_authorized_evidence_review_service,
     build_authorized_evidence_workspace_service,
 )
 from modules.case_reopen_service import (
@@ -668,15 +669,15 @@ def _render_persisted_evidence_workspace(
     reopened,
     case_service,
 ):
-    evidence_checklist = reopened.analysis.draft_result.evidence_checklist
-    if not evidence_checklist:
+    live_checklist = reopened.analysis.draft_result.evidence_checklist
+    if not live_checklist:
         return
 
     st.header("Persisted supporting evidence")
     st.caption(
-        "Supporting PDFs attached here are encrypted case documents. "
-        "AI matching remains advisory; Confirm/Reject decisions are still "
-        "session-only until snapshot-bound review persistence is added."
+        "Supporting PDFs are encrypted case documents. Durable human "
+        "Confirm/Reject decisions are bound to a selected saved analysis "
+        "snapshot so their checklist context remains historically stable."
     )
 
     try:
@@ -759,7 +760,6 @@ def _render_persisted_evidence_workspace(
                     "Some supporting evidence files could not be attached: "
                     + ", ".join(failures)
                 )
-            # Streamlit rerun will refresh the persisted attachment table.
             return
     else:
         st.caption(
@@ -775,16 +775,111 @@ def _render_persisted_evidence_workspace(
         )
         return
 
-    analyze_key = f"analyze_persisted_evidence_{reopened.case.case_id}"
-    if st.button("Analyze attached evidence", key=analyze_key):
+    try:
+        snapshot_service = build_authorized_analysis_snapshot_service()
+        review_service = build_authorized_evidence_review_service()
+        snapshot_history = snapshot_service.list_snapshot_history(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+        )
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Evidence review storage is not fully configured on this "
+            "deployment."
+        )
+        return
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to review evidence "
+            "for this case."
+        )
+        return
+    except Exception:
+        st.error("Evidence review history could not be loaded.")
+        return
+
+    if not snapshot_history:
+        st.warning(
+            "Save the current analysis as an analysis snapshot before "
+            "creating durable evidence review decisions."
+        )
+        return
+
+    snapshot_labels = {
+        (
+            f"{item.created_at.isoformat()} — "
+            f"{item.engine_version} — {item.snapshot_id}"
+        ): item
+        for item in reversed(snapshot_history)
+    }
+    snapshot_label = st.selectbox(
+        "Evidence review snapshot",
+        list(snapshot_labels),
+        key=f"evidence_review_snapshot_{reopened.case.case_id}",
+    )
+    selected_snapshot = snapshot_labels[snapshot_label]
+
+    try:
+        snapshot_checklist = review_service.snapshot_evidence_checklist(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+            snapshot_id=selected_snapshot.snapshot_id,
+        )
+        durable_reviews = review_service.list_reviews(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+            snapshot_id=selected_snapshot.snapshot_id,
+        )
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to review evidence "
+            "for this snapshot."
+        )
+        return
+    except Exception:
+        st.error("The selected evidence review context could not be loaded.")
+        return
+
+    st.write(
+        {
+            "review_snapshot_id": selected_snapshot.snapshot_id,
+            "review_engine_version": selected_snapshot.engine_version,
+            "review_checklist_items": len(snapshot_checklist),
+        }
+    )
+
+    context_prefix = (
+        f"persisted:{reopened.case.case_id}:"
+        f"{selected_snapshot.snapshot_id}:"
+    )
+    existing_workspace_key = st.session_state.get(_EVIDENCE_KEY)
+    if (
+        existing_workspace_key is not None
+        and not str(existing_workspace_key).startswith(context_prefix)
+    ):
+        _reset_evidence_workspace()
+
+    analyze_key = (
+        f"analyze_persisted_evidence_{reopened.case.case_id}_"
+        f"{selected_snapshot.snapshot_id}"
+    )
+    if st.button(
+        "Analyze attached evidence for selected snapshot",
+        key=analyze_key,
+    ):
         try:
             evidence_service = build_authorized_evidence_workspace_service()
-            with st.spinner("Matching persisted evidence to checklist..."):
+            with st.spinner(
+                "Matching persisted evidence to snapshot checklist..."
+            ):
                 workspace = evidence_service.analyze_case_evidence(
                     principal,
                     active_firm.firm_id,
                     case_id=reopened.case.case_id,
-                    evidence_checklist=evidence_checklist,
+                    evidence_checklist=snapshot_checklist,
                 )
         except RuntimePersistenceConfigurationError:
             st.error(
@@ -802,7 +897,7 @@ def _render_persisted_evidence_workspace(
             return
 
         st.session_state[_EVIDENCE_KEY] = (
-            f"persisted:{reopened.case.case_id}:"
+            context_prefix
             + ":".join(
                 item.document_id
                 for item in workspace.document_refs
@@ -812,25 +907,49 @@ def _render_persisted_evidence_workspace(
         st.session_state[_EVIDENCE_REVIEWS] = []
 
     intake_result = st.session_state.get(_EVIDENCE_INTAKE)
-    if intake_result is None:
-        return
+    if intake_result is not None:
+        st.write(
+            {
+                "evidence_intake_status": intake_result.status.value,
+                "candidate_count": len(intake_result.candidates),
+                "rejected_candidate_count": (
+                    intake_result.rejected_candidate_count
+                ),
+            }
+        )
 
-    reviews = st.session_state.setdefault(_EVIDENCE_REVIEWS, [])
-    st.write(
-        {
-            "evidence_intake_status": intake_result.status.value,
-            "candidate_count": len(intake_result.candidates),
-            "rejected_candidate_count": (
-                intake_result.rejected_candidate_count
-            ),
-        }
-    )
+        if intake_result.candidates:
+            st.dataframe(
+                [
+                    {
+                        "candidate_id": candidate.candidate_id,
+                        "evidence_id": candidate.evidence_id,
+                        "document_id": candidate.document_id,
+                        "source_page": candidate.source_page,
+                        "source_text": candidate.source_text,
+                        "source_origin": candidate.source_origin.value,
+                        "source_verification": (
+                            candidate.source_verification.value
+                        ),
+                        "review_status": candidate.review_status.value,
+                    }
+                    for candidate in intake_result.candidates
+                ],
+                hide_index=True,
+            )
+        else:
+            st.write(
+                "No source-grounded evidence candidates were proposed."
+            )
 
-    if intake_result.candidates:
-        st.dataframe(
-            [
+        workspace_key = st.session_state.get(
+            _EVIDENCE_KEY,
+            context_prefix,
+        )
+        for candidate in intake_result.candidates:
+            st.subheader(f"Review {candidate.candidate_id}")
+            st.write(
                 {
-                    "candidate_id": candidate.candidate_id,
                     "evidence_id": candidate.evidence_id,
                     "document_id": candidate.document_id,
                     "source_page": candidate.source_page,
@@ -839,93 +958,156 @@ def _render_persisted_evidence_workspace(
                     "source_verification": (
                         candidate.source_verification.value
                     ),
-                    "review_status": candidate.review_status.value,
                 }
-                for candidate in intake_result.candidates
-            ],
-            hide_index=True,
-        )
-    else:
-        st.write("No source-grounded evidence candidates were proposed.")
-
-    reviewed_ids = set(reviewed_candidate_ids(reviews))
-    workspace_key = st.session_state.get(
-        _EVIDENCE_KEY,
-        f"persisted:{reopened.case.case_id}",
-    )
-    for candidate in intake_result.candidates:
-        if candidate.candidate_id in reviewed_ids:
-            continue
-
-        st.subheader(f"Review {candidate.candidate_id}")
-        st.write(
-            {
-                "evidence_id": candidate.evidence_id,
-                "document_id": candidate.document_id,
-                "source_page": candidate.source_page,
-                "source_text": candidate.source_text,
-                "source_origin": candidate.source_origin.value,
-                "source_verification": (
-                    candidate.source_verification.value
+            )
+            note = st.text_input(
+                "Reviewer note (optional)",
+                key=(
+                    f"durable_evidence_note_{workspace_key}_"
+                    f"{candidate.candidate_id}"
                 ),
-            }
-        )
-        note = st.text_input(
-            "Reviewer note (optional)",
-            key=f"evidence_note_{workspace_key}_{candidate.candidate_id}",
-        )
-        if st.button(
-            f"Confirm {candidate.candidate_id}",
-            key=f"confirm_{workspace_key}_{candidate.candidate_id}",
-        ):
-            reviews.append(
-                create_evidence_review(
-                    candidate,
-                    EvidenceReviewStatus.CONFIRMED,
-                    reviews,
-                    note,
-                )
             )
-            reviewed_ids.add(candidate.candidate_id)
 
-        if (
-            candidate.candidate_id not in reviewed_ids
-            and st.button(
+            decision = None
+            if st.button(
+                f"Confirm {candidate.candidate_id}",
+                key=(
+                    f"durable_confirm_{workspace_key}_"
+                    f"{candidate.candidate_id}"
+                ),
+            ):
+                decision = EvidenceReviewStatus.CONFIRMED
+            elif st.button(
                 f"Reject {candidate.candidate_id}",
-                key=f"reject_{workspace_key}_{candidate.candidate_id}",
-            )
-        ):
-            reviews.append(
-                create_evidence_review(
-                    candidate,
-                    EvidenceReviewStatus.REJECTED,
-                    reviews,
-                    note,
-                )
-            )
-            reviewed_ids.add(candidate.candidate_id)
+                key=(
+                    f"durable_reject_{workspace_key}_"
+                    f"{candidate.candidate_id}"
+                ),
+            ):
+                decision = EvidenceReviewStatus.REJECTED
 
-    if reviews:
-        st.subheader("Session evidence review records")
-        st.dataframe(
-            [
+            if decision is not None:
+                try:
+                    saved_review = review_service.save_review(
+                        principal,
+                        active_firm.firm_id,
+                        case_id=reopened.case.case_id,
+                        snapshot_id=selected_snapshot.snapshot_id,
+                        candidate=candidate,
+                        decision=decision,
+                        reviewer_note=note,
+                        reviewed_at=datetime.now(timezone.utc),
+                    )
+                except ValueError:
+                    st.error(
+                        "This evidence candidate is no longer valid for "
+                        "the selected snapshot or persisted document."
+                    )
+                except PermissionError:
+                    st.error(
+                        "Your account is no longer authorized to save "
+                        "this evidence review."
+                    )
+                except Exception:
+                    st.error(
+                        "This evidence review could not be saved. It may "
+                        "already have been reviewed for this snapshot."
+                    )
+                else:
+                    st.write(
+                        {
+                            "saved_evidence_review_id": (
+                                saved_review.review_id
+                            ),
+                            "decision": saved_review.decision.value,
+                            "snapshot_id": saved_review.snapshot_id,
+                        }
+                    )
+                    durable_reviews = review_service.list_reviews(
+                        principal,
+                        active_firm.firm_id,
+                        case_id=reopened.case.case_id,
+                        snapshot_id=selected_snapshot.snapshot_id,
+                    )
+
+    st.subheader("Durable evidence review history")
+    if not durable_reviews:
+        st.write("No durable review decisions for this snapshot yet.")
+        return
+
+    st.dataframe(
+        [
+            {
+                "review_id": item.review_id,
+                "evidence_id": item.evidence_id,
+                "document_id": item.document_id,
+                "source_page": item.source_page,
+                "decision": item.decision.value,
+                "reviewed_at": item.reviewed_at.isoformat(),
+                "reviewed_by": item.reviewed_by,
+            }
+            for item in durable_reviews
+        ],
+        hide_index=True,
+    )
+
+    review_labels = {
+        (
+            f"{item.reviewed_at.isoformat()} — "
+            f"{item.decision.value} — {item.review_id}"
+        ): item
+        for item in durable_reviews
+    }
+    selected_review_label = st.selectbox(
+        "Evidence review record",
+        list(review_labels),
+        key=(
+            f"evidence_review_record_{reopened.case.case_id}_"
+            f"{selected_snapshot.snapshot_id}"
+        ),
+    )
+    selected_review = review_labels[selected_review_label]
+    if st.button(
+        "View encrypted review details",
+        key=f"view_evidence_review_{selected_review.review_id}",
+    ):
+        try:
+            loaded_review = review_service.load_review(
+                principal,
+                active_firm.firm_id,
+                case_id=reopened.case.case_id,
+                snapshot_id=selected_snapshot.snapshot_id,
+                review_id=selected_review.review_id,
+            )
+        except Exception:
+            st.error("The evidence review details could not be loaded.")
+        else:
+            st.write(
                 {
-                    "review_id": review.review_id,
-                    "candidate_id": review.candidate_id,
-                    "evidence_id": review.evidence_id,
-                    "document_id": review.document_id,
-                    "source_page": review.source_page,
-                    "decision": review.decision.value,
-                    "source_origin": review.source_origin.value,
-                    "source_verification": (
-                        review.source_verification.value
+                    "review_id": loaded_review.metadata.review_id,
+                    "snapshot_id": loaded_review.metadata.snapshot_id,
+                    "evidence_id": loaded_review.metadata.evidence_id,
+                    "document_id": loaded_review.metadata.document_id,
+                    "source_page": loaded_review.metadata.source_page,
+                    "decision": loaded_review.metadata.decision.value,
+                    "source_text": (
+                        loaded_review.payload["candidate"]["source_text"]
                     ),
-                    "reviewer_note": _display(review.reviewer_note),
+                    "source_origin": (
+                        loaded_review.payload["candidate"]["source_origin"]
+                    ),
+                    "source_verification": (
+                        loaded_review.payload["candidate"][
+                            "source_verification"
+                        ]
+                    ),
+                    "reviewer_note": _display(
+                        loaded_review.payload["reviewer_note"]
+                    ),
+                    "reviewed_at": loaded_review.payload["reviewed_at"],
+                    "reviewed_by": loaded_review.payload["reviewed_by"],
                 }
-                for review in reviews
-            ],
-            hide_index=True,
-        )
+            )
 
 
 def _render_saved_cases_workspace(principal, active_firm):
