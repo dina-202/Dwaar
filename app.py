@@ -483,8 +483,11 @@ def _render_save_intake_workspace(
         "GSTIN (optional)",
         key=f"intake_gstin_{save_key}",
     )
+    notice_form_label = (
+        result.classification.notice_form.value.upper().replace("_", "-")
+    )
     default_title = (
-        f"{result.classification.notice_form.value} — "
+        f"{notice_form_label} — "
         f"{result.classification.proceeding_type.value}"
     )
     case_title = st.text_input(
