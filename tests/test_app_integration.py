@@ -64,6 +64,8 @@ from domain.models import (
 )
 from modules import evidence_workspace as evidence_workspace_module
 from modules import pdf_reader
+from modules import runtime_access as runtime_access_module
+from modules.runtime_access import AvailableFirmAccess
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -84,6 +86,26 @@ RAW_CANDIDATE_SENTINEL = "RAW PROVIDER CANDIDATE MUST NEVER RENDER"
 RENDERED_ONE = "Rendered specialist section one."
 RENDERED_TWO = "Rendered specialist section two."
 CLAIM_SENTINEL = "EXTRACTED CLAIM MUST NOT BECOME DRAFT PROSE"
+DEFAULT_USER_CLAIMS = {
+    "iss": "https://issuer.test",
+    "sub": "test-user-subject",
+    "exp": 4102444800,
+}
+
+
+class _StopExecution(Exception):
+    pass
+
+
+class _FakeUser:
+    def __init__(self, logged_in=True, claims=None):
+        self.is_logged_in = logged_in
+        self._claims = dict(
+            DEFAULT_USER_CLAIMS if claims is None else claims
+        )
+
+    def to_dict(self):
+        return dict(self._claims)
 
 
 class _UploadedFile:
@@ -120,12 +142,16 @@ class FakeStreamlit:
         button_values=None,
         text_values=None,
         session_state=None,
+        user=None,
+        selectbox_values=None,
     ):
         self.uploaded = uploaded
         self.supporting_uploads = supporting_uploads or []
         self.button_values = button_values or {}
         self.text_values = text_values or {}
         self.session_state = {} if session_state is None else session_state
+        self.user = user or _FakeUser()
+        self.selectbox_values = selectbox_values or {}
         self.calls = []
 
     def _record(self, name, *args, **kwargs):
@@ -157,6 +183,25 @@ class FakeStreamlit:
     def button(self, *args, **kwargs):
         self._record("button", *args, **kwargs)
         return bool(self.button_values.get(kwargs.get("key"), False))
+
+    def selectbox(self, *args, **kwargs):
+        self._record("selectbox", *args, **kwargs)
+        options = args[1] if len(args) > 1 else kwargs.get("options", [])
+        key = kwargs.get("key")
+        return self.selectbox_values.get(
+            key,
+            options[0] if options else None,
+        )
+
+    def login(self, *args, **kwargs):
+        self._record("login", *args, **kwargs)
+
+    def logout(self, *args, **kwargs):
+        self._record("logout", *args, **kwargs)
+
+    def stop(self):
+        self._record("stop")
+        raise _StopExecution()
 
     def spinner(self, *args, **kwargs):
         self._record("spinner", *args, **kwargs)
@@ -414,6 +459,12 @@ def run_app(
     button_values=None,
     text_values=None,
     evidence_intake_result=None,
+    logged_in=True,
+    user_claims=None,
+    available_firms=None,
+    access_error=None,
+    database_path_error=None,
+    selectbox_values=None,
 ):
     events = []
     uploaded = _UploadedFile(events) if upload else None
@@ -423,8 +474,20 @@ def run_app(
         button_values=button_values,
         text_values=text_values,
         session_state=session_state,
+        user=_FakeUser(
+            logged_in=logged_in,
+            claims=user_claims,
+        ),
+        selectbox_values=selectbox_values,
     )
     result = result or make_result()
+    if available_firms is None:
+        available_firms = [
+            AvailableFirmAccess(
+                firm_id="F-TEST",
+                display_name="Test Firm",
+            )
+        ]
 
     class FixedDate(date):
         calls = 0
@@ -461,10 +524,28 @@ def run_app(
         return original_evidence(*args, **kwargs)
 
     evidence_mock.side_effect = evidence_side_effect
+    db_path_mock = Mock(return_value="test-dwaar.db")
+    if database_path_error is not None:
+        db_path_mock.side_effect = database_path_error
+    firms_mock = Mock(return_value=available_firms)
+    if access_error is not None:
+        firms_mock.side_effect = access_error
+    fake.db_path_mock = db_path_mock
+    fake.firms_mock = firms_mock
 
     with (
         patch.dict(sys.modules, {"streamlit": fake}),
         patch("datetime.date", FixedDate),
+        patch.object(
+            runtime_access_module,
+            "database_path_from_environment",
+            db_path_mock,
+        ),
+        patch.object(
+            runtime_access_module,
+            "load_available_firms",
+            firms_mock,
+        ),
         patch.object(pdf_reader, "extract_document_pages", extract_mock),
         patch.object(
             orchestrator_module,
@@ -482,7 +563,13 @@ def run_app(
             return_value=[],
         ),
     ):
-        runpy.run_path(str(APP_PATH), run_name="__app_integration_test__")
+        try:
+            runpy.run_path(
+                str(APP_PATH),
+                run_name="__app_integration_test__",
+            )
+        except _StopExecution:
+            pass
 
     return (
         fake,
@@ -508,12 +595,15 @@ class SourceBoundaryTests(unittest.TestCase):
             {
                 "datetime",
                 "streamlit",
+                "domain.auth_models",
                 "domain.evidence_engine",
                 "domain.evidence_review",
                 "domain.models",
                 "domain.phase2_orchestrator",
                 "modules.evidence_workspace",
                 "modules.pdf_reader",
+                "modules.runtime_access",
+                "modules.runtime_security",
             },
         )
         self.assertIn("run_phase2_analysis_from_document_pages", SOURCE)
