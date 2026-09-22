@@ -18,7 +18,9 @@ from domain.evidence_review_models import (
 )
 from domain.models import (
     EvidenceCandidate,
+    EvidenceChecklistItem,
     EvidenceReviewStatus,
+    EvidenceStatus,
 )
 from domain.persistence_ports import (
     AccessGrantRepository,
@@ -84,6 +86,71 @@ class AuthorizedEvidenceReviewService:
             and isinstance(item.get("evidence_id"), str)
             and item.get("evidence_id")
         }
+
+    def snapshot_evidence_checklist(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+        snapshot_id: str,
+    ) -> List[EvidenceChecklistItem]:
+        """Return the selected historical snapshot's closed evidence list."""
+        self._require_review(principal, firm_id)
+        case = self._cases.get_case(principal, firm_id, case_id)
+        if case is None:
+            raise LookupError("case does not exist")
+        snapshot = self._snapshots.load_snapshot(
+            principal,
+            firm_id,
+            case_id=case.case_id,
+            snapshot_id=snapshot_id,
+        )
+        draft = snapshot.payload.get("draft")
+        if not isinstance(draft, dict):
+            raise ValueError("snapshot draft section is invalid")
+        raw_checklist = draft.get("evidence_checklist")
+        if not isinstance(raw_checklist, list):
+            raise ValueError("snapshot evidence checklist is invalid")
+
+        checklist: List[EvidenceChecklistItem] = []
+        seen = set()
+        for item in raw_checklist:
+            if not isinstance(item, dict) or set(item) != {
+                "evidence_id",
+                "requirement_text",
+                "status",
+            }:
+                raise ValueError(
+                    "snapshot evidence checklist item is invalid"
+                )
+            evidence_id = item["evidence_id"]
+            requirement_text = item["requirement_text"]
+            if (
+                not isinstance(evidence_id, str)
+                or not evidence_id
+                or evidence_id in seen
+                or not isinstance(requirement_text, str)
+                or not requirement_text
+            ):
+                raise ValueError(
+                    "snapshot evidence checklist item is invalid"
+                )
+            try:
+                status = EvidenceStatus(item["status"])
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "snapshot evidence checklist status is invalid"
+                ) from error
+            seen.add(evidence_id)
+            checklist.append(
+                EvidenceChecklistItem(
+                    evidence_id=evidence_id,
+                    requirement_text=requirement_text,
+                    status=status,
+                )
+            )
+        return checklist
 
     def save_review(
         self,
