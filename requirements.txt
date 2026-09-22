@@ -2,3 +2,4 @@ streamlit
 pymupdf
 google-genai
 python-dotenv
+cryptography>=50.0.1,<51
