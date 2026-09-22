@@ -76,6 +76,7 @@ from domain.models import (
     ValidationStatus,
 )
 from modules import case_reopen_service as case_reopen_service_module
+from modules.analysis_snapshot import build_snapshot_payload
 from modules import evidence_workspace as evidence_workspace_module
 from modules import pdf_reader
 from modules import runtime_access as runtime_access_module
@@ -1364,10 +1365,17 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
 
 
 class SavedCaseWorkspaceUiTests(unittest.TestCase):
-    def _read_only_firm(self, *, document_read=True):
+    def _read_only_firm(
+        self,
+        *,
+        document_read=True,
+        case_update=False,
+    ):
         permissions = {AccessPermission.CASE_READ}
         if document_read:
             permissions.add(AccessPermission.DOCUMENT_READ)
+        if case_update:
+            permissions.add(AccessPermission.CASE_UPDATE)
         return AvailableFirmAccess(
             firm_id="F-TEST",
             display_name="Test Firm",
@@ -1544,6 +1552,262 @@ class SavedCaseWorkspaceUiTests(unittest.TestCase):
             text.lower(),
         )
         self.assertNotIn("private storage/parser detail", text)
+
+class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
+    def _firm(self, *, case_update=False):
+        permissions = {
+            AccessPermission.CASE_READ,
+            AccessPermission.DOCUMENT_READ,
+        }
+        if case_update:
+            permissions.add(AccessPermission.CASE_UPDATE)
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset(permissions),
+        )
+
+    def _case(self):
+        return CaseRecord(
+            case_id="CASE-1",
+            firm_id="F-TEST",
+            client_id="CLIENT-1",
+            registration_id=None,
+            title="Saved matter",
+            status=CaseStatus.ANALYZED,
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _notice(self):
+        return StoredDocumentRef(
+            document_id="DOC-1",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="saved-notice.pdf",
+            media_type="application/pdf",
+            byte_size=len(PDF_BYTES),
+            sha256_hex="a" * 64,
+            storage_key="objects/" + "b" * 32,
+            created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _reopened(self):
+        return ReopenedCaseAnalysis(
+            case=self._case(),
+            notice_document=self._notice(),
+            notice_pdf_bytes=PDF_BYTES,
+            document_pages=DOCUMENT_PAGES,
+            raw_text=RAW_TEXT,
+            analysis=make_result(),
+        )
+
+    def _snapshot_ref(self, snapshot_id="SNAP-1"):
+        return AnalysisSnapshotRef(
+            snapshot_id=snapshot_id,
+            case_id="CASE-1",
+            source_document_id="DOC-1",
+            source_document_sha256="a" * 64,
+            schema_version=SNAPSHOT_SCHEMA_VERSION,
+            engine_version=ANALYSIS_ENGINE_VERSION,
+            byte_size=123,
+            sha256_hex="c" * 64,
+            storage_key="objects/" + "d" * 32,
+            created_at=datetime(
+                2026, 8, 2, 12, 0, tzinfo=timezone.utc
+            ),
+            created_by="OIDC-" + "e" * 64,
+        )
+
+    def _loaded_snapshot(self):
+        payload = build_snapshot_payload(
+            make_result(),
+            source_document_id="DOC-1",
+            source_document_sha256="a" * 64,
+        )
+        payload["draft"]["sections"][0]["rendered_text"] = (
+            "HISTORICAL DRAFT SENTINEL"
+        )
+        return LoadedAnalysisSnapshot(
+            metadata=self._snapshot_ref(),
+            payload=payload,
+        )
+
+    def _open_buttons(self, extra=None):
+        values = {"open_saved_case_CASE-1": True}
+        if extra:
+            values.update(extra)
+        return values
+
+    def test_opened_case_lists_snapshot_history(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm()],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(),
+        )
+
+        self.assertIn("Analysis history", headers(fake))
+        snapshot_service.list_snapshot_history.assert_called_once()
+        args = snapshot_service.list_snapshot_history.call_args
+        self.assertIsInstance(args.args[0], AuthenticatedPrincipal)
+        self.assertEqual(args.args[1], "F-TEST")
+        self.assertEqual(args.kwargs["case_id"], "CASE-1")
+        self.assertIn("SNAP-1", log_text(fake))
+
+    def test_read_only_user_cannot_save_snapshot(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = []
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(case_update=False)],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(),
+        )
+
+        save_buttons = [
+            call
+            for call in calls_named(fake, "button")
+            if call[1]
+            and call[1][0] == "Save current analysis snapshot"
+        ]
+        self.assertEqual(save_buttons, [])
+        snapshot_service.save_current_analysis.assert_not_called()
+
+    def test_case_updater_can_save_current_recomputed_analysis(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        saved = self._snapshot_ref()
+        snapshot_service.save_current_analysis.return_value = saved
+        snapshot_service.list_snapshot_history.side_effect = [
+            [],
+            [saved],
+        ]
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(case_update=True)],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(
+                {"save_snapshot_CASE-1": True}
+            ),
+        )
+
+        snapshot_service.save_current_analysis.assert_called_once()
+        args = snapshot_service.save_current_analysis.call_args
+        self.assertIsInstance(args.args[0], AuthenticatedPrincipal)
+        self.assertEqual(args.args[1], "F-TEST")
+        self.assertEqual(args.kwargs["case_id"], "CASE-1")
+        self.assertIsInstance(
+            args.kwargs["analysis"],
+            Phase2AnalysisResult,
+        )
+        self.assertIsNotNone(args.kwargs["created_at"].tzinfo)
+        self.assertIn("saved_snapshot_id", log_text(fake))
+        self.assertIn("SNAP-1", log_text(fake))
+
+    def test_view_historical_snapshot_is_labeled_and_read_only(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+        snapshot_service.load_snapshot.return_value = (
+            self._loaded_snapshot()
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm()],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(
+                {"view_snapshot_SNAP-1": True}
+            ),
+        )
+
+        snapshot_service.load_snapshot.assert_called_once()
+        text = log_text(fake)
+        self.assertIn("Historical analysis snapshot", text)
+        self.assertIn("Historical record only", text)
+        self.assertIn(ANALYSIS_ENGINE_VERSION, text)
+        self.assertIn("HISTORICAL DRAFT SENTINEL", text)
+        self.assertIn(
+            "Historical draft text below is preserved for audit/history",
+            text,
+        )
+
+    def test_snapshot_load_failure_does_not_leak_backend_detail(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+        snapshot_service.load_snapshot.side_effect = RuntimeError(
+            "private ciphertext or database detail"
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm()],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(
+                {"view_snapshot_SNAP-1": True}
+            ),
+        )
+
+        text = log_text(fake)
+        self.assertIn(
+            "historical analysis snapshot could not be loaded",
+            text.lower(),
+        )
+        self.assertNotIn("private ciphertext", text)
+
+    def test_snapshot_factory_failure_does_not_leak_config_detail(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm()],
+            persistence_service=case_service,
+            snapshot_service_error=RuntimePersistenceConfigurationError(
+                "private path/key detail"
+            ),
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(),
+        )
+
+        text = log_text(fake)
+        self.assertIn(
+            "Analysis history storage is not fully configured",
+            text,
+        )
+        self.assertNotIn("private path/key detail", text)
+
 
 class DurableIntakeUiTests(unittest.TestCase):
     def _save_keys(self):
