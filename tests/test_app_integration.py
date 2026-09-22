@@ -1464,7 +1464,7 @@ class SavedCaseWorkspaceUiTests(unittest.TestCase):
             [
                 call
                 for call in calls_named(fake, "button")
-                if call[1] and call[1][0] == "Open saved case"
+                if call[1] and call[1][0] == "Open / recompute current analysis"
             ],
             [],
         )
