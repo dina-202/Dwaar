@@ -32,8 +32,16 @@ _DATE_PATTERN = re.compile(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})")
 
 
 def _parse_period_days(response_period_text: Optional[str]) -> Optional[int]:
-    """Deterministically extract the response period in days, or None."""
+    """Deterministically extract a calendar-day response period, or None.
+
+    Working-day periods deliberately remain unresolved until Dwaar has a
+    verified working-day / holiday-calendar subsystem. Treating them as
+    calendar days would create a false deterministic deadline.
+    """
     if not response_period_text:
+        return None
+    lowered = response_period_text.lower()
+    if "working day" in lowered or "business day" in lowered:
         return None
     match = _PERIOD_DAYS_PATTERN.search(response_period_text)
     if not match:
@@ -45,10 +53,18 @@ def _parse_period_days(response_period_text: Optional[str]) -> Optional[int]:
 
 
 def _is_service_based(response_period_text: Optional[str]) -> bool:
-    """True when the response period text says it runs from date of service."""
+    """True when the period is anchored to service / receipt.
+
+    Receipt language is treated as service-based because substituting the
+    notice issue date for an unknown receipt date would be unsafe.
+    """
     if not response_period_text:
         return False
-    return "service" in response_period_text.lower()
+    lowered = response_period_text.lower()
+    return any(
+        token in lowered
+        for token in ("service", "receipt", "received")
+    )
 
 
 def _parse_date_text(text: Optional[str]) -> Optional[date]:
@@ -104,8 +120,9 @@ def calculate_deadline(
         response_deadline = None
         deadline_confidence = DeadlineConfidence.UNKNOWN
         notes.append(
-            "Response period could not be determined from the notice text; "
-            "deadline not calculated"
+            "Response period could not be safely determined from the notice "
+            "text (including unsupported working-day periods); deadline not "
+            "calculated"
         )
     elif service_date is not None:
         response_deadline = service_date + timedelta(days=response_period_days)
