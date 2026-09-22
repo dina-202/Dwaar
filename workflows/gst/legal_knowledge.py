@@ -25,7 +25,7 @@ CGST_ACT_INDIA_CODE = LegalSourceRef(
     title="The Central Goods and Services Tax Act, 2017",
     issuer="Parliament of India",
     official_url=(
-        "https://www.indiacode.nic.in/handle/123456789/15689"
+        "https://www.indiacode.nic.in/indiacode/handle/123456789/15689"
     ),
     official_domain="www.indiacode.nic.in",
     version_label="India Code consolidated source accessed 2026-09-23",
