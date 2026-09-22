@@ -159,10 +159,14 @@ def load_evidence_review(
         ("source_text_sha256", review.source_text_sha256),
         ("candidate_fingerprint", review.candidate_fingerprint),
     )
+    hash_keys = {"source_text_sha256", "candidate_fingerprint"}
     for key, expected in expected_pairs:
         actual = binding[key]
-        if isinstance(expected, str):
-            if str(actual).lower() != expected.lower():
+        if key in hash_keys:
+            if (
+                not isinstance(actual, str)
+                or actual.lower() != expected.lower()
+            ):
                 raise EvidenceReviewIntegrityError(
                     f"review payload {key} is inconsistent"
                 )
