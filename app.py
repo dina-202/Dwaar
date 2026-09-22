@@ -1,6 +1,6 @@
 """Thin Streamlit shell for the structured Phase-2 notice analysis."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import streamlit as st
 
@@ -23,6 +23,10 @@ from modules.evidence_workspace import (
     notice_analysis_key,
 )
 from modules.pdf_reader import extract_document_pages
+from modules.runtime_persistence import (
+    RuntimePersistenceConfigurationError,
+    build_authorized_case_service,
+)
 from modules.runtime_access import (
     RuntimeAccessConfigurationError,
     RuntimeAccessConsistencyError,
@@ -284,6 +288,7 @@ _EVIDENCE_KEY = "_dwaar_evidence_workspace_key"
 _EVIDENCE_INTAKE = "_dwaar_evidence_intake_result"
 _EVIDENCE_REVIEWS = "_dwaar_evidence_reviews"
 _ACTIVE_FIRM_KEY = "_dwaar_active_firm_id"
+_SAVED_INTAKES = "_dwaar_saved_intake_cases"
 
 
 def _uploaded_bytes(uploaded_file):
@@ -304,6 +309,7 @@ def _reset_notice_workspace():
         _NOTICE_RESULT,
         _NOTICE_PAGES,
         _NOTICE_RAW_TEXT,
+        _SAVED_INTAKES,
     ):
         st.session_state.pop(key, None)
     _reset_evidence_workspace()
@@ -439,6 +445,107 @@ def _notice_analysis(pdf_bytes):
         st.session_state[_NOTICE_RESULT],
         st.session_state[_NOTICE_PAGES],
         st.session_state[_NOTICE_RAW_TEXT],
+    )
+
+
+def _render_save_intake_workspace(
+    principal,
+    active_firm,
+    uploaded_file,
+    notice_pdf_bytes,
+    result,
+):
+    st.header("Save as intake case")
+    st.caption(
+        "This saves the client, case metadata and encrypted notice. "
+        "The current analysis is not yet persisted and will be recomputed "
+        "when the case is reopened."
+    )
+
+    notice_key = notice_analysis_key(notice_pdf_bytes)
+    save_key = f"{active_firm.firm_id}:{notice_key}"
+    saved_intakes = st.session_state.setdefault(_SAVED_INTAKES, {})
+    existing_case_id = saved_intakes.get(save_key)
+    if existing_case_id:
+        st.write(
+            {
+                "saved_case_id": existing_case_id,
+                "status": "intake",
+            }
+        )
+        return
+
+    client_name = st.text_input(
+        "Client name",
+        key=f"intake_client_{save_key}",
+    )
+    gstin = st.text_input(
+        "GSTIN (optional)",
+        key=f"intake_gstin_{save_key}",
+    )
+    notice_form_label = (
+        result.classification.notice_form.value.upper().replace("_", "-")
+    )
+    default_title = (
+        f"{notice_form_label} — "
+        f"{result.classification.proceeding_type.value}"
+    )
+    case_title = st.text_input(
+        "Case title",
+        value=default_title,
+        key=f"intake_title_{save_key}",
+    )
+
+    if not st.button(
+        "Save as intake",
+        key=f"save_intake_{save_key}",
+    ):
+        return
+
+    try:
+        service = build_authorized_case_service()
+        saved_case = service.create_case_intake(
+            principal,
+            active_firm.firm_id,
+            client_name=client_name,
+            gstin=(gstin or None),
+            case_title=case_title,
+            proceeding_type=result.classification.proceeding_type,
+            notice_form=result.classification.notice_form,
+            response_deadline=result.deadline_result.response_deadline,
+            notice_filename=getattr(
+                uploaded_file,
+                "name",
+                "notice.pdf",
+            ),
+            notice_payload=notice_pdf_bytes,
+            opened_at=datetime.now(timezone.utc),
+        )
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Durable case storage is not fully configured on this "
+            "deployment."
+        )
+        return
+    except (ValueError, TypeError) as error:
+        st.error(str(error))
+        return
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to create cases in "
+            "this firm."
+        )
+        return
+    except Exception:
+        st.error("The intake case could not be saved.")
+        return
+
+    saved_intakes[save_key] = saved_case.case_id
+    st.write(
+        {
+            "saved_case_id": saved_case.case_id,
+            "status": saved_case.status.value,
+        }
     )
 
 
@@ -643,6 +750,13 @@ if uploaded:
                 "specialist drafting until reviewed."
             )
         _render_phase2_result(result)
+        _render_save_intake_workspace(
+            _principal,
+            _active_firm,
+            uploaded,
+            pdf_bytes,
+            result,
+        )
         _render_evidence_workspace(pdf_bytes, result)
         with st.expander("Extracted notice text"):
             st.text(raw_text)

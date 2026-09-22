@@ -66,10 +66,14 @@ from domain.models import (
 from modules import evidence_workspace as evidence_workspace_module
 from modules import pdf_reader
 from modules import runtime_access as runtime_access_module
+from modules import runtime_persistence as runtime_persistence_module
 from modules.runtime_access import (
     AvailableFirmAccess,
     RuntimeAccessConfigurationError,
     RuntimeAccessConsistencyError,
+)
+from modules.runtime_persistence import (
+    RuntimePersistenceConfigurationError,
 )
 
 
@@ -470,6 +474,8 @@ def run_app(
     access_error=None,
     database_path_error=None,
     selectbox_values=None,
+    persistence_service=None,
+    persistence_error=None,
 ):
     events = []
     uploaded = _UploadedFile(events) if upload else None
@@ -535,8 +541,18 @@ def run_app(
     firms_mock = Mock(return_value=available_firms)
     if access_error is not None:
         firms_mock.side_effect = access_error
+    persistence_service_mock = Mock(
+        return_value=(
+            persistence_service
+            if persistence_service is not None
+            else Mock()
+        )
+    )
+    if persistence_error is not None:
+        persistence_service_mock.side_effect = persistence_error
     fake.db_path_mock = db_path_mock
     fake.firms_mock = firms_mock
+    fake.persistence_service_mock = persistence_service_mock
 
     with (
         patch.dict(sys.modules, {"streamlit": fake}),
@@ -550,6 +566,11 @@ def run_app(
             runtime_access_module,
             "load_available_firms",
             firms_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_case_service",
+            persistence_service_mock,
         ),
         patch.object(pdf_reader, "extract_document_pages", extract_mock),
         patch.object(
@@ -706,6 +727,7 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             "_dwaar_evidence_workspace_key": "evidence-key",
             "_dwaar_evidence_intake_result": object(),
             "_dwaar_evidence_reviews": [object()],
+            "_dwaar_saved_intake_cases": {"old": "CASE-OLD"},
         }
         firms = [
             AvailableFirmAccess("F-1", "Alpha"),
@@ -728,6 +750,7 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             "_dwaar_evidence_workspace_key",
             "_dwaar_evidence_intake_result",
             "_dwaar_evidence_reviews",
+            "_dwaar_saved_intake_cases",
         ):
             self.assertNotIn(key, shared_state, key)
         self.assertNotIn("Firm A secret raw text", log_text(fake))
@@ -738,6 +761,7 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             "_dwaar_notice_analysis_key": "notice-key",
             "_dwaar_notice_raw_text": "secret",
             "_dwaar_evidence_reviews": [object()],
+            "_dwaar_saved_intake_cases": {"old": "CASE-OLD"},
         }
         fake, extractor, runner, _, _, _ = run_app(
             session_state=shared_state,
@@ -751,6 +775,7 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
         self.assertNotIn("_dwaar_notice_analysis_key", shared_state)
         self.assertNotIn("_dwaar_notice_raw_text", shared_state)
         self.assertNotIn("_dwaar_evidence_reviews", shared_state)
+        self.assertNotIn("_dwaar_saved_intake_cases", shared_state)
 
 
 class SourceBoundaryTests(unittest.TestCase):
@@ -775,6 +800,7 @@ class SourceBoundaryTests(unittest.TestCase):
                 "modules.evidence_workspace",
                 "modules.pdf_reader",
                 "modules.runtime_access",
+                "modules.runtime_persistence",
                 "modules.runtime_security",
             },
         )
@@ -1199,6 +1225,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
                 "Review requirements",
                 "Triage summary",
                 "Specialist draft",
+                "Save as intake case",
                 "Supporting evidence workspace",
             ],
         )
@@ -1223,6 +1250,168 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         self.assertLess(
             rendered_headers.index("Review requirements"),
             rendered_headers.index("Specialist draft"),
+        )
+
+
+class DurableIntakeUiTests(unittest.TestCase):
+    def _save_keys(self):
+        notice_key = evidence_workspace_module.notice_analysis_key(
+            PDF_BYTES
+        )
+        save_key = f"F-TEST:{notice_key}"
+        return {
+            "save_key": save_key,
+            "button": f"save_intake_{save_key}",
+            "client": f"intake_client_{save_key}",
+            "gstin": f"intake_gstin_{save_key}",
+            "title": f"intake_title_{save_key}",
+        }
+
+    def test_analysis_renders_save_panel_without_persisting(self):
+        fake, *_ = run_app()
+        self.assertIn("Save as intake case", headers(fake))
+        fake.persistence_service_mock.assert_not_called()
+        self.assertIn(
+            "current analysis is not yet persisted",
+            log_text(fake),
+        )
+
+    def test_save_uses_structured_classification_and_authenticated_firm(self):
+        keys = self._save_keys()
+        service = Mock()
+        saved_case = Mock()
+        saved_case.case_id = "CASE-SAVED-1"
+        saved_case.status.value = "intake"
+        service.create_case_intake.return_value = saved_case
+
+        fake, _, runner, _, _, _ = run_app(
+            persistence_service=service,
+            button_values={keys["button"]: True},
+            text_values={
+                keys["client"]: "Example Private Limited",
+                keys["gstin"]: "06ABCDE1234F1Z5",
+                keys["title"]: "ITC mismatch August",
+            },
+        )
+
+        self.assertEqual(runner.call_count, 1)
+        fake.persistence_service_mock.assert_called_once_with()
+        service.create_case_intake.assert_called_once()
+        args = service.create_case_intake.call_args
+        self.assertIsInstance(args.args[0], AuthenticatedPrincipal)
+        self.assertEqual(args.args[1], "F-TEST")
+        self.assertEqual(
+            args.kwargs["client_name"],
+            "Example Private Limited",
+        )
+        self.assertEqual(
+            args.kwargs["gstin"],
+            "06ABCDE1234F1Z5",
+        )
+        self.assertEqual(
+            args.kwargs["case_title"],
+            "ITC mismatch August",
+        )
+        self.assertIs(
+            args.kwargs["proceeding_type"],
+            ProceedingType.GST_SEC73_ITC,
+        )
+        self.assertIs(args.kwargs["notice_form"], NoticeForm.DRC_01)
+        self.assertIsNone(args.kwargs["response_deadline"])
+        self.assertEqual(args.kwargs["notice_filename"], "notice.pdf")
+        self.assertEqual(args.kwargs["notice_payload"], PDF_BYTES)
+        self.assertIsNotNone(args.kwargs["opened_at"].tzinfo)
+        self.assertEqual(
+            fake.session_state["_dwaar_saved_intake_cases"][
+                keys["save_key"]
+            ],
+            "CASE-SAVED-1",
+        )
+        self.assertIn("CASE-SAVED-1", log_text(fake))
+
+    def test_saved_notice_does_not_create_duplicate_on_rerun(self):
+        keys = self._save_keys()
+        shared_state = {}
+        first_service = Mock()
+        saved_case = Mock()
+        saved_case.case_id = "CASE-SAVED-1"
+        saved_case.status.value = "intake"
+        first_service.create_case_intake.return_value = saved_case
+
+        run_app(
+            session_state=shared_state,
+            persistence_service=first_service,
+            button_values={keys["button"]: True},
+            text_values={
+                keys["client"]: "Client",
+                keys["title"]: "Matter",
+            },
+        )
+        first_service.create_case_intake.assert_called_once()
+
+        second_service = Mock()
+        fake, _, runner, _, _, _ = run_app(
+            session_state=shared_state,
+            persistence_service=second_service,
+        )
+        self.assertEqual(runner.call_count, 0)
+        fake.persistence_service_mock.assert_not_called()
+        second_service.create_case_intake.assert_not_called()
+        self.assertIn("CASE-SAVED-1", log_text(fake))
+
+    def test_persistence_configuration_error_does_not_leak_detail(self):
+        keys = self._save_keys()
+        fake, *_ = run_app(
+            button_values={keys["button"]: True},
+            text_values={
+                keys["client"]: "Client",
+                keys["title"]: "Matter",
+            },
+            persistence_error=RuntimePersistenceConfigurationError(
+                "private key/path detail"
+            ),
+        )
+        text = log_text(fake)
+        self.assertIn(
+            "Durable case storage is not fully configured",
+            text,
+        )
+        self.assertNotIn("private key/path detail", text)
+
+    def test_validation_error_is_shown_without_saving_marker(self):
+        keys = self._save_keys()
+        service = Mock()
+        service.create_case_intake.side_effect = ValueError(
+            "gstin must match the standard 15-character GSTIN structure"
+        )
+        shared_state = {}
+        fake, *_ = run_app(
+            session_state=shared_state,
+            persistence_service=service,
+            button_values={keys["button"]: True},
+            text_values={
+                keys["client"]: "Client",
+                keys["gstin"]: "INVALID",
+                keys["title"]: "Matter",
+            },
+        )
+        self.assertIn("gstin must match", log_text(fake))
+        self.assertEqual(
+            shared_state.get("_dwaar_saved_intake_cases", {}),
+            {},
+        )
+
+    def test_default_case_title_is_derived_from_structured_classification(self):
+        fake, *_ = run_app()
+        title_calls = [
+            call
+            for call in calls_named(fake, "text_input")
+            if call[2].get("key", "").startswith("intake_title_")
+        ]
+        self.assertEqual(len(title_calls), 1)
+        self.assertEqual(
+            title_calls[0][2]["value"],
+            "DRC-01 — gst_sec73_itc",
         )
 
 
