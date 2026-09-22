@@ -1079,6 +1079,7 @@ class SourceBoundaryTests(unittest.TestCase):
                 "modules.runtime_access",
                 "modules.runtime_persistence",
                 "modules.runtime_security",
+                "workflows.gst.legal_research",
             },
         )
         self.assertIn("run_phase2_analysis_from_document_pages", SOURCE)
@@ -1502,6 +1503,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
                 "Classification and support",
                 "Fact extraction",
                 "Preflight and deadline",
+                "Verified legal sources",
                 "Arithmetic results",
                 "Validation status",
                 "Unresolved requirements",
