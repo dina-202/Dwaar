@@ -10,6 +10,9 @@ from modules.authorized_analysis_snapshot_service import (
     AuthorizedAnalysisSnapshotService,
 )
 from modules.authorized_case_service import AuthorizedCaseService
+from modules.authorized_evidence_workspace_service import (
+    AuthorizedEvidenceWorkspaceService,
+)
 from modules.encrypted_document_store import EncryptedLocalDocumentStore
 from modules.runtime_access import (
     RuntimeAccessConfigurationError,
@@ -102,6 +105,27 @@ def build_authorized_case_service(
         case_repository,
         access_repository,
         document_store,
+    )
+
+
+def build_authorized_evidence_workspace_service(
+    environment: Optional[Mapping[str, str]] = None,
+) -> AuthorizedEvidenceWorkspaceService:
+    """Build authorized analysis over persisted supporting evidence."""
+    (
+        _,
+        case_repository,
+        access_repository,
+        document_store,
+    ) = _build_runtime_components(environment)
+    case_service = AuthorizedCaseService(
+        case_repository,
+        access_repository,
+        document_store,
+    )
+    return AuthorizedEvidenceWorkspaceService(
+        case_service,
+        access_repository,
     )
 
 
