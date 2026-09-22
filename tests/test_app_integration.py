@@ -1534,6 +1534,45 @@ class SavedCaseWorkspaceUiTests(unittest.TestCase):
         second[0].reopen_mock.assert_not_called()
         self.assertIn("Opened case", log_text(second[0]))
 
+    def test_explicit_rerun_with_current_engine_replaces_cached_analysis(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        shared_state = {}
+        first_reopened = self._reopened()
+        second_reopened = ReopenedCaseAnalysis(
+            case=first_reopened.case,
+            notice_document=first_reopened.notice_document,
+            notice_pdf_bytes=first_reopened.notice_pdf_bytes,
+            document_pages=first_reopened.document_pages,
+            raw_text="UPDATED RAW TEXT",
+            analysis=make_result(),
+        )
+
+        first = run_app(
+            upload=False,
+            session_state=shared_state,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_result=first_reopened,
+            button_values={"open_saved_case_CASE-1": True},
+        )
+        first[0].reopen_mock.assert_called_once()
+
+        second = run_app(
+            upload=False,
+            session_state=shared_state,
+            available_firms=[self._read_only_firm()],
+            persistence_service=service,
+            reopen_result=second_reopened,
+            button_values={"rerun_saved_case_CASE-1": True},
+        )
+        second[0].reopen_mock.assert_called_once()
+        self.assertIs(
+            shared_state["_dwaar_opened_case_analysis"],
+            second_reopened,
+        )
+        self.assertIn("UPDATED RAW TEXT", log_text(second[0]))
+
     def test_reopen_failure_does_not_leak_internal_detail(self):
         service = Mock()
         service.list_cases.return_value = [self._case()]
@@ -1785,6 +1824,33 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
             text.lower(),
         )
         self.assertNotIn("private ciphertext", text)
+
+    def test_snapshot_save_success_with_refresh_failure_is_controlled(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        saved = self._snapshot_ref()
+        snapshot_service.save_current_analysis.return_value = saved
+        snapshot_service.list_snapshot_history.side_effect = [
+            [],
+            RuntimeError("private refresh detail"),
+        ]
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(case_update=True)],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(
+                {"save_snapshot_CASE-1": True}
+            ),
+        )
+
+        text = log_text(fake)
+        self.assertIn("snapshot was saved", text.lower())
+        self.assertIn("could not be refreshed", text.lower())
+        self.assertNotIn("private refresh detail", text)
 
     def test_snapshot_factory_failure_does_not_leak_config_detail(self):
         case_service = Mock()
