@@ -57,6 +57,13 @@ class CaseRepository(Protocol):
     def list_document_refs(self, case_id: str) -> List[StoredDocumentRef]:
         ...
 
+    def add_document_with_event(
+        self,
+        document: StoredDocumentRef,
+        event: CaseEvent,
+    ) -> None:
+        ...
+
     def append_event(self, event: CaseEvent) -> None:
         ...
 
