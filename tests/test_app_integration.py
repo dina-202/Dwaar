@@ -12,6 +12,12 @@ from unittest.mock import Mock, patch
 from domain import evidence_engine as evidence_engine_module
 from domain import evidence_review as evidence_review_module
 from domain import phase2_orchestrator as orchestrator_module
+from domain.analysis_snapshot_models import (
+    ANALYSIS_ENGINE_VERSION,
+    SNAPSHOT_SCHEMA_VERSION,
+    AnalysisSnapshotRef,
+    LoadedAnalysisSnapshot,
+)
 from domain.auth_models import AccessPermission, AuthenticatedPrincipal
 from domain.case_models import (
     CaseDocumentKind,
@@ -487,6 +493,8 @@ def run_app(
     selectbox_values=None,
     persistence_service=None,
     persistence_error=None,
+    snapshot_service=None,
+    snapshot_error=None,
     reopen_result=None,
     reopen_error=None,
 ):
@@ -569,6 +577,18 @@ def run_app(
     persistence_service_mock = Mock(
         return_value=persistence_service
     )
+
+    if snapshot_service is None:
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = []
+    elif isinstance(
+        snapshot_service.list_snapshot_history.return_value,
+        Mock,
+    ):
+        snapshot_service.list_snapshot_history.return_value = []
+    snapshot_service_mock = Mock(return_value=snapshot_service)
+    if snapshot_error is not None:
+        snapshot_service_mock.side_effect = snapshot_error
     if persistence_error is not None:
         persistence_service_mock.side_effect = persistence_error
 
@@ -579,6 +599,7 @@ def run_app(
     fake.db_path_mock = db_path_mock
     fake.firms_mock = firms_mock
     fake.persistence_service_mock = persistence_service_mock
+    fake.snapshot_service_mock = snapshot_service_mock
     fake.reopen_mock = reopen_mock
 
     with (
@@ -598,6 +619,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_case_service",
             persistence_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_analysis_snapshot_service",
+            snapshot_service_mock,
         ),
         patch.object(
             case_reopen_service_module,
