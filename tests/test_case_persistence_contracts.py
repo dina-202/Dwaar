@@ -22,6 +22,7 @@ from domain.case_models import (
 from domain.models import NoticeForm, ProceedingType
 from domain.persistence_ports import (
     AccessGrantRepository,
+    AnalysisSnapshotRepository,
     CaseRepository,
     DocumentStore,
 )
@@ -173,6 +174,29 @@ class TimeContractTests(unittest.TestCase):
 class PersistencePortTests(unittest.TestCase):
     def test_case_repository_is_protocol(self):
         self.assertTrue(issubclass(CaseRepository, Protocol))
+
+    def test_analysis_snapshot_repository_is_protocol(self):
+        self.assertTrue(
+            issubclass(AnalysisSnapshotRepository, Protocol)
+        )
+
+    def test_analysis_snapshot_repository_methods_exact(self):
+        methods = [
+            name
+            for name, member in inspect.getmembers(
+                AnalysisSnapshotRepository,
+                predicate=inspect.isfunction,
+            )
+            if not name.startswith("_")
+        ]
+        self.assertEqual(
+            methods,
+            [
+                "get_snapshot_ref",
+                "list_snapshot_refs",
+                "save_snapshot",
+            ],
+        )
 
     def test_access_grant_repository_is_protocol(self):
         self.assertTrue(issubclass(AccessGrantRepository, Protocol))
