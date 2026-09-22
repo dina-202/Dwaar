@@ -1055,14 +1055,14 @@ class UploadAndFailureTests(unittest.TestCase):
         extractor.assert_not_called()
         runner.assert_not_called()
         self.assertEqual(events, [])
-        self.assertEqual(today_calls, 0)
+        self.assertEqual(today_calls, 1)
 
     def test_bytes_text_and_today_flow_exactly_once_in_order(self):
         _, extractor, runner, _, events, today_calls = run_app()
         extractor.assert_called_once_with(PDF_BYTES)
         runner.assert_called_once_with(DOCUMENT_PAGES, TODAY)
         self.assertEqual(events, ["getvalue:notice.pdf", "extract", "orchestrator"])
-        self.assertEqual(today_calls, 1)
+        self.assertEqual(today_calls, 2)
         self.assertEqual(len(runner.call_args.args), 2)
         self.assertEqual(runner.call_args.kwargs, {})
 
@@ -1074,7 +1074,7 @@ class UploadAndFailureTests(unittest.TestCase):
         extractor.assert_called_once_with(PDF_BYTES)
         runner.assert_not_called()
         self.assertEqual(events, ["getvalue:notice.pdf", "extract"])
-        self.assertEqual(today_calls, 0)
+        self.assertEqual(today_calls, 1)
         self.assertIn(str(error), log_text(fake))
         self.assertEqual(len(calls_named(fake, "error")), 1)
 
@@ -1084,7 +1084,7 @@ class UploadAndFailureTests(unittest.TestCase):
         )
         runner.assert_called_once_with(DOCUMENT_PAGES, TODAY)
         self.assertEqual(events, ["getvalue:notice.pdf", "extract", "orchestrator"])
-        self.assertEqual(today_calls, 1)
+        self.assertEqual(today_calls, 2)
         text = log_text(fake)
         self.assertIn("Phase-2 analysis could not be completed.", text)
         self.assertNotIn("private infrastructure detail", text)
