@@ -63,6 +63,13 @@ For every input:
 
 Ambiguity results in `None`.
 
+## Deadline-engine safety corrections
+
+This unit also closes two pre-existing unsafe fallbacks:
+
+- "working days" / "business days" are not converted to calendar days. They remain UNKNOWN until a verified working-day and holiday-calendar subsystem exists.
+- response periods anchored to "receipt" / "received" are treated as service-based. When the service/receipt date is unavailable, Dwaar stays UNKNOWN instead of substituting the notice issue date.
+
 ## No statutory fallback in this unit
 
 This patch does not encode:
