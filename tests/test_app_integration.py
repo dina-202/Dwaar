@@ -1225,6 +1225,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
                 "Review requirements",
                 "Triage summary",
                 "Specialist draft",
+                "Save as intake case",
                 "Supporting evidence workspace",
             ],
         )
