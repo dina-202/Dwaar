@@ -1034,6 +1034,7 @@ class SourceBoundaryTests(unittest.TestCase):
                 "streamlit",
                 "domain.auth_models",
                 "domain.case_models",
+                "domain.draft_work_product_models",
                 "domain.evidence_engine",
                 "domain.evidence_review",
                 "domain.models",
@@ -1074,9 +1075,12 @@ class SourceBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(prohibited, lowered, prohibited)
 
-    def test_no_export_or_unsafe_draft_surface(self):
+    def test_only_reviewed_draft_export_surface_exists(self):
         lowered = SOURCE.lower()
-        self.assertNotIn("download_button", lowered)
+        self.assertEqual(lowered.count("download_button"), 1)
+        self.assertIn("download reviewed draft docx", lowered)
+        self.assertIn("draftreviewstatus.reviewed", lowered)
+        self.assertIn("draftreviewstatus.approved", lowered)
         self.assertNotIn("template_text", lowered)
         self.assertIn("session_state", lowered)
 
@@ -2186,6 +2190,9 @@ class DraftWorkProductUiTests(unittest.TestCase):
             [self._version()],
         ]
         draft_service.create_generated_baseline.return_value = (
+            self._version()
+        )
+        draft_service.load_version.return_value = self._loaded(
             self._version()
         )
 
