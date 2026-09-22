@@ -267,6 +267,22 @@ class FactRole(Enum):
 
 # --- Phase 2 Step 6.3 enum (ARCHITECTURE_SPEC_v1_1 §18.1) -------------------
 
+class SourceTextOrigin(Enum):
+    """How source text entered Dwaar; independent from legal/fact status."""
+
+    EMBEDDED = "embedded"
+    OCR = "ocr"
+    MIXED = "mixed"
+    UNKNOWN = "unknown"
+
+
+class SourceVerificationStatus(Enum):
+    """Whether the extraction channel is filing-grade verified."""
+
+    VERIFIED = "verified"
+    REQUIRES_VERIFICATION = "requires_verification"
+
+
 class FactExtractionStatus(Enum):
     """Additive fact-extraction outcome channel (ARCHITECTURE_SPEC_v1_1 §18.1).
 
@@ -299,6 +315,23 @@ class ExtractedFact:
     # §19.3: additive Step 6.4 field, placed last with a default so all
     # prior construction forms remain backward compatible.
     fact_role: FactRole = FactRole.NONE
+    # Phase 3A.2: extraction-channel trust is independent from FactStatus.
+    source_origin: SourceTextOrigin = SourceTextOrigin.EMBEDDED
+    source_verification: SourceVerificationStatus = (
+        SourceVerificationStatus.VERIFIED
+    )
+
+
+@dataclass
+class DocumentPageText:
+    """One physical PDF page after embedded-text/OCR ingestion."""
+
+    page_number: int
+    text: str
+    origin: SourceTextOrigin
+    verification: SourceVerificationStatus
+    ocr_language: Optional[str] = None
+    ocr_dpi: Optional[int] = None
 
 
 @dataclass
