@@ -212,6 +212,7 @@ class PersistencePortTests(unittest.TestCase):
                 "add_document_with_event",
                 "append_event",
                 "create_case",
+                "create_case_intake",
                 "create_client",
                 "create_firm",
                 "create_registration",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional, Tuple
 
 from domain.auth_models import (
@@ -19,12 +19,14 @@ from domain.case_models import (
     CaseRecord,
     StoredDocumentRef,
 )
+from domain.models import NoticeForm, ProceedingType
 from domain.persistence_ports import (
     AccessGrantRepository,
     CaseRepository,
     DocumentStore,
 )
 from modules.case_document_service import persist_pdf_document
+from modules.case_intake_service import persist_new_case_intake
 
 
 class StoredDocumentConsistencyError(RuntimeError):
@@ -102,6 +104,39 @@ class AuthorizedCaseService:
         if case.firm_id != firm_id:
             raise AuthorizationError("access denied")
         self._cases.create_case(case)
+
+    def create_case_intake(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        client_name: str,
+        gstin: Optional[str],
+        case_title: str,
+        proceeding_type: ProceedingType,
+        notice_form: NoticeForm,
+        response_deadline: Optional[date],
+        notice_filename: str,
+        notice_payload: bytes,
+        opened_at: datetime,
+    ) -> CaseRecord:
+        """Create a new durable intake case under one authorized firm."""
+        self._grant(principal, firm_id, AccessPermission.CASE_CREATE)
+        return persist_new_case_intake(
+            self._cases,
+            self._documents,
+            firm_id=firm_id,
+            client_name=client_name,
+            gstin=gstin,
+            case_title=case_title,
+            proceeding_type=proceeding_type,
+            notice_form=notice_form,
+            response_deadline=response_deadline,
+            notice_filename=notice_filename,
+            notice_payload=notice_payload,
+            actor_id=principal.user_id,
+            opened_at=opened_at,
+        )
 
     def update_case(
         self,

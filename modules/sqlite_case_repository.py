@@ -393,6 +393,159 @@ class LocalSQLiteCaseRepository:
                 "Case",
             )
 
+    def create_case_intake(
+        self,
+        client: Client,
+        registration: Optional[TaxRegistration],
+        case: CaseRecord,
+        document: StoredDocumentRef,
+        events: List[CaseEvent],
+    ) -> None:
+        """Atomically create client/registration/case/notice metadata/events."""
+        if not isinstance(client, Client):
+            raise TypeError("client must be a Client")
+        if registration is not None and not isinstance(
+            registration, TaxRegistration
+        ):
+            raise TypeError(
+                "registration must be a TaxRegistration or None"
+            )
+        if not isinstance(case, CaseRecord):
+            raise TypeError("case must be a CaseRecord")
+        if not isinstance(document, StoredDocumentRef):
+            raise TypeError("document must be a StoredDocumentRef")
+        if (
+            not isinstance(events, list)
+            or not events
+            or any(not isinstance(event, CaseEvent) for event in events)
+        ):
+            raise TypeError("events must be a non-empty list of CaseEvent")
+
+        if client.firm_id != case.firm_id:
+            raise RepositoryConflictError(
+                "Intake client and case must belong to the same firm."
+            )
+        if case.client_id != client.client_id:
+            raise RepositoryConflictError(
+                "Intake case must reference the supplied client."
+            )
+        if registration is None:
+            if case.registration_id is not None:
+                raise RepositoryConflictError(
+                    "Case registration_id requires a supplied registration."
+                )
+        else:
+            if registration.client_id != client.client_id:
+                raise RepositoryConflictError(
+                    "Registration must belong to the supplied client."
+                )
+            if case.registration_id != registration.registration_id:
+                raise RepositoryConflictError(
+                    "Case must reference the supplied registration."
+                )
+        if document.case_id != case.case_id:
+            raise RepositoryConflictError(
+                "Notice document must belong to the intake case."
+            )
+        if any(event.case_id != case.case_id for event in events):
+            raise RepositoryConflictError(
+                "All intake events must belong to the intake case."
+            )
+
+        self._validate_document_ref(document)
+        for event in events:
+            self._validate_event_payload(event.payload)
+            self._dt(event.occurred_at)
+        self._dt(client.created_at)
+        self._dt(case.opened_at)
+        self._dt(document.created_at)
+        if registration is not None:
+            self._dt(registration.created_at)
+
+        with self._connect() as connection:
+            firm = connection.execute(
+                "SELECT firm_id FROM firms WHERE firm_id = ?",
+                (case.firm_id,),
+            ).fetchone()
+            if firm is None:
+                raise RepositoryNotFoundError(
+                    "Intake firm does not exist."
+                )
+
+            self._execute_insert(
+                connection,
+                """
+                INSERT INTO clients(
+                    client_id, firm_id, display_name, created_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    client.client_id,
+                    client.firm_id,
+                    client.display_name,
+                    self._dt(client.created_at),
+                ),
+                "Client",
+            )
+
+            if registration is not None:
+                self._execute_insert(
+                    connection,
+                    """
+                    INSERT INTO tax_registrations(
+                        registration_id, client_id, jurisdiction,
+                        identifier_type, identifier_value, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        registration.registration_id,
+                        registration.client_id,
+                        registration.jurisdiction,
+                        registration.identifier_type,
+                        registration.identifier_value,
+                        self._dt(registration.created_at),
+                    ),
+                    "Tax registration",
+                )
+
+            self._execute_insert(
+                connection,
+                """
+                INSERT INTO cases(
+                    case_id, firm_id, client_id, registration_id, title,
+                    status, proceeding_type, notice_form, opened_at,
+                    response_deadline, assigned_to, reviewer_id, closed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    case.case_id,
+                    case.firm_id,
+                    case.client_id,
+                    case.registration_id,
+                    case.title,
+                    case.status.value,
+                    case.proceeding_type.value,
+                    case.notice_form.value,
+                    self._dt(case.opened_at),
+                    self._date(case.response_deadline),
+                    case.assigned_to,
+                    case.reviewer_id,
+                    (
+                        None
+                        if case.closed_at is None
+                        else self._dt(case.closed_at)
+                    ),
+                ),
+                "Case",
+            )
+            self._insert_document_ref(connection, document)
+            for event in events:
+                self._insert_event(connection, event)
+
+
     @staticmethod
     def _case_from_row(row: sqlite3.Row) -> CaseRecord:
         return CaseRecord(
