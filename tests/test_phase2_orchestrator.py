@@ -256,7 +256,7 @@ class ModelContractTests(unittest.TestCase):
     def test_existing_model_enum_counts_unchanged(self):
         self.assertEqual(len(DraftGenerationStatus), 3)
         self.assertEqual(len(DraftFailureCode), 6)
-        self.assertEqual(len(FactRole), 22)
+        self.assertEqual(len(FactRole), 24)
 
 
 class PublicApiAndPurityTests(unittest.TestCase):
@@ -442,13 +442,15 @@ class PipelineTests(unittest.TestCase):
     def test_deadline_exact_keywords_and_today_identity(self):
         extraction = make_extraction([
             make_fact("F-D", FactType.NOTICE_DATE, "Issued 17/08/2026"),
+            make_fact("F-S", FactType.DOCUMENT_DETAIL, "Notice served on 18/08/2026", role=FactRole.NOTICE_SERVICE_DATE),
+            make_fact("F-P", FactType.DOCUMENT_DETAIL, "Reply within 15 days of service", role=FactRole.RESPONSE_PERIOD),
             make_fact("F-H", FactType.HEARING_DETAILS, "Hearing 02-09-2026"),
         ])
         _, mocks, objects, _ = self._run_pipeline(extraction=extraction)
         mocks["deadline"].assert_called_once_with(
             notice_date=date(2026, 8, 17),
-            service_date=None,
-            response_period_text=None,
+            service_date=date(2026, 8, 18),
+            response_period_text="Reply within 15 days of service",
             hearing_date_text="Hearing 02-09-2026",
             today=objects["today"],
         )
