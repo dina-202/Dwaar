@@ -14,6 +14,7 @@ from modules.authorized_draft_work_product_service import (
     AuthorizedDraftWorkProductService,
 )
 from modules.authorized_filing_service import AuthorizedFilingService
+from modules.authorized_legal_brief_service import AuthorizedLegalBriefService
 from modules.authorized_evidence_review_service import (
     AuthorizedEvidenceReviewService,
 )
@@ -43,6 +44,9 @@ from modules.sqlite_evidence_review_repository import (
     LocalSQLiteEvidenceReviewRepository,
 )
 from modules.sqlite_filing_repository import LocalSQLiteFilingRepository
+from modules.sqlite_legal_brief_repository import (
+    LocalSQLiteLegalBriefRepository,
+)
 
 
 class RuntimePersistenceConfigurationError(RuntimeError):
@@ -255,5 +259,37 @@ def build_authorized_analysis_snapshot_service(
         case_service,
         access_repository,
         snapshot_repository,
+        document_store,
+    )
+
+
+def build_authorized_legal_brief_service(
+    environment: Optional[Mapping[str, str]] = None,
+) -> AuthorizedLegalBriefService:
+    """Build authorized snapshot-bound legal research history."""
+    (
+        db_path,
+        case_repository,
+        access_repository,
+        document_store,
+    ) = _build_runtime_components(environment)
+    case_service = AuthorizedCaseService(
+        case_repository,
+        access_repository,
+        document_store,
+    )
+    snapshot_repository = LocalSQLiteAnalysisSnapshotRepository(db_path)
+    snapshot_service = AuthorizedAnalysisSnapshotService(
+        case_service,
+        access_repository,
+        snapshot_repository,
+        document_store,
+    )
+    brief_repository = LocalSQLiteLegalBriefRepository(db_path)
+    return AuthorizedLegalBriefService(
+        case_service,
+        snapshot_service,
+        access_repository,
+        brief_repository,
         document_store,
     )
