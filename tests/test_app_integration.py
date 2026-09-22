@@ -497,6 +497,13 @@ def run_app(
             AvailableFirmAccess(
                 firm_id="F-TEST",
                 display_name="Test Firm",
+                permissions=frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
             )
         ]
 
@@ -564,7 +571,7 @@ def run_app(
         ),
         patch.object(
             runtime_access_module,
-            "load_available_firms",
+            "load_available_firms_for_permissions",
             firms_mock,
         ),
         patch.object(
@@ -637,14 +644,20 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
         extractor.assert_not_called()
         runner.assert_not_called()
         self.assertEqual(calls_named(fake, "file_uploader"), [])
-        self.assertIn("not provisioned to create cases", log_text(fake))
+        self.assertIn("not provisioned to access cases", log_text(fake))
         self.assertIn("OIDC-", log_text(fake))
         fake.db_path_mock.assert_called_once_with()
         fake.firms_mock.assert_called_once()
         _, args, _ = fake.firms_mock.mock_calls[0]
         self.assertIsInstance(args[0], AuthenticatedPrincipal)
         self.assertEqual(args[1], "test-dwaar.db")
-        self.assertIs(args[2], AccessPermission.CASE_CREATE)
+        self.assertEqual(
+            args[2],
+            {
+                AccessPermission.CASE_CREATE,
+                AccessPermission.CASE_READ,
+            },
+        )
 
     def test_expired_oidc_identity_stops_before_firm_lookup(self):
         fake, extractor, runner, _, _, _ = run_app(
@@ -695,13 +708,39 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
         args = fake.firms_mock.call_args.args
         self.assertIsInstance(args[0], AuthenticatedPrincipal)
         self.assertEqual(args[1], "test-dwaar.db")
-        self.assertIs(args[2], AccessPermission.CASE_CREATE)
+        self.assertEqual(
+            args[2],
+            {
+                AccessPermission.CASE_CREATE,
+                AccessPermission.CASE_READ,
+            },
+        )
         self.assertIn("Active firm: Test Firm (F-TEST)", log_text(fake))
 
     def test_multi_firm_selection_uses_selected_firm(self):
         firms = [
-            AvailableFirmAccess("F-1", "Alpha"),
-            AvailableFirmAccess("F-2", "Beta"),
+            AvailableFirmAccess(
+                "F-1",
+                "Alpha",
+                frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
+            ),
+            AvailableFirmAccess(
+                "F-2",
+                "Beta",
+                frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
+            ),
         ]
         fake, *_ = run_app(
             upload=False,
@@ -730,8 +769,28 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             "_dwaar_saved_intake_cases": {"old": "CASE-OLD"},
         }
         firms = [
-            AvailableFirmAccess("F-1", "Alpha"),
-            AvailableFirmAccess("F-2", "Beta"),
+            AvailableFirmAccess(
+                "F-1",
+                "Alpha",
+                frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
+            ),
+            AvailableFirmAccess(
+                "F-2",
+                "Beta",
+                frozenset(
+                    {
+                        AccessPermission.CASE_CREATE,
+                        AccessPermission.CASE_READ,
+                        AccessPermission.DOCUMENT_READ,
+                    }
+                ),
+            ),
         ]
         fake, *_ = run_app(
             upload=False,
