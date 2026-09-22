@@ -154,6 +154,20 @@ class AuthorizedCaseService:
             raise AuthorizationError("access denied")
         self._cases.update_case(case)
 
+    def list_documents(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+    ) -> List[StoredDocumentRef]:
+        """List document metadata for one authorized case."""
+        self._grant(principal, firm_id, AccessPermission.DOCUMENT_READ)
+        case = self._case_in_firm(firm_id, case_id)
+        if case is None:
+            raise LookupError("case does not exist")
+        return self._cases.list_document_refs(case.case_id)
+
     def add_pdf_document(
         self,
         principal: AuthenticatedPrincipal,
