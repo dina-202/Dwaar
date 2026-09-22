@@ -39,6 +39,7 @@ from enum import Enum
 from typing import List, Optional
 
 from domain.models import (
+    DocumentPageText,
     DraftPermission,
     ExtractedFact,
     FactExtractionResult,
@@ -46,6 +47,8 @@ from domain.models import (
     FactRole,
     FactStatus,
     FactType,
+    SourceTextOrigin,
+    SourceVerificationStatus,
 )
 
 # Exact members, in §17.1 spec order (plus the §19.1 DOCUMENT_DETAIL in
@@ -211,6 +214,8 @@ class ExtractedFactContractTests(unittest.TestCase):
                 "allowed_in_draft",
                 "fact_type",
                 "fact_role",
+                "source_origin",
+                "source_verification",
             ],
         )
 
@@ -224,10 +229,20 @@ class ExtractedFactContractTests(unittest.TestCase):
         self.assertIs(by_name["allowed_in_draft"].type, DraftPermission)
         self.assertIs(by_name["fact_type"].type, FactType)
         self.assertIs(by_name["fact_role"].type, FactRole)
+        self.assertIs(by_name["source_origin"].type, SourceTextOrigin)
+        self.assertIs(
+            by_name["source_verification"].type,
+            SourceVerificationStatus,
+        )
 
     def test_fact_role_defaults_to_none(self):
         fact = ExtractedFact("F-010", "claim", FactStatus.CONFIRMED)
         self.assertIs(fact.fact_role, FactRole.NONE)
+        self.assertIs(fact.source_origin, SourceTextOrigin.EMBEDDED)
+        self.assertIs(
+            fact.source_verification,
+            SourceVerificationStatus.VERIFIED,
+        )
 
     def test_legacy_seven_field_construction_still_works(self):
         # The Step 6.1 seven-positional form must still work and default
@@ -462,3 +477,58 @@ class StdlibPurityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class Phase3SourceTrustModelTests(unittest.TestCase):
+    def test_source_origin_members_exact(self):
+        self.assertEqual(
+            [(member.name, member.value) for member in SourceTextOrigin],
+            [
+                ("EMBEDDED", "embedded"),
+                ("OCR", "ocr"),
+                ("MIXED", "mixed"),
+                ("UNKNOWN", "unknown"),
+            ],
+        )
+
+    def test_source_verification_members_exact(self):
+        self.assertEqual(
+            [
+                (member.name, member.value)
+                for member in SourceVerificationStatus
+            ],
+            [
+                ("VERIFIED", "verified"),
+                ("REQUIRES_VERIFICATION", "requires_verification"),
+            ],
+        )
+
+    def test_document_page_text_contract(self):
+        self.assertTrue(is_dataclass(DocumentPageText))
+        self.assertEqual(
+            [f.name for f in fields(DocumentPageText)],
+            [
+                "page_number",
+                "text",
+                "origin",
+                "verification",
+                "ocr_language",
+                "ocr_dpi",
+            ],
+        )
+
+    def test_ocr_page_requires_verification(self):
+        page = DocumentPageText(
+            page_number=1,
+            text="recognized",
+            origin=SourceTextOrigin.OCR,
+            verification=SourceVerificationStatus.REQUIRES_VERIFICATION,
+            ocr_language="eng",
+            ocr_dpi=300,
+        )
+        self.assertIs(page.origin, SourceTextOrigin.OCR)
+        self.assertIs(
+            page.verification,
+            SourceVerificationStatus.REQUIRES_VERIFICATION,
+        )
