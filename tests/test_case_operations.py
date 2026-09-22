@@ -292,6 +292,22 @@ class AuthorizedCaseOperationsTests(unittest.TestCase):
         service = AuthorizedCaseService(repo, access, store)
         return service, repo, access
 
+    def test_generic_authorized_update_cannot_bypass_operations_audit(self):
+        service, repo, _ = self.build()
+        changed = case(
+            status=CaseStatus.ANALYZED,
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "must use update_case_operations",
+        ):
+            service.update_case(
+                PRINCIPAL,
+                "F-1",
+                changed,
+            )
+        repo.update_case.assert_not_called()
+
     def test_work_queue_requires_case_read(self):
         service, repo, _ = self.build(
             permissions={AccessPermission.CASE_UPDATE}
