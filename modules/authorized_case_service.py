@@ -14,6 +14,7 @@ from domain.auth_models import (
     FirmAccessGrant,
 )
 from domain.authorization import require_firm_permission
+from domain.client_workspace_models import ClientWorkspace
 from domain.case_models import (
     CaseDocumentKind,
     CaseRecord,
@@ -129,6 +130,24 @@ class AuthorizedCaseService:
         if client is None or client.firm_id != firm_id:
             return None
         return client
+
+    def get_client_workspace(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        client_id: str,
+    ) -> ClientWorkspace:
+        """Return one authorized client's registrations and case history."""
+        self._grant(principal, firm_id, AccessPermission.CASE_READ)
+        client = self._case_client_in_firm(firm_id, client_id)
+        if client is None:
+            raise LookupError("client does not exist")
+        return ClientWorkspace(
+            client=client,
+            registrations=self._cases.list_registrations(client.client_id),
+            cases=self._cases.list_cases_for_client(client.client_id),
+        )
 
     def create_case(
         self,
