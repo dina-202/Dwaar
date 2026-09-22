@@ -527,18 +527,34 @@ class PipelineTests(unittest.TestCase):
 
 class DeadlineMappingTests(unittest.TestCase):
     def test_notice_date_zero_candidate_is_none(self):
-        self.assertEqual(orchestrator._build_deadline_inputs([]), (None, None))
+        self.assertEqual(
+            orchestrator._build_deadline_inputs([]),
+            (None, None, None, None),
+        )
 
-    def test_notice_date_confirmed_and_alleged_are_eligible(self):
-        for status in (FactStatus.CONFIRMED, FactStatus.ALLEGED):
-            with self.subTest(status=status):
-                fact = make_fact(
-                    "F-D", FactType.NOTICE_DATE, "Notice 31.08.2026", status=status
-                )
-                with patch.object(orchestrator, "_parse_date_text", return_value=date(2026, 8, 31)) as parser:
-                    notice_date, _ = orchestrator._build_deadline_inputs([fact])
-                self.assertEqual(notice_date, date(2026, 8, 31))
-                parser.assert_called_once_with("Notice 31.08.2026")
+    def test_notice_date_confirmed_is_eligible(self):
+        fact = make_fact(
+            "F-D", FactType.NOTICE_DATE, "Notice 31.08.2026",
+            status=FactStatus.CONFIRMED,
+        )
+        with patch.object(
+            orchestrator,
+            "_parse_date_text",
+            return_value=date(2026, 8, 31),
+        ) as parser:
+            notice_date, _, _, _ = orchestrator._build_deadline_inputs([fact])
+        self.assertEqual(notice_date, date(2026, 8, 31))
+        parser.assert_called_once_with("Notice 31.08.2026")
+
+    def test_notice_date_alleged_is_not_deadline_input(self):
+        fact = make_fact(
+            "F-D", FactType.NOTICE_DATE, "Notice 31.08.2026",
+            status=FactStatus.ALLEGED,
+        )
+        with patch.object(orchestrator, "_parse_date_text") as parser:
+            notice_date, _, _, _ = orchestrator._build_deadline_inputs([fact])
+        self.assertIsNone(notice_date)
+        parser.assert_not_called()
 
     def test_notice_date_untrusted_statuses_are_ignored(self):
         for status in (
@@ -551,24 +567,24 @@ class DeadlineMappingTests(unittest.TestCase):
                     "F-D", FactType.NOTICE_DATE, "31/08/2026", status=status
                 )
                 with patch.object(orchestrator, "_parse_date_text") as parser:
-                    notice_date, _ = orchestrator._build_deadline_inputs([fact])
+                    notice_date, _, _, _ = orchestrator._build_deadline_inputs([fact])
                 self.assertIsNone(notice_date)
                 parser.assert_not_called()
 
     def test_multiple_notice_dates_are_ambiguous(self):
         facts = [
             make_fact("F-1", FactType.NOTICE_DATE, "01/08/2026"),
-            make_fact("F-2", FactType.NOTICE_DATE, "02/08/2026", status=FactStatus.ALLEGED),
+            make_fact("F-2", FactType.NOTICE_DATE, "02/08/2026", status=FactStatus.CONFIRMED),
         ]
         with patch.object(orchestrator, "_parse_date_text") as parser:
-            notice_date, _ = orchestrator._build_deadline_inputs(facts)
+            notice_date, _, _, _ = orchestrator._build_deadline_inputs(facts)
         self.assertIsNone(notice_date)
         parser.assert_not_called()
 
     def test_malformed_notice_date_uses_parser_none_without_fallback(self):
         fact = make_fact("F-D", FactType.NOTICE_DATE, "not a numeric date")
         with patch.object(orchestrator, "_parse_date_text", return_value=None) as parser:
-            notice_date, _ = orchestrator._build_deadline_inputs([fact])
+            notice_date, _, _, _ = orchestrator._build_deadline_inputs([fact])
         self.assertIsNone(notice_date)
         parser.assert_called_once_with("not a numeric date")
 
@@ -584,13 +600,13 @@ class DeadlineMappingTests(unittest.TestCase):
     def test_hearing_zero_one_multiple_and_exact_source(self):
         one = make_fact(
             "F-H", FactType.HEARING_DETAILS, "Appear on 04/09/2026",
-            status=FactStatus.ALLEGED,
+            status=FactStatus.CONFIRMED,
             claim="Claim says another hearing",
         )
-        self.assertIsNone(orchestrator._build_deadline_inputs([])[1])
+        self.assertIsNone(orchestrator._build_deadline_inputs([])[3])
         with patch.object(orchestrator, "_parse_date_text") as parser:
             self.assertEqual(
-                orchestrator._build_deadline_inputs([one])[1],
+                orchestrator._build_deadline_inputs([one])[3],
                 "Appear on 04/09/2026",
             )
             parser.assert_not_called()
@@ -598,14 +614,14 @@ class DeadlineMappingTests(unittest.TestCase):
             one,
             make_fact("F-H2", FactType.HEARING_DETAILS, "05/09/2026"),
         ]
-        self.assertIsNone(orchestrator._build_deadline_inputs(two)[1])
+        self.assertIsNone(orchestrator._build_deadline_inputs(two)[3])
 
     def test_hearing_untrusted_statuses_and_empty_source_are_ignored(self):
         facts = [
             make_fact("F-1", FactType.HEARING_DETAILS, "01/01/2027", status=FactStatus.UNKNOWN),
             make_fact("F-2", FactType.HEARING_DETAILS, "", status=FactStatus.CONFIRMED),
         ]
-        self.assertIsNone(orchestrator._build_deadline_inputs(facts)[1])
+        self.assertIsNone(orchestrator._build_deadline_inputs(facts)[3])
 
 
 class SourceVerificationInputSafetyTests(unittest.TestCase):
@@ -620,7 +636,7 @@ class SourceVerificationInputSafetyTests(unittest.TestCase):
             SourceVerificationStatus.REQUIRES_VERIFICATION
         )
         with patch.object(orchestrator, "_parse_date_text") as parser:
-            notice_date, _ = orchestrator._build_deadline_inputs([fact])
+            notice_date, _, _, _ = orchestrator._build_deadline_inputs([fact])
         self.assertIsNone(notice_date)
         parser.assert_not_called()
 
