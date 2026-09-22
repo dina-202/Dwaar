@@ -18,6 +18,7 @@ from domain.drafting_engine import (
     generate_specialist_draft,
 )
 from domain.fact_engine import (
+    extract_facts_with_document_provenance,
     extract_facts_with_page_provenance,
     extract_facts_with_status,
 )
@@ -27,6 +28,7 @@ from domain.models import (
     ArithmeticRequest as _ArithmeticRequest,
     ArithmeticResult as _ArithmeticResult,
     ArithmeticStatus as _ArithmeticStatus,
+    DocumentPageText as _DocumentPageText,
     DraftPermission as _DraftPermission,
     ExtractedFact as _ExtractedFact,
     FactExtractionResult as _FactExtractionResult,
@@ -38,6 +40,7 @@ from domain.models import (
     Phase2AnalysisResult as _Phase2AnalysisResult,
     ProceedingType as _ProceedingType,
     RequirementKind as _RequirementKind,
+    SourceVerificationStatus as _SourceVerificationStatus,
     SupportLevel as _SupportLevel,
     TriageSummary as _TriageSummary,
 )
@@ -106,6 +109,7 @@ def _deadline_candidates(
         for fact in facts
         if fact.fact_type is fact_type
         and fact.status in _ALLOWED_DEADLINE_STATUSES
+        and fact.source_verification is _SourceVerificationStatus.VERIFIED
         and bool(fact.source_text)
     ]
 
@@ -141,6 +145,7 @@ def _operand_candidates(
         if fact.fact_type is _FactType.STATED_AMOUNT
         and fact.fact_role is role
         and fact.status is _FactStatus.CONFIRMED
+        and fact.source_verification is _SourceVerificationStatus.VERIFIED
     ]
 
 
@@ -400,6 +405,39 @@ def run_phase2_analysis_from_pages(
 
     classification = classify_notice(raw_text)
     extraction_result = extract_facts_with_page_provenance(
+        raw_text,
+        classification,
+        safe_pages,
+    )
+    return _assemble_phase2_result(
+        classification,
+        extraction_result,
+        today,
+    )
+
+
+
+def run_phase2_analysis_from_document_pages(
+    document_pages: _List[_DocumentPageText],
+    today: _date,
+) -> _Phase2AnalysisResult:
+    """Run Phase 2 with page and extraction-channel trust metadata."""
+    if (
+        not isinstance(document_pages, list)
+        or any(
+            not isinstance(page, _DocumentPageText)
+            or page.page_number != index
+            for index, page in enumerate(document_pages, start=1)
+        )
+    ):
+        safe_pages: _List[_DocumentPageText] = []
+        raw_text = ""
+    else:
+        safe_pages = document_pages
+        raw_text = "".join(page.text for page in safe_pages)
+
+    classification = classify_notice(raw_text)
+    extraction_result = extract_facts_with_document_provenance(
         raw_text,
         classification,
         safe_pages,
