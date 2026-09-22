@@ -795,57 +795,102 @@ class LocalSQLiteCaseRepository:
             ).fetchall()
         return [self._case_from_row(row) for row in rows]
 
+    def _update_case_row(
+        self,
+        connection: sqlite3.Connection,
+        case: CaseRecord,
+    ) -> None:
+        current = connection.execute(
+            "SELECT * FROM cases WHERE case_id = ?", (case.case_id,)
+        ).fetchone()
+        if current is None:
+            raise RepositoryNotFoundError("Case does not exist.")
+
+        existing = self._case_from_row(current)
+        immutable_before = (
+            existing.firm_id,
+            existing.client_id,
+            existing.registration_id,
+            existing.proceeding_type,
+            existing.notice_form,
+            existing.opened_at,
+        )
+        immutable_after = (
+            case.firm_id,
+            case.client_id,
+            case.registration_id,
+            case.proceeding_type,
+            case.notice_form,
+            case.opened_at,
+        )
+        if immutable_before != immutable_after:
+            raise RepositoryConflictError(
+                "Case identity/ownership/proceeding fields are immutable."
+            )
+
+        if case.status is CaseStatus.CLOSED:
+            if case.closed_at is None:
+                raise RepositoryConflictError(
+                    "Closed cases require closed_at."
+                )
+        elif case.closed_at is not None:
+            raise RepositoryConflictError(
+                "Only closed cases may have closed_at."
+            )
+
+        connection.execute(
+            """
+            UPDATE cases
+            SET title = ?, status = ?, response_deadline = ?,
+                assigned_to = ?, reviewer_id = ?, closed_at = ?
+            WHERE case_id = ?
+            """,
+            (
+                case.title,
+                case.status.value,
+                self._date(case.response_deadline),
+                case.assigned_to,
+                case.reviewer_id,
+                (
+                    None
+                    if case.closed_at is None
+                    else self._dt(case.closed_at)
+                ),
+                case.case_id,
+            ),
+        )
+
     def update_case(self, case: CaseRecord) -> None:
         with self._connect() as connection:
-            current = connection.execute(
-                "SELECT * FROM cases WHERE case_id = ?", (case.case_id,)
-            ).fetchone()
-            if current is None:
-                raise RepositoryNotFoundError("Case does not exist.")
+            self._update_case_row(connection, case)
 
-            existing = self._case_from_row(current)
-            immutable_before = (
-                existing.firm_id,
-                existing.client_id,
-                existing.registration_id,
-                existing.proceeding_type,
-                existing.notice_form,
-                existing.opened_at,
+    def update_case_with_events(
+        self,
+        case: CaseRecord,
+        events: List[CaseEvent],
+    ) -> None:
+        """Atomically persist one operational case update and audit events."""
+        if not isinstance(case, CaseRecord):
+            raise TypeError("case must be a CaseRecord")
+        if (
+            not isinstance(events, list)
+            or not events
+            or any(not isinstance(event, CaseEvent) for event in events)
+        ):
+            raise TypeError("events must be a non-empty list of CaseEvent")
+        if any(event.case_id != case.case_id for event in events):
+            raise RepositoryConflictError(
+                "Case update events must belong to the updated case."
             )
-            immutable_after = (
-                case.firm_id,
-                case.client_id,
-                case.registration_id,
-                case.proceeding_type,
-                case.notice_form,
-                case.opened_at,
-            )
-            if immutable_before != immutable_after:
-                raise RepositoryConflictError(
-                    "Case identity/ownership/proceeding fields are immutable."
-                )
+        for event in events:
+            self._validate_event_payload(event.payload)
+            self._dt(event.occurred_at)
 
-            connection.execute(
-                """
-                UPDATE cases
-                SET title = ?, status = ?, response_deadline = ?,
-                    assigned_to = ?, reviewer_id = ?, closed_at = ?
-                WHERE case_id = ?
-                """,
-                (
-                    case.title,
-                    case.status.value,
-                    self._date(case.response_deadline),
-                    case.assigned_to,
-                    case.reviewer_id,
-                    (
-                        None
-                        if case.closed_at is None
-                        else self._dt(case.closed_at)
-                    ),
-                    case.case_id,
-                ),
-            )
+        with self._connect() as connection:
+            self._update_case_row(connection, case)
+            for event in events:
+                self._insert_event(connection, event)
+
 
     @staticmethod
     def _validate_document_ref(document: StoredDocumentRef) -> None:

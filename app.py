@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 import streamlit as st
 
 from domain.auth_models import AccessPermission
-from domain.case_models import CaseDocumentKind
+from domain.case_models import CaseDocumentKind, CaseStatus
 from domain.evidence_engine import propose_evidence_candidates
 from domain.evidence_review import (
     create_evidence_review,
@@ -1108,6 +1108,221 @@ def _render_persisted_evidence_workspace(
             )
 
 
+def _render_case_work_queue(principal, active_firm):
+    if AccessPermission.CASE_READ not in active_firm.permissions:
+        return
+
+    st.header("Case work queue")
+    try:
+        service = build_authorized_case_service()
+        queue = service.list_case_work_queue(
+            principal,
+            active_firm.firm_id,
+            today=date.today(),
+        )
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Durable case storage is not fully configured on this "
+            "deployment."
+        )
+        return
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to read the case queue."
+        )
+        return
+    except Exception:
+        st.error("The case work queue could not be loaded.")
+        return
+
+    if not queue:
+        st.write("No saved cases in the work queue yet.")
+        return
+
+    st.dataframe(
+        [
+            {
+                "case_id": item.case_id,
+                "client": item.client_name,
+                "title": item.title,
+                "status": item.status.value,
+                "deadline_status": item.deadline_status.value,
+                "response_deadline": _display(item.response_deadline),
+                "days_remaining": _display(item.days_remaining),
+                "assigned_to": _display(item.assigned_to),
+                "reviewer_id": _display(item.reviewer_id),
+            }
+            for item in queue
+        ],
+        hide_index=True,
+    )
+
+    labels = {
+        (
+            f"{item.deadline_status.value} — {item.client_name} — "
+            f"{item.title} — {item.case_id}"
+        ): item
+        for item in queue
+    }
+    selected_label = st.selectbox(
+        "Queue case",
+        list(labels),
+        key="dwaar_case_work_queue_selector",
+    )
+    selected = labels[selected_label]
+
+    if st.button(
+        "Focus queue case in Saved cases",
+        key=f"focus_queue_case_{selected.case_id}",
+    ):
+        st.session_state[_FOCUSED_CASE_ID] = selected.case_id
+        st.write(
+            {
+                "focused_case_id": selected.case_id,
+                "next_step": "Use Open saved case below.",
+            }
+        )
+
+    if AccessPermission.CASE_UPDATE not in active_firm.permissions:
+        st.caption(
+            "This access can view the work queue but cannot update case "
+            "operations."
+        )
+        return
+
+    if selected.status is CaseStatus.CLOSED:
+        st.caption(
+            "Closed cases are terminal. Operational edits are disabled."
+        )
+        return
+
+    try:
+        status_targets = service.allowed_case_status_targets(
+            principal,
+            active_firm.firm_id,
+            case_id=selected.case_id,
+        )
+        assignable_users = service.list_assignable_user_ids(
+            principal,
+            active_firm.firm_id,
+        )
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to update this case."
+        )
+        return
+    except Exception:
+        st.error("Case update options could not be loaded.")
+        return
+
+    status_labels = {
+        status.value: status
+        for status in status_targets
+    }
+    status_label = st.selectbox(
+        "Operational status",
+        list(status_labels),
+        key=f"case_ops_status_{selected.case_id}",
+    )
+    target_status = status_labels[status_label]
+
+    deadline_text = st.text_input(
+        "Response deadline (YYYY-MM-DD, blank to clear)",
+        value=(
+            ""
+            if selected.response_deadline is None
+            else selected.response_deadline.isoformat()
+        ),
+        key=f"case_ops_deadline_{selected.case_id}",
+    )
+
+    member_labels = {"Unassigned": None}
+    member_labels.update({user_id: user_id for user_id in assignable_users})
+    assignee_default = (
+        "Unassigned"
+        if selected.assigned_to is None
+        else selected.assigned_to
+    )
+    reviewer_default = (
+        "Unassigned"
+        if selected.reviewer_id is None
+        else selected.reviewer_id
+    )
+    # Persisted historical identities may no longer be active/assignable.
+    if assignee_default not in member_labels:
+        member_labels[assignee_default] = selected.assigned_to
+    if reviewer_default not in member_labels:
+        member_labels[reviewer_default] = selected.reviewer_id
+
+    assignee_label = st.selectbox(
+        "Assignee",
+        list(member_labels),
+        index=list(member_labels).index(assignee_default),
+        key=f"case_ops_assignee_{selected.case_id}",
+    )
+    reviewer_label = st.selectbox(
+        "Reviewer",
+        list(member_labels),
+        index=list(member_labels).index(reviewer_default),
+        key=f"case_ops_reviewer_{selected.case_id}",
+    )
+
+    if not st.button(
+        "Save case operations",
+        key=f"save_case_ops_{selected.case_id}",
+    ):
+        return
+
+    try:
+        normalized_deadline = (
+            None
+            if not deadline_text.strip()
+            else date.fromisoformat(deadline_text.strip())
+        )
+    except ValueError:
+        st.error(
+            "Response deadline must use YYYY-MM-DD, or be left blank."
+        )
+        return
+
+    try:
+        updated = service.update_case_operations(
+            principal,
+            active_firm.firm_id,
+            case_id=selected.case_id,
+            status=target_status,
+            response_deadline=normalized_deadline,
+            assigned_to=member_labels[assignee_label],
+            reviewer_id=member_labels[reviewer_label],
+            updated_at=datetime.now(timezone.utc),
+        )
+    except (ValueError, TypeError) as error:
+        st.error(str(error))
+        return
+    except LookupError:
+        st.error("The selected case is no longer available.")
+        return
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to update this case."
+        )
+        return
+    except Exception:
+        st.error("The case operations update could not be saved.")
+        return
+
+    st.session_state[_FOCUSED_CASE_ID] = updated.case_id
+    st.write(
+        {
+            "updated_case_id": updated.case_id,
+            "status": updated.status.value,
+            "response_deadline": _display(updated.response_deadline),
+            "assigned_to": _display(updated.assigned_to),
+            "reviewer_id": _display(updated.reviewer_id),
+        }
+    )
+
+
 def _render_client_workspace(principal, active_firm):
     if AccessPermission.CASE_READ not in active_firm.permissions:
         return
@@ -1871,6 +2086,7 @@ _principal, _active_firm = _require_app_access()
 st.title("📋 Dwaar")
 st.caption("GST notice workspace for professional review.")
 
+_render_case_work_queue(_principal, _active_firm)
 _render_client_workspace(_principal, _active_firm)
 _render_saved_cases_workspace(_principal, _active_firm)
 

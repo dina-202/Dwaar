@@ -40,6 +40,7 @@ class CaseDocumentKind(Enum):
 class CaseEventType(Enum):
     CASE_CREATED = "case_created"
     CASE_STATUS_CHANGED = "case_status_changed"
+    CASE_OPERATIONS_UPDATED = "case_operations_updated"
     DOCUMENT_ADDED = "document_added"
     DOCUMENT_REMOVED = "document_removed"
     ANALYSIS_SAVED = "analysis_saved"

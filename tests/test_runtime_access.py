@@ -178,6 +178,33 @@ class RuntimeFirmAccessTests(unittest.TestCase):
             ),
         )
 
+    def test_firm_grants_are_firm_scoped_and_sorted_by_user_id(self):
+        self.save(
+            "F-1",
+            {AccessPermission.CASE_READ},
+            user_id="U-Z",
+        )
+        self.save(
+            "F-1",
+            {AccessPermission.CASE_READ},
+            user_id="U-A",
+        )
+        self.save(
+            "F-2",
+            {AccessPermission.CASE_READ},
+            user_id="U-HIDDEN",
+        )
+
+        result = self.access_repo.list_grants_for_firm("F-1")
+        self.assertEqual(
+            [item.user_id for item in result],
+            ["U-A", "U-Z"],
+        )
+        self.assertEqual(
+            {item.firm_id for item in result},
+            {"F-1"},
+        )
+
     def test_empty_permission_set_is_rejected(self):
         with self.assertRaises(TypeError):
             load_available_firms_for_permissions(

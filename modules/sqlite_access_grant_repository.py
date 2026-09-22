@@ -163,6 +163,36 @@ class LocalSQLiteAccessGrantRepository:
             active=bool(row["active"]),
         )
 
+    def list_grants_for_firm(
+        self,
+        firm_id: str,
+    ) -> List[FirmAccessGrant]:
+        if not isinstance(firm_id, str) or not firm_id:
+            raise ValueError("firm_id must be non-empty")
+
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT user_id, firm_id, permissions_json, active
+                FROM firm_access_grants
+                WHERE firm_id = ?
+                ORDER BY user_id ASC
+                """,
+                (firm_id,),
+            ).fetchall()
+
+        return [
+            FirmAccessGrant(
+                user_id=row["user_id"],
+                firm_id=row["firm_id"],
+                permissions=self._deserialize_permissions(
+                    row["permissions_json"]
+                ),
+                active=bool(row["active"]),
+            )
+            for row in rows
+        ]
+
     def list_grants_for_user(
         self,
         user_id: str,

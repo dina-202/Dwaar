@@ -70,6 +70,7 @@ class EnumContractTests(unittest.TestCase):
             [
                 "case_created",
                 "case_status_changed",
+                "case_operations_updated",
                 "document_added",
                 "document_removed",
                 "analysis_saved",
@@ -237,6 +238,7 @@ class PersistencePortTests(unittest.TestCase):
             methods,
             [
                 "get_grant",
+                "list_grants_for_firm",
                 "list_grants_for_user",
                 "save_grant",
             ],
@@ -277,6 +279,7 @@ class PersistencePortTests(unittest.TestCase):
                 "list_events",
                 "list_registrations",
                 "update_case",
+                "update_case_with_events",
             ],
         )
 
