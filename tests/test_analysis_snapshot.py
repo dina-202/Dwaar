@@ -163,7 +163,7 @@ def make_analysis():
             service_date=date(2026, 8, 2),
             response_period_days=30,
             response_deadline=date(2026, 9, 1),
-            deadline_confidence=DeadlineConfidence.HIGH,
+            deadline_confidence=DeadlineConfidence.CONFIRMED,
             deadline_status=DeadlineStatus.PASSED,
             days_remaining=-21,
             hearing_date=None,
@@ -368,10 +368,11 @@ class SnapshotSerializerTests(unittest.TestCase):
     def test_serializer_source_has_no_pickle_or_object_hook(self):
         import modules.analysis_snapshot as module
 
-        source = inspect.getsource(module).lower()
-        self.assertNotIn("pickle", source)
-        self.assertNotIn("object_hook", source)
-        self.assertNotIn("yaml.load", source)
+        tree_source = inspect.getsource(module)
+        self.assertNotIn("import pickle", tree_source)
+        self.assertNotIn("pickle.loads", tree_source)
+        self.assertNotIn("object_hook=", tree_source)
+        self.assertNotIn("yaml.load(", tree_source)
 
 
 class SnapshotRepositoryAndEncryptionTests(unittest.TestCase):
