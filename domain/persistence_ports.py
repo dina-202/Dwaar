@@ -85,6 +85,13 @@ class CaseRepository(Protocol):
     def update_case(self, case: CaseRecord) -> None:
         ...
 
+    def update_case_with_events(
+        self,
+        case: CaseRecord,
+        events: List[CaseEvent],
+    ) -> None:
+        ...
+
     def add_document_ref(self, document: StoredDocumentRef) -> None:
         ...
 
@@ -170,6 +177,12 @@ class AccessGrantRepository(Protocol):
     def list_grants_for_user(
         self,
         user_id: str,
+    ) -> List[FirmAccessGrant]:
+        ...
+
+    def list_grants_for_firm(
+        self,
+        firm_id: str,
     ) -> List[FirmAccessGrant]:
         ...
 
