@@ -23,6 +23,11 @@ from domain.evidence_review_models import (
     EvidenceReviewRef,
     LoadedEvidenceReview,
 )
+from domain.draft_work_product_models import (
+    DraftReviewStatus,
+    DraftVersionRef,
+    LoadedDraftVersion,
+)
 from domain.client_workspace_models import ClientWorkspace
 from domain.case_operations_models import (
     CaseWorkItem,
@@ -218,6 +223,16 @@ class FakeStreamlit:
     def text_input(self, *args, **kwargs):
         self._record("text_input", *args, **kwargs)
         return self.text_values.get(kwargs.get("key"), "")
+
+    def text_area(self, *args, **kwargs):
+        self._record("text_area", *args, **kwargs)
+        key = kwargs.get("key")
+        default = kwargs.get("value", "")
+        return self.text_values.get(key, default)
+
+    def download_button(self, *args, **kwargs):
+        self._record("download_button", *args, **kwargs)
+        return False
 
     def button(self, *args, **kwargs):
         self._record("button", *args, **kwargs)
@@ -512,6 +527,8 @@ def run_app(
     evidence_workspace_service_error=None,
     evidence_review_service=None,
     evidence_review_service_error=None,
+    draft_service=None,
+    draft_service_error=None,
     persisted_evidence_ref=None,
     persisted_evidence_error=None,
     reopen_result=None,
@@ -668,6 +685,15 @@ def run_app(
     if evidence_review_service_error is not None:
         evidence_review_service_mock.side_effect = evidence_review_service_error
 
+    if draft_service is None:
+        draft_service = Mock()
+        draft_service.list_versions.return_value = []
+    elif isinstance(draft_service.list_versions.return_value, Mock):
+        draft_service.list_versions.return_value = []
+    draft_service_mock = Mock(return_value=draft_service)
+    if draft_service_error is not None:
+        draft_service_mock.side_effect = draft_service_error
+
     persisted_evidence_mock = Mock(return_value=persisted_evidence_ref)
     if persisted_evidence_error is not None:
         persisted_evidence_mock.side_effect = persisted_evidence_error
@@ -682,6 +708,7 @@ def run_app(
     fake.snapshot_service_mock = snapshot_service_mock
     fake.evidence_workspace_service_mock = evidence_workspace_service_mock
     fake.evidence_review_service_mock = evidence_review_service_mock
+    fake.draft_service_mock = draft_service_mock
     fake.persisted_evidence_mock = persisted_evidence_mock
     fake.reopen_mock = reopen_mock
 
@@ -717,6 +744,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_evidence_review_service",
             evidence_review_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_draft_work_product_service",
+            draft_service_mock,
         ),
         patch.object(
             case_evidence_service_module,
