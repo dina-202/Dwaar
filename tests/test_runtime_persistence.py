@@ -5,9 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from modules.authorized_analysis_snapshot_service import (
+    AuthorizedAnalysisSnapshotService,
+)
 from modules.authorized_case_service import AuthorizedCaseService
 from modules.runtime_persistence import (
     RuntimePersistenceConfigurationError,
+    build_authorized_analysis_snapshot_service,
     build_authorized_case_service,
     document_key_from_environment,
     object_root_from_environment,
@@ -52,6 +56,26 @@ class RuntimePersistenceConfigTests(unittest.TestCase):
                     "DWAAR_DOCUMENT_KEY_B64": raw,
                 }
             )
+
+
+class RuntimeAnalysisSnapshotFactoryTests(unittest.TestCase):
+    def test_factory_builds_authorized_snapshot_service(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            raw = base64.b64encode(b"k" * 32).decode("ascii")
+            service = build_authorized_analysis_snapshot_service(
+                {
+                    "DWAAR_DB_PATH": str(root / "dwaar.db"),
+                    "DWAAR_OBJECT_ROOT": str(root / "documents"),
+                    "DWAAR_DOCUMENT_KEY_B64": raw,
+                }
+            )
+            self.assertIsInstance(
+                service,
+                AuthorizedAnalysisSnapshotService,
+            )
+            self.assertTrue((root / "dwaar.db").exists())
+            self.assertTrue((root / "documents").is_dir())
 
 
 class RuntimePersistenceFactoryTests(unittest.TestCase):

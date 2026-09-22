@@ -6,6 +6,9 @@ import os
 from pathlib import Path
 from typing import Mapping, Optional
 
+from modules.authorized_analysis_snapshot_service import (
+    AuthorizedAnalysisSnapshotService,
+)
 from modules.authorized_case_service import AuthorizedCaseService
 from modules.encrypted_document_store import EncryptedLocalDocumentStore
 from modules.runtime_access import (
@@ -18,6 +21,9 @@ from modules.runtime_security import (
 )
 from modules.sqlite_access_grant_repository import (
     LocalSQLiteAccessGrantRepository,
+)
+from modules.sqlite_analysis_snapshot_repository import (
+    LocalSQLiteAnalysisSnapshotRepository,
 )
 from modules.sqlite_case_repository import LocalSQLiteCaseRepository
 
@@ -55,10 +61,9 @@ def document_key_from_environment(
         ) from error
 
 
-def build_authorized_case_service(
+def _build_runtime_components(
     environment: Optional[Mapping[str, str]] = None,
-) -> AuthorizedCaseService:
-    """Build the pilot persistence service from server-side configuration."""
+):
     try:
         db_path = database_path_from_environment(environment)
     except RuntimeAccessConfigurationError as error:
@@ -75,8 +80,52 @@ def build_authorized_case_service(
         object_root,
         key,
     )
+    return (
+        db_path,
+        case_repository,
+        access_repository,
+        document_store,
+    )
+
+
+def build_authorized_case_service(
+    environment: Optional[Mapping[str, str]] = None,
+) -> AuthorizedCaseService:
+    """Build the pilot persistence service from server-side configuration."""
+    (
+        _,
+        case_repository,
+        access_repository,
+        document_store,
+    ) = _build_runtime_components(environment)
     return AuthorizedCaseService(
         case_repository,
         access_repository,
+        document_store,
+    )
+
+
+def build_authorized_analysis_snapshot_service(
+    environment: Optional[Mapping[str, str]] = None,
+) -> AuthorizedAnalysisSnapshotService:
+    """Build the authorized encrypted analysis-history service."""
+    (
+        db_path,
+        case_repository,
+        access_repository,
+        document_store,
+    ) = _build_runtime_components(environment)
+    case_service = AuthorizedCaseService(
+        case_repository,
+        access_repository,
+        document_store,
+    )
+    snapshot_repository = LocalSQLiteAnalysisSnapshotRepository(
+        db_path
+    )
+    return AuthorizedAnalysisSnapshotService(
+        case_service,
+        access_repository,
+        snapshot_repository,
         document_store,
     )

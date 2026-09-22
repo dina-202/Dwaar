@@ -27,7 +27,7 @@ from domain.case_models import (
 from domain.models import NoticeForm, ProceedingType
 
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _PROHIBITED_EVENT_KEYS = frozenset(
     {
         "raw_text",
@@ -168,6 +168,29 @@ class LocalSQLiteCaseRepository:
 
                 CREATE INDEX IF NOT EXISTS ix_case_events_case_occurred
                     ON case_events(case_id, occurred_at, event_id);
+
+                CREATE TABLE IF NOT EXISTS analysis_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    case_id TEXT NOT NULL,
+                    source_document_id TEXT NOT NULL,
+                    source_document_sha256 TEXT NOT NULL,
+                    schema_version INTEGER NOT NULL,
+                    engine_version TEXT NOT NULL,
+                    byte_size INTEGER NOT NULL,
+                    sha256_hex TEXT NOT NULL,
+                    storage_key TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    FOREIGN KEY (case_id) REFERENCES cases(case_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    FOREIGN KEY (source_document_id)
+                        REFERENCES case_documents(document_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    CHECK (byte_size >= 0)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_analysis_snapshots_case_created
+                    ON analysis_snapshots(case_id, created_at, snapshot_id);
                 """
             )
             current = connection.execute(
@@ -178,11 +201,25 @@ class LocalSQLiteCaseRepository:
                     "INSERT INTO schema_meta(key, value) VALUES (?, ?)",
                     ("schema_version", str(_SCHEMA_VERSION)),
                 )
-            elif int(current["value"]) != _SCHEMA_VERSION:
-                raise RuntimeError(
-                    "Unsupported Dwaar SQLite schema version: "
-                    f"{current['value']}"
-                )
+            else:
+                current_version = int(current["value"])
+                if current_version == 1:
+                    # Phase 3F.4 adds analysis_snapshots. The table is
+                    # created idempotently by the schema script above; this
+                    # explicit metadata bump records that migration.
+                    connection.execute(
+                        """
+                        UPDATE schema_meta
+                        SET value = ?
+                        WHERE key = 'schema_version'
+                        """,
+                        (str(_SCHEMA_VERSION),),
+                    )
+                elif current_version != _SCHEMA_VERSION:
+                    raise RuntimeError(
+                        "Unsupported Dwaar SQLite schema version: "
+                        f"{current['value']}"
+                    )
 
     @staticmethod
     def _dt(value: datetime) -> str:

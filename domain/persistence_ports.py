@@ -7,6 +7,7 @@ cloud object storage without changing domain callers.
 
 from typing import List, Optional, Protocol
 
+from domain.analysis_snapshot_models import AnalysisSnapshotRef
 from domain.auth_models import FirmAccessGrant
 from domain.case_models import (
     CaseEvent,
@@ -82,6 +83,29 @@ class CaseRepository(Protocol):
         ...
 
     def get_snapshot(self, case_id: str) -> Optional[CaseSnapshot]:
+        ...
+
+
+class AnalysisSnapshotRepository(Protocol):
+    """Persistent metadata/audit boundary for encrypted analysis snapshots."""
+
+    def save_snapshot(
+        self,
+        snapshot: AnalysisSnapshotRef,
+        event: CaseEvent,
+    ) -> None:
+        ...
+
+    def get_snapshot_ref(
+        self,
+        snapshot_id: str,
+    ) -> Optional[AnalysisSnapshotRef]:
+        ...
+
+    def list_snapshot_refs(
+        self,
+        case_id: str,
+    ) -> List[AnalysisSnapshotRef]:
         ...
 
 
