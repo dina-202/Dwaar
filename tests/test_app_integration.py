@@ -499,6 +499,8 @@ def run_app(
     snapshot_service_error=None,
     evidence_workspace_service=None,
     evidence_workspace_service_error=None,
+    evidence_review_service=None,
+    evidence_review_service_error=None,
     persisted_evidence_ref=None,
     persisted_evidence_error=None,
     reopen_result=None,
@@ -605,6 +607,17 @@ def run_app(
             evidence_workspace_service_error
         )
 
+    if evidence_review_service is None:
+        evidence_review_service = Mock()
+        evidence_review_service.list_reviews.return_value = []
+    elif isinstance(evidence_review_service.list_reviews.return_value, Mock):
+        evidence_review_service.list_reviews.return_value = []
+    evidence_review_service_mock = Mock(
+        return_value=evidence_review_service
+    )
+    if evidence_review_service_error is not None:
+        evidence_review_service_mock.side_effect = evidence_review_service_error
+
     persisted_evidence_mock = Mock(return_value=persisted_evidence_ref)
     if persisted_evidence_error is not None:
         persisted_evidence_mock.side_effect = persisted_evidence_error
@@ -618,6 +631,7 @@ def run_app(
     fake.persistence_service_mock = persistence_service_mock
     fake.snapshot_service_mock = snapshot_service_mock
     fake.evidence_workspace_service_mock = evidence_workspace_service_mock
+    fake.evidence_review_service_mock = evidence_review_service_mock
     fake.persisted_evidence_mock = persisted_evidence_mock
     fake.reopen_mock = reopen_mock
 
@@ -648,6 +662,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_evidence_workspace_service",
             evidence_workspace_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_evidence_review_service",
+            evidence_review_service_mock,
         ),
         patch.object(
             case_evidence_service_module,
