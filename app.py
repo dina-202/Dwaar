@@ -1329,9 +1329,9 @@ def _render_save_intake_workspace(
 ):
     st.header("Save as intake case")
     st.caption(
-        "This saves the client, case metadata and encrypted notice. "
-        "The current analysis is not yet persisted and will be recomputed "
-        "when the case is reopened."
+        "Save this notice under a new client or explicitly reuse an "
+        "existing firm client. Dwaar never auto-merges clients by name "
+        "or GSTIN."
     )
 
     notice_key = notice_analysis_key(notice_pdf_bytes)
@@ -1347,14 +1347,115 @@ def _render_save_intake_workspace(
         )
         return
 
-    client_name = st.text_input(
-        "Client name",
-        key=f"intake_client_{save_key}",
+    service = None
+    existing_clients = []
+    if AccessPermission.CASE_READ in active_firm.permissions:
+        try:
+            service = build_authorized_case_service()
+            existing_clients = service.list_clients(
+                principal,
+                active_firm.firm_id,
+            )
+        except RuntimePersistenceConfigurationError:
+            st.error(
+                "Durable case storage is not fully configured on this "
+                "deployment."
+            )
+            return
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to read clients "
+                "in this firm."
+            )
+            return
+        except Exception:
+            st.error("Existing clients could not be loaded.")
+            return
+
+    mode_options = ["New client"]
+    if existing_clients:
+        mode_options.append("Existing client")
+    client_mode = st.selectbox(
+        "Client handling",
+        mode_options,
+        key=f"intake_client_mode_{save_key}",
     )
-    gstin = st.text_input(
-        "GSTIN (optional)",
-        key=f"intake_gstin_{save_key}",
-    )
+
+    selected_client = None
+    selected_registration = None
+    client_name = None
+    gstin = None
+
+    if client_mode == "Existing client":
+        client_labels = {
+            f"{client.display_name} — {client.client_id}": client
+            for client in existing_clients
+        }
+        selected_client_label = st.selectbox(
+            "Existing client",
+            list(client_labels),
+            key=f"intake_existing_client_{save_key}",
+        )
+        selected_client = client_labels[selected_client_label]
+
+        try:
+            registrations = service.list_registrations(
+                principal,
+                active_firm.firm_id,
+                client_id=selected_client.client_id,
+            )
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to read client "
+                "registrations."
+            )
+            return
+        except Exception:
+            st.error("Client registrations could not be loaded.")
+            return
+
+        registration_labels = {"No registration": None}
+        for registration in registrations:
+            registration_labels[
+                (
+                    f"{registration.identifier_type}: "
+                    f"{registration.identifier_value} — "
+                    f"{registration.registration_id}"
+                )
+            ] = registration
+        selected_registration_label = st.selectbox(
+            "Tax registration",
+            list(registration_labels),
+            key=f"intake_existing_registration_{save_key}",
+        )
+        selected_registration = registration_labels[
+            selected_registration_label
+        ]
+        st.write(
+            {
+                "selected_client_id": selected_client.client_id,
+                "selected_registration_id": (
+                    None
+                    if selected_registration is None
+                    else selected_registration.registration_id
+                ),
+            }
+        )
+    else:
+        client_name = st.text_input(
+            "Client name",
+            key=f"intake_client_{save_key}",
+        )
+        gstin = st.text_input(
+            "GSTIN (optional)",
+            key=f"intake_gstin_{save_key}",
+        )
+        if (
+            AccessPermission.CASE_READ in active_firm.permissions
+            and not existing_clients
+        ):
+            st.caption("No existing clients are saved in this firm yet.")
+
     notice_form_label = (
         result.classification.notice_form.value.upper().replace("_", "-")
     )
@@ -1375,24 +1476,49 @@ def _render_save_intake_workspace(
         return
 
     try:
-        service = build_authorized_case_service()
-        saved_case = service.create_case_intake(
-            principal,
-            active_firm.firm_id,
-            client_name=client_name,
-            gstin=(gstin or None),
-            case_title=case_title,
-            proceeding_type=result.classification.proceeding_type,
-            notice_form=result.classification.notice_form,
-            response_deadline=result.deadline_result.response_deadline,
-            notice_filename=getattr(
-                uploaded_file,
-                "name",
-                "notice.pdf",
-            ),
-            notice_payload=notice_pdf_bytes,
-            opened_at=datetime.now(timezone.utc),
-        )
+        if service is None:
+            service = build_authorized_case_service()
+
+        if client_mode == "Existing client":
+            saved_case = service.create_existing_client_case_intake(
+                principal,
+                active_firm.firm_id,
+                client_id=selected_client.client_id,
+                registration_id=(
+                    None
+                    if selected_registration is None
+                    else selected_registration.registration_id
+                ),
+                case_title=case_title,
+                proceeding_type=result.classification.proceeding_type,
+                notice_form=result.classification.notice_form,
+                response_deadline=result.deadline_result.response_deadline,
+                notice_filename=getattr(
+                    uploaded_file,
+                    "name",
+                    "notice.pdf",
+                ),
+                notice_payload=notice_pdf_bytes,
+                opened_at=datetime.now(timezone.utc),
+            )
+        else:
+            saved_case = service.create_case_intake(
+                principal,
+                active_firm.firm_id,
+                client_name=client_name,
+                gstin=(gstin or None),
+                case_title=case_title,
+                proceeding_type=result.classification.proceeding_type,
+                notice_form=result.classification.notice_form,
+                response_deadline=result.deadline_result.response_deadline,
+                notice_filename=getattr(
+                    uploaded_file,
+                    "name",
+                    "notice.pdf",
+                ),
+                notice_payload=notice_pdf_bytes,
+                opened_at=datetime.now(timezone.utc),
+            )
     except RuntimePersistenceConfigurationError:
         st.error(
             "Durable case storage is not fully configured on this "
@@ -1401,6 +1527,11 @@ def _render_save_intake_workspace(
         return
     except (ValueError, TypeError) as error:
         st.error(str(error))
+        return
+    except LookupError:
+        st.error(
+            "The selected client or registration is no longer available."
+        )
         return
     except PermissionError:
         st.error(
@@ -1417,6 +1548,8 @@ def _render_save_intake_workspace(
         {
             "saved_case_id": saved_case.case_id,
             "status": saved_case.status.value,
+            "client_id": saved_case.client_id,
+            "registration_id": saved_case.registration_id,
         }
     )
 
