@@ -75,6 +75,7 @@ from domain.models import (
     ValidationItem,
     ValidationStatus,
 )
+from modules import case_evidence_service as case_evidence_service_module
 from modules import case_reopen_service as case_reopen_service_module
 from modules.analysis_snapshot import build_snapshot_payload
 from modules import evidence_workspace as evidence_workspace_module
@@ -496,6 +497,10 @@ def run_app(
     persistence_error=None,
     snapshot_service=None,
     snapshot_service_error=None,
+    evidence_workspace_service=None,
+    evidence_workspace_service_error=None,
+    persisted_evidence_ref=None,
+    persisted_evidence_error=None,
     reopen_result=None,
     reopen_error=None,
 ):
@@ -590,6 +595,20 @@ def run_app(
     if snapshot_service_error is not None:
         snapshot_service_mock.side_effect = snapshot_service_error
 
+    if evidence_workspace_service is None:
+        evidence_workspace_service = Mock()
+    evidence_workspace_service_mock = Mock(
+        return_value=evidence_workspace_service
+    )
+    if evidence_workspace_service_error is not None:
+        evidence_workspace_service_mock.side_effect = (
+            evidence_workspace_service_error
+        )
+
+    persisted_evidence_mock = Mock(return_value=persisted_evidence_ref)
+    if persisted_evidence_error is not None:
+        persisted_evidence_mock.side_effect = persisted_evidence_error
+
     reopen_mock = Mock(return_value=reopen_result)
     if reopen_error is not None:
         reopen_mock.side_effect = reopen_error
@@ -598,6 +617,8 @@ def run_app(
     fake.firms_mock = firms_mock
     fake.persistence_service_mock = persistence_service_mock
     fake.snapshot_service_mock = snapshot_service_mock
+    fake.evidence_workspace_service_mock = evidence_workspace_service_mock
+    fake.persisted_evidence_mock = persisted_evidence_mock
     fake.reopen_mock = reopen_mock
 
     with (
@@ -622,6 +643,16 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_analysis_snapshot_service",
             snapshot_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_evidence_workspace_service",
+            evidence_workspace_service_mock,
+        ),
+        patch.object(
+            case_evidence_service_module,
+            "add_supporting_evidence_pdf",
+            persisted_evidence_mock,
         ),
         patch.object(
             case_reopen_service_module,
