@@ -11,6 +11,7 @@ from domain.analysis_snapshot_models import AnalysisSnapshotRef
 from domain.evidence_review_models import EvidenceReviewRef
 from domain.draft_work_product_models import DraftVersionRef
 from domain.filing_models import FilingRecord
+from domain.legal_brief_models import LegalBriefRef
 from domain.auth_models import FirmAccessGrant
 from domain.case_models import (
     CaseEvent,
@@ -137,6 +138,29 @@ class AnalysisSnapshotRepository(Protocol):
         self,
         case_id: str,
     ) -> List[AnalysisSnapshotRef]:
+        ...
+
+
+class LegalBriefRepository(Protocol):
+    """Persistent metadata/audit boundary for encrypted legal briefs."""
+
+    def save_brief(
+        self,
+        brief: LegalBriefRef,
+        event: CaseEvent,
+    ) -> None:
+        ...
+
+    def get_brief_ref(
+        self,
+        legal_brief_id: str,
+    ) -> Optional[LegalBriefRef]:
+        ...
+
+    def list_brief_refs(
+        self,
+        snapshot_id: str,
+    ) -> List[LegalBriefRef]:
         ...
 
 
