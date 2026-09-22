@@ -377,6 +377,123 @@ class ClientDiscoveryRepositoryTests(DurableCaseIntakeIntegrationTests):
         )
 
 
+class ClientWorkspaceHistoryTests(DurableCaseIntakeIntegrationTests):
+    def test_client_case_history_is_newest_first_and_client_scoped(self):
+        client_one = Client("C-1", "F-1", "One", NOW)
+        client_two = Client("C-2", "F-1", "Two", NOW)
+        self.repo.create_client(client_one)
+        self.repo.create_client(client_two)
+
+        older = CaseRecord(
+            "CASE-OLD",
+            "F-1",
+            "C-1",
+            None,
+            "Older",
+            CaseStatus.INTAKE,
+            ProceedingType.GST_SEC73_GENERAL,
+            NoticeForm.DRC_01,
+            datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
+        newer = CaseRecord(
+            "CASE-NEW",
+            "F-1",
+            "C-1",
+            None,
+            "Newer",
+            CaseStatus.INTAKE,
+            ProceedingType.GST_SEC73_GENERAL,
+            NoticeForm.DRC_01,
+            datetime(2026, 9, 20, tzinfo=timezone.utc),
+        )
+        hidden = CaseRecord(
+            "CASE-HIDDEN",
+            "F-1",
+            "C-2",
+            None,
+            "Hidden",
+            CaseStatus.INTAKE,
+            ProceedingType.GST_SEC73_GENERAL,
+            NoticeForm.DRC_01,
+            datetime(2026, 9, 21, tzinfo=timezone.utc),
+        )
+        for item in (older, newer, hidden):
+            self.repo.create_case(item)
+
+        self.assertEqual(
+            [
+                item.case_id
+                for item in self.repo.list_cases_for_client("C-1")
+            ],
+            ["CASE-NEW", "CASE-OLD"],
+        )
+
+    def test_authorized_client_workspace_composes_only_selected_client(self):
+        case_repo = mock.Mock()
+        access_repo = mock.Mock()
+        document_store = mock.Mock()
+        principal = AuthenticatedPrincipal("OIDC-" + "e" * 64)
+        access_repo.get_grant.return_value = FirmAccessGrant(
+            user_id=principal.user_id,
+            firm_id="F-1",
+            permissions=frozenset({AccessPermission.CASE_READ}),
+            active=True,
+        )
+        client = Client("C-1", "F-1", "Client", NOW)
+        registration = TaxRegistration(
+            "R-1", "C-1", "IN-GST", "GSTIN", "06AAAAA0000A1Z5", NOW
+        )
+        case_repo.get_client.return_value = client
+        case_repo.list_registrations.return_value = [registration]
+        case_repo.list_cases_for_client.return_value = [mock.Mock()]
+        service = AuthorizedCaseService(
+            case_repo,
+            access_repo,
+            document_store,
+        )
+
+        workspace = service.get_client_workspace(
+            principal,
+            "F-1",
+            client_id="C-1",
+        )
+
+        self.assertIs(workspace.client, client)
+        self.assertEqual(workspace.registrations, [registration])
+        self.assertEqual(len(workspace.cases), 1)
+        case_repo.list_registrations.assert_called_once_with("C-1")
+        case_repo.list_cases_for_client.assert_called_once_with("C-1")
+
+    def test_authorized_client_workspace_rejects_other_firm_client(self):
+        case_repo = mock.Mock()
+        access_repo = mock.Mock()
+        document_store = mock.Mock()
+        principal = AuthenticatedPrincipal("OIDC-" + "e" * 64)
+        access_repo.get_grant.return_value = FirmAccessGrant(
+            user_id=principal.user_id,
+            firm_id="F-1",
+            permissions=frozenset({AccessPermission.CASE_READ}),
+            active=True,
+        )
+        case_repo.get_client.return_value = Client(
+            "C-X", "F-2", "Other Firm Client", NOW
+        )
+        service = AuthorizedCaseService(
+            case_repo,
+            access_repo,
+            document_store,
+        )
+
+        with self.assertRaises(LookupError):
+            service.get_client_workspace(
+                principal,
+                "F-1",
+                client_id="C-X",
+            )
+        case_repo.list_registrations.assert_not_called()
+        case_repo.list_cases_for_client.assert_not_called()
+
+
 class IntakeFailureBoundaryTests(unittest.TestCase):
     def test_repository_failure_deletes_encrypted_object(self):
         repository = mock.Mock()
