@@ -837,8 +837,8 @@ class Step8ContractCompatibilityTests(unittest.TestCase):
         self.assertIs(fact.fact_type, FactType.OTHER_NOTICE_FACT)
         self.assertIs(fact.fact_role, FactRole.NONE)
 
-    def test_fact_role_remains_exactly_22_members(self):
-        self.assertEqual(len(FactRole), 22)
+    def test_fact_role_has_phase3b_additive_24_members(self):
+        self.assertEqual(len(FactRole), 24)
 
 
 class DataclassEqualityTests(unittest.TestCase):
