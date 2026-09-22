@@ -12,6 +12,12 @@ from unittest.mock import Mock, patch
 from domain import evidence_engine as evidence_engine_module
 from domain import evidence_review as evidence_review_module
 from domain import phase2_orchestrator as orchestrator_module
+from domain.analysis_snapshot_models import (
+    ANALYSIS_ENGINE_VERSION,
+    SNAPSHOT_SCHEMA_VERSION,
+    AnalysisSnapshotRef,
+    LoadedAnalysisSnapshot,
+)
 from domain.auth_models import AccessPermission, AuthenticatedPrincipal
 from domain.case_models import (
     CaseDocumentKind,
@@ -487,6 +493,8 @@ def run_app(
     selectbox_values=None,
     persistence_service=None,
     persistence_error=None,
+    snapshot_service=None,
+    snapshot_error=None,
     reopen_result=None,
     reopen_error=None,
 ):
@@ -569,6 +577,18 @@ def run_app(
     persistence_service_mock = Mock(
         return_value=persistence_service
     )
+
+    if snapshot_service is None:
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = []
+    elif isinstance(
+        snapshot_service.list_snapshot_history.return_value,
+        Mock,
+    ):
+        snapshot_service.list_snapshot_history.return_value = []
+    snapshot_service_mock = Mock(return_value=snapshot_service)
+    if snapshot_error is not None:
+        snapshot_service_mock.side_effect = snapshot_error
     if persistence_error is not None:
         persistence_service_mock.side_effect = persistence_error
 
@@ -579,6 +599,7 @@ def run_app(
     fake.db_path_mock = db_path_mock
     fake.firms_mock = firms_mock
     fake.persistence_service_mock = persistence_service_mock
+    fake.snapshot_service_mock = snapshot_service_mock
     fake.reopen_mock = reopen_mock
 
     with (
@@ -598,6 +619,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_case_service",
             persistence_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_analysis_snapshot_service",
+            snapshot_service_mock,
         ),
         patch.object(
             case_reopen_service_module,
@@ -792,6 +818,8 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             "_dwaar_evidence_intake_result": object(),
             "_dwaar_evidence_reviews": [object()],
             "_dwaar_saved_intake_cases": {"old": "CASE-OLD"},
+            "_dwaar_loaded_snapshot_id": "SNAP-OLD",
+            "_dwaar_loaded_snapshot": object(),
         }
         firms = [
             AvailableFirmAccess(
@@ -835,6 +863,8 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             "_dwaar_evidence_intake_result",
             "_dwaar_evidence_reviews",
             "_dwaar_saved_intake_cases",
+            "_dwaar_loaded_snapshot_id",
+            "_dwaar_loaded_snapshot",
         ):
             self.assertNotIn(key, shared_state, key)
         self.assertNotIn("Firm A secret raw text", log_text(fake))
@@ -846,6 +876,8 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             "_dwaar_notice_raw_text": "secret",
             "_dwaar_evidence_reviews": [object()],
             "_dwaar_saved_intake_cases": {"old": "CASE-OLD"},
+            "_dwaar_loaded_snapshot_id": "SNAP-OLD",
+            "_dwaar_loaded_snapshot": object(),
         }
         fake, extractor, runner, _, _, _ = run_app(
             session_state=shared_state,
@@ -860,6 +892,8 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
         self.assertNotIn("_dwaar_notice_raw_text", shared_state)
         self.assertNotIn("_dwaar_evidence_reviews", shared_state)
         self.assertNotIn("_dwaar_saved_intake_cases", shared_state)
+        self.assertNotIn("_dwaar_loaded_snapshot_id", shared_state)
+        self.assertNotIn("_dwaar_loaded_snapshot", shared_state)
 
 
 class SourceBoundaryTests(unittest.TestCase):
@@ -1438,7 +1472,7 @@ class SavedCaseWorkspaceUiTests(unittest.TestCase):
             [
                 call
                 for call in calls_named(fake, "button")
-                if call[1] and call[1][0] == "Open saved case"
+                if call[1] and call[1][0] == "Open / recompute current analysis"
             ],
             [],
         )
@@ -1521,6 +1555,285 @@ class SavedCaseWorkspaceUiTests(unittest.TestCase):
             text.lower(),
         )
         self.assertNotIn("private storage/parser detail", text)
+
+class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
+    def _case(self):
+        return CaseRecord(
+            case_id="CASE-HISTORY",
+            firm_id="F-TEST",
+            client_id="CLIENT-1",
+            registration_id=None,
+            title="Historical matter",
+            status=CaseStatus.ANALYZED,
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _notice(self):
+        return StoredDocumentRef(
+            document_id="DOC-HISTORY",
+            case_id="CASE-HISTORY",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="notice.pdf",
+            media_type="application/pdf",
+            byte_size=len(PDF_BYTES),
+            sha256_hex="a" * 64,
+            storage_key="objects/" + "b" * 32,
+            created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _snapshot(self, snapshot_id="SNAP-001"):
+        return AnalysisSnapshotRef(
+            snapshot_id=snapshot_id,
+            case_id="CASE-HISTORY",
+            source_document_id="DOC-HISTORY",
+            source_document_sha256="a" * 64,
+            schema_version=SNAPSHOT_SCHEMA_VERSION,
+            engine_version=ANALYSIS_ENGINE_VERSION,
+            byte_size=321,
+            sha256_hex="c" * 64,
+            storage_key="objects/" + "d" * 32,
+            created_at=datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc),
+            created_by="OIDC-" + "e" * 64,
+        )
+
+    def _loaded(self):
+        return LoadedAnalysisSnapshot(
+            metadata=self._snapshot(),
+            payload={
+                "schema_version": SNAPSHOT_SCHEMA_VERSION,
+                "engine_version": ANALYSIS_ENGINE_VERSION,
+                "source": {
+                    "document_id": "DOC-HISTORY",
+                    "sha256": "a" * 64,
+                },
+                "classification": {
+                    "notice_family": "demand_adjudication",
+                    "notice_form": "drc_01",
+                    "proceeding_type": "gst_sec73_itc",
+                    "support_level": "deep_workflow",
+                    "confidence": "high",
+                    "classification_reasons": ["fixture"],
+                },
+                "extraction": {
+                    "status": "success",
+                    "rejected_item_count": 0,
+                    "facts": [
+                        {
+                            "fact_id": "F-001",
+                            "fact_type": "stated_amount",
+                            "fact_role": "gstr3b_itc_claimed_amount",
+                            "claim": "Historical claim",
+                            "status": "confirmed",
+                            "source_text": "Historical exact quote",
+                            "source_page": 1,
+                            "source_origin": "embedded",
+                            "source_verification": "verified",
+                            "allowed_in_draft": "yes",
+                        }
+                    ],
+                },
+                "deadline": {
+                    "response_deadline": "2026-09-01",
+                    "deadline_status": "passed",
+                },
+                "preflight": {},
+                "arithmetic": [],
+                "validation": {
+                    "overall_status": "warning",
+                    "draft_eligibility": "review_required",
+                    "case_severity": None,
+                },
+                "draft": {
+                    "sections": [
+                        {
+                            "section_id": "S-001",
+                            "title": "Historical draft section",
+                            "rendered_text": "Historical rendered draft text",
+                        }
+                    ]
+                },
+                "triage_summary": None,
+            },
+        )
+
+    def _firm(self, *permissions):
+        return AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset(permissions),
+        )
+
+    def _case_service(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        return service
+
+    def _reopened(self):
+        return ReopenedCaseAnalysis(
+            case=self._case(),
+            notice_document=self._notice(),
+            notice_pdf_bytes=PDF_BYTES,
+            document_pages=DOCUMENT_PAGES,
+            raw_text=RAW_TEXT,
+            analysis=make_result(),
+        )
+
+    def test_case_read_only_sees_snapshot_metadata_without_payload_access(self):
+        case_service = self._case_service()
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot()
+        ]
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(AccessPermission.CASE_READ)
+            ],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+        )
+
+        text = log_text(fake)
+        self.assertIn("Analysis history", text)
+        self.assertIn("SNAP-001", text)
+        self.assertIn(ANALYSIS_ENGINE_VERSION, text)
+        self.assertIn(
+            "do not have permission to read historical",
+            text,
+        )
+        snapshot_service.load_snapshot.assert_not_called()
+        self.assertNotIn("Historical exact quote", text)
+
+    def test_historical_snapshot_can_be_viewed_without_current_recompute(self):
+        case_service = self._case_service()
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot()
+        ]
+        snapshot_service.load_snapshot.return_value = self._loaded()
+
+        fake, _, runner, _, _, _ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(
+                    AccessPermission.CASE_READ,
+                    AccessPermission.DOCUMENT_READ,
+                )
+            ],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            button_values={"view_snapshot_SNAP-001": True},
+        )
+
+        fake.reopen_mock.assert_not_called()
+        runner.assert_not_called()
+        snapshot_service.load_snapshot.assert_called_once()
+        text = log_text(fake)
+        self.assertIn("Historical analysis snapshot", text)
+        self.assertIn("Historical exact quote", text)
+        self.assertIn("Historical rendered draft text", text)
+        self.assertIn("Historical record only", text)
+        self.assertNotIn("Classification and support", headers(fake))
+
+    def test_current_recompute_can_be_saved_as_new_snapshot(self):
+        case_service = self._case_service()
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = []
+        snapshot_service.save_current_analysis.return_value = (
+            self._snapshot("SNAP-NEW")
+        )
+        reopened = self._reopened()
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(
+                    AccessPermission.CASE_READ,
+                    AccessPermission.DOCUMENT_READ,
+                    AccessPermission.CASE_UPDATE,
+                )
+            ],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            reopen_result=reopened,
+            button_values={
+                "open_saved_case_CASE-HISTORY": True,
+                "save_analysis_snapshot_CASE-HISTORY": True,
+            },
+        )
+
+        snapshot_service.save_current_analysis.assert_called_once()
+        args = snapshot_service.save_current_analysis.call_args
+        self.assertIsInstance(args.args[0], AuthenticatedPrincipal)
+        self.assertEqual(args.args[1], "F-TEST")
+        self.assertEqual(args.kwargs["case_id"], "CASE-HISTORY")
+        self.assertIs(args.kwargs["analysis"], reopened.analysis)
+        self.assertIsNotNone(args.kwargs["created_at"].tzinfo)
+        self.assertIn("SNAP-NEW", log_text(fake))
+
+    def test_case_without_update_permission_has_no_snapshot_save_button(self):
+        case_service = self._case_service()
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = []
+        reopened = self._reopened()
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(
+                    AccessPermission.CASE_READ,
+                    AccessPermission.DOCUMENT_READ,
+                )
+            ],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            reopen_result=reopened,
+            button_values={"open_saved_case_CASE-HISTORY": True},
+        )
+
+        save_buttons = [
+            call
+            for call in calls_named(fake, "button")
+            if call[2].get("key", "").startswith(
+                "save_analysis_snapshot_"
+            )
+        ]
+        self.assertEqual(save_buttons, [])
+        snapshot_service.save_current_analysis.assert_not_called()
+
+    def test_historical_snapshot_load_failure_hides_internal_detail(self):
+        case_service = self._case_service()
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot()
+        ]
+        snapshot_service.load_snapshot.side_effect = RuntimeError(
+            "private ciphertext/key detail"
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[
+                self._firm(
+                    AccessPermission.CASE_READ,
+                    AccessPermission.DOCUMENT_READ,
+                )
+            ],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            button_values={"view_snapshot_SNAP-001": True},
+        )
+
+        text = log_text(fake)
+        self.assertIn(
+            "historical analysis could not be loaded",
+            text.lower(),
+        )
+        self.assertNotIn("private ciphertext/key detail", text)
+
 
 class DurableIntakeUiTests(unittest.TestCase):
     def _save_keys(self):
