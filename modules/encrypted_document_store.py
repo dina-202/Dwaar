@@ -136,14 +136,14 @@ class EncryptedLocalDocumentStore:
                 handle.flush()
                 os.fsync(handle.fileno())
 
-            # Refuse an overwrite even if another process created the target
-            # after the initial existence check.
-            if path.exists():
+            # Atomically publish without overwrite. Hard-link creation
+            # fails if another writer already claimed the same storage key.
+            try:
+                os.link(temp_path, path)
+            except FileExistsError as error:
                 raise DocumentAlreadyExistsError(
                     "document storage key already exists"
-                )
-            os.replace(temp_path, path)
-            temp_path = None
+                ) from error
         finally:
             if temp_path is not None:
                 try:
