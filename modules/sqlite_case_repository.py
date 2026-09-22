@@ -27,7 +27,7 @@ from domain.case_models import (
 from domain.models import NoticeForm, ProceedingType
 
 
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _PROHIBITED_EVENT_KEYS = frozenset(
     {
         "raw_text",
@@ -261,6 +261,34 @@ class LocalSQLiteCaseRepository:
 
                 CREATE INDEX IF NOT EXISTS ix_draft_versions_case_version
                     ON draft_versions(case_id, version_number);
+
+                CREATE TABLE IF NOT EXISTS filing_records (
+                    filing_id TEXT PRIMARY KEY,
+                    case_id TEXT NOT NULL,
+                    approved_draft_version_id TEXT NOT NULL,
+                    filed_response_document_id TEXT NOT NULL,
+                    acknowledgement_document_id TEXT,
+                    filing_reference TEXT NOT NULL,
+                    filed_at TEXT NOT NULL,
+                    filed_by TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    acknowledgement_added_at TEXT,
+                    acknowledgement_added_by TEXT,
+                    FOREIGN KEY (case_id) REFERENCES cases(case_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    FOREIGN KEY (approved_draft_version_id)
+                        REFERENCES draft_versions(draft_version_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    FOREIGN KEY (filed_response_document_id)
+                        REFERENCES case_documents(document_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    FOREIGN KEY (acknowledgement_document_id)
+                        REFERENCES case_documents(document_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_filing_records_case_time
+                    ON filing_records(case_id, filed_at, filing_id);
                 """
             )
             current = connection.execute(
@@ -273,10 +301,10 @@ class LocalSQLiteCaseRepository:
                 )
             else:
                 current_version = int(current["value"])
-                if current_version in (1, 2, 3):
-                    # v2 added analysis_snapshots; v3 evidence_reviews;
-                    # v4 draft_versions. Tables are created idempotently
-                    # above, so this explicit bump records migration.
+                if current_version in (1, 2, 3, 4):
+                    # v2 analysis_snapshots; v3 evidence_reviews;
+                    # v4 draft_versions; v5 filing_records. Tables are
+                    # created idempotently above; this bump records migration.
                     connection.execute(
                         """
                         UPDATE schema_meta
