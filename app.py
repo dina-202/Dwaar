@@ -33,6 +33,7 @@ from modules.runtime_persistence import (
     build_authorized_evidence_review_service,
     build_authorized_evidence_workspace_service,
     build_authorized_filing_service,
+    build_authorized_legal_brief_service,
 )
 from modules.case_reopen_service import (
     SavedCaseReopenError,
@@ -690,6 +691,158 @@ def _render_snapshot_history(
         key=f"snapshot_selector_{reopened.case.case_id}",
     )
     selected = labels[selected_label]
+
+    st.subheader("Legal research history")
+    try:
+        legal_brief_service = build_authorized_legal_brief_service()
+        legal_briefs = legal_brief_service.list_for_snapshot(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+            snapshot_id=selected.snapshot_id,
+        )
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Legal research history storage is not fully configured on "
+            "this deployment."
+        )
+        legal_briefs = None
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to view legal research "
+            "history for this case."
+        )
+        legal_briefs = None
+    except Exception:
+        st.error("Legal research history could not be loaded.")
+        legal_briefs = None
+
+    if legal_briefs is not None:
+        if AccessPermission.CASE_UPDATE in active_firm.permissions:
+            if st.button(
+                "Save verified legal brief for snapshot",
+                key=f"save_legal_brief_{selected.snapshot_id}",
+            ):
+                try:
+                    saved_brief = legal_brief_service.save_for_snapshot(
+                        principal,
+                        active_firm.firm_id,
+                        case_id=reopened.case.case_id,
+                        snapshot_id=selected.snapshot_id,
+                        created_at=datetime.now(timezone.utc),
+                    )
+                except PermissionError:
+                    st.error(
+                        "Your account is no longer authorized to save legal "
+                        "research history for this case."
+                    )
+                except ValueError as error:
+                    st.error(str(error))
+                except Exception:
+                    st.error("The verified legal brief could not be saved.")
+                else:
+                    st.write(
+                        {
+                            "saved_legal_brief_id": (
+                                saved_brief.legal_brief_id
+                            ),
+                            "catalog_version": saved_brief.catalog_version,
+                            "legal_as_of_date": (
+                                saved_brief.as_of_date.isoformat()
+                            ),
+                        }
+                    )
+                    try:
+                        legal_briefs = legal_brief_service.list_for_snapshot(
+                            principal,
+                            active_firm.firm_id,
+                            case_id=reopened.case.case_id,
+                            snapshot_id=selected.snapshot_id,
+                        )
+                    except Exception:
+                        st.error(
+                            "The legal brief was saved, but legal research "
+                            "history could not be refreshed."
+                        )
+                        legal_briefs = None
+
+        if legal_briefs:
+            st.dataframe(
+                [
+                    {
+                        "legal_brief_id": item.legal_brief_id,
+                        "created_at": item.created_at.isoformat(),
+                        "catalog_version": item.catalog_version,
+                        "as_of_date": item.as_of_date.isoformat(),
+                        "proceeding_type": item.proceeding_type.value,
+                    }
+                    for item in legal_briefs
+                ],
+                hide_index=True,
+            )
+            brief_labels = {
+                (
+                    f"{item.created_at.isoformat()} — "
+                    f"{item.catalog_version} — {item.legal_brief_id}"
+                ): item
+                for item in legal_briefs
+            }
+            brief_label = st.selectbox(
+                "Saved legal brief",
+                list(brief_labels),
+                key=f"legal_brief_selector_{selected.snapshot_id}",
+            )
+            selected_brief = brief_labels[brief_label]
+            if st.button(
+                "View saved legal brief",
+                key=f"view_legal_brief_{selected_brief.legal_brief_id}",
+            ):
+                try:
+                    loaded_brief = legal_brief_service.load(
+                        principal,
+                        active_firm.firm_id,
+                        case_id=reopened.case.case_id,
+                        legal_brief_id=selected_brief.legal_brief_id,
+                    )
+                except PermissionError:
+                    st.error(
+                        "Your account is no longer authorized to view this "
+                        "legal brief."
+                    )
+                except LookupError:
+                    st.error(
+                        "The selected legal brief is no longer available."
+                    )
+                except Exception:
+                    st.error("The saved legal brief could not be loaded.")
+                else:
+                    st.caption(
+                        "Historical verified legal research. Preserved for "
+                        "audit/history; it does not update with the current "
+                        "catalog."
+                    )
+                    if loaded_brief.payload["matches"]:
+                        st.dataframe(
+                            loaded_brief.payload["matches"],
+                            hide_index=True,
+                        )
+                    else:
+                        st.write(
+                            "No verified legal proposition was preserved."
+                        )
+                    if loaded_brief.payload["unresolved_topics"]:
+                        st.warning(
+                            "CA legal research remained required for: "
+                            + ", ".join(
+                                loaded_brief.payload[
+                                    "unresolved_topics"
+                                ]
+                            )
+                        )
+        elif legal_briefs == []:
+            st.write(
+                "No saved legal brief for this analysis snapshot yet."
+            )
 
     if st.button(
         "View historical snapshot",
