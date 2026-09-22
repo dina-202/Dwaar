@@ -80,6 +80,8 @@ from domain.models import (
     RequirementStatus,
     ReviewLevel,
     ReviewRequirement,
+    SourceTextOrigin,
+    SourceVerificationStatus,
     SpecialRuleHandling,
     SupportLevel,
     ValidationEngineResult,
@@ -106,6 +108,7 @@ FACT_INVARIANT_IDS = (
     "fact.alleged_draft_permission",
     "fact.fact_id_present",
     "fact.source_text_present",
+    "fact.source_verification",
     "fact.fact_id_unique",
     "fact.role_compatibility",
 )
@@ -1000,7 +1003,7 @@ class ExtractionHealthTests(unittest.TestCase):
 # --- D. Fact invariants -----------------------------------------------------
 
 class FactInvariantTests(unittest.TestCase):
-    """§19.60 / §19.28: the ten fixed invariant items."""
+    """Phase-2 invariants plus Phase-3 source-verification safety."""
 
     def test_clean_facts_make_all_ten_invariant_checks_pass(self):
         result = run_defaults(extraction=make_extraction(facts=clean_facts()))
@@ -1010,6 +1013,28 @@ class FactInvariantTests(unittest.TestCase):
             self.assertIs(item.status, ValidationStatus.PASS, check_id)
             self.assertEqual(item.related_fact_ids, [], check_id)
             self.assertEqual(item.related_calculation_types, [], check_id)
+
+    def test_unverified_ocr_source_fails_and_blocks_drafting(self):
+        offender = make_fact(
+            "F-OCR",
+            "OCR-derived date",
+            FactStatus.CONFIRMED,
+            "Date: 17-08-2026",
+            DraftPermission.YES,
+            FactType.NOTICE_DATE,
+            FactRole.NONE,
+        )
+        offender.source_origin = SourceTextOrigin.OCR
+        offender.source_verification = (
+            SourceVerificationStatus.REQUIRES_VERIFICATION
+        )
+        result = run_defaults(
+            extraction=make_extraction(facts=[offender])
+        )
+        item = get_item(result.checks, "fact.source_verification")
+        self.assertIs(item.status, ValidationStatus.FAIL)
+        self.assertEqual(item.related_fact_ids, ["F-OCR"])
+        self.assertIs(result.draft_eligibility, DraftEligibility.BLOCKED)
 
     def test_department_allegation_wrong_status_fail(self):
         offender = make_fact(

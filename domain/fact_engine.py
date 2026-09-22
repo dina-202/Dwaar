@@ -26,6 +26,7 @@ import json
 from typing import Dict, List, Optional, Tuple
 
 from domain.models import (
+    DocumentPageText,
     DraftPermission,
     ExtractedFact,
     FactExtractionResult,
@@ -34,6 +35,8 @@ from domain.models import (
     FactStatus,
     FactType,
     NoticeClassification,
+    SourceTextOrigin,
+    SourceVerificationStatus,
 )
 from modules.llm_client import call_gemini
 
@@ -471,11 +474,54 @@ def _validate_item_with_pages(
     )
 
 
+def _source_metadata(
+    source_text: str,
+    source_page: Optional[int],
+    document_pages: List[DocumentPageText],
+) -> Tuple[SourceTextOrigin, SourceVerificationStatus]:
+    """Resolve extraction-channel trust independently from FactStatus."""
+    matches = [
+        page for page in document_pages
+        if source_text in page.text
+    ]
+    if source_page is not None:
+        matches = [
+            page for page in matches
+            if page.page_number == source_page
+        ]
+
+    if len(matches) == 1:
+        return matches[0].origin, matches[0].verification
+
+    if not matches:
+        return (
+            SourceTextOrigin.UNKNOWN,
+            SourceVerificationStatus.REQUIRES_VERIFICATION,
+        )
+
+    origins = {page.origin for page in matches}
+    origin = (
+        next(iter(origins))
+        if len(origins) == 1
+        else SourceTextOrigin.MIXED
+    )
+    verification = (
+        SourceVerificationStatus.VERIFIED
+        if all(
+            page.verification is SourceVerificationStatus.VERIFIED
+            for page in matches
+        )
+        else SourceVerificationStatus.REQUIRES_VERIFICATION
+    )
+    return origin, verification
+
+
 def _extract_facts_result(
     raw_text: str,
     classification: NoticeClassification,
     prompt: str,
     page_texts: Optional[List[str]] = None,
+    document_pages: Optional[List[DocumentPageText]] = None,
 ) -> FactExtractionResult:
     """Shared one-call extraction implementation for legacy and page-aware APIs."""
     try:
@@ -511,6 +557,15 @@ def _extract_facts_result(
         fact_type, fact_role, claim, source_text, source_page = validated
         status = _status_for_fact_type(fact_type)
         permission = _draft_permission_for_status(status)
+        if document_pages is None:
+            source_origin = SourceTextOrigin.EMBEDDED
+            source_verification = SourceVerificationStatus.VERIFIED
+        else:
+            source_origin, source_verification = _source_metadata(
+                source_text,
+                source_page,
+                document_pages,
+            )
         fact_id = f"F-{len(accepted) + 1:03d}"
         accepted.append(
             ExtractedFact(
@@ -522,6 +577,8 @@ def _extract_facts_result(
                 allowed_in_draft=permission,
                 fact_type=fact_type,
                 fact_role=fact_role,
+                source_origin=source_origin,
+                source_verification=source_verification,
             )
         )
 
@@ -618,6 +675,52 @@ def extract_facts_with_page_provenance(
         classification,
         prompt,
         page_texts=page_texts,
+    )
+
+
+def extract_facts_with_document_provenance(
+    raw_text: str,
+    classification: NoticeClassification,
+    document_pages: List[DocumentPageText],
+) -> FactExtractionResult:
+    """Extract facts with page and extraction-channel provenance.
+
+    OCR-derived facts retain their normal FactStatus (for example an
+    allegation remains ALLEGED) while source_verification independently
+    records that the recognized text requires human verification.
+    """
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.NO_INPUT
+        )
+    if (
+        not isinstance(document_pages, list)
+        or not document_pages
+        or any(
+            not isinstance(page, DocumentPageText)
+            or page.page_number != index
+            for index, page in enumerate(document_pages, start=1)
+        )
+    ):
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.FAILED
+        )
+
+    page_texts = [page.text for page in document_pages]
+    if "".join(page_texts) != raw_text:
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.FAILED
+        )
+
+    prompt = _build_page_aware_extraction_prompt(
+        raw_text, classification, page_texts
+    )
+    return _extract_facts_result(
+        raw_text,
+        classification,
+        prompt,
+        page_texts=page_texts,
+        document_pages=document_pages,
     )
 
 

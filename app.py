@@ -5,8 +5,9 @@ from datetime import date
 import streamlit as st
 
 from domain.models import DraftGenerationStatus, ValidationStatus
-from domain.phase2_orchestrator import run_phase2_analysis_from_pages
-from modules.pdf_reader import extract_page_texts
+from domain.phase2_orchestrator import run_phase2_analysis_from_document_pages
+from domain.models import SourceTextOrigin
+from modules.pdf_reader import extract_document_pages
 
 
 def _display(value):
@@ -68,6 +69,8 @@ def _render_phase2_result(result):
                     "status": fact.status.value,
                     "source_text": _display(fact.source_text),
                     "source_page": _display(fact.source_page),
+                    "source_origin": fact.source_origin.value,
+                    "source_verification": fact.source_verification.value,
                     "allowed_in_draft": fact.allowed_in_draft.value,
                 }
                 for fact in extraction.facts
@@ -260,18 +263,32 @@ uploaded = st.file_uploader("Upload notice PDF", type="pdf")
 if uploaded:
     pdf_bytes = uploaded.read()
     try:
-        page_texts = extract_page_texts(pdf_bytes)
-        raw_text = "".join(page_texts)
+        document_pages = extract_document_pages(pdf_bytes)
+        raw_text = "".join(page.text for page in document_pages)
     except RuntimeError as error:
         st.error(str(error))
     else:
         today = date.today()
         try:
             with st.spinner("Analyzing notice..."):
-                result = run_phase2_analysis_from_pages(page_texts, today)
+                result = run_phase2_analysis_from_document_pages(
+                    document_pages, today
+                )
         except Exception:
             st.error("Phase-2 analysis could not be completed.")
         else:
+            ocr_pages = [
+                page.page_number
+                for page in document_pages
+                if page.origin is SourceTextOrigin.OCR
+            ]
+            if ocr_pages:
+                st.warning(
+                    "OCR was used on scanned page(s): "
+                    + ", ".join(str(page) for page in ocr_pages)
+                    + ". OCR-derived facts require verification and block "
+                    "specialist drafting until reviewed."
+                )
             _render_phase2_result(result)
             with st.expander("Extracted notice text"):
                 st.text(raw_text)
