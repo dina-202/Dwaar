@@ -561,6 +561,8 @@ def run_app(
     if persistence_service is None:
         persistence_service = Mock()
         persistence_service.list_cases.return_value = []
+    elif isinstance(persistence_service.list_cases.return_value, Mock):
+        persistence_service.list_cases.return_value = []
     persistence_service_mock = Mock(
         return_value=persistence_service
     )
