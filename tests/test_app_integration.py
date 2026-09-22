@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from domain import evidence_engine as evidence_engine_module
 from domain import evidence_review as evidence_review_module
 from domain import phase2_orchestrator as orchestrator_module
+from domain.auth_models import AccessPermission, AuthenticatedPrincipal
 from domain.models import (
     ArithmeticCalculationType,
     ArithmeticResult,
@@ -64,6 +65,12 @@ from domain.models import (
 )
 from modules import evidence_workspace as evidence_workspace_module
 from modules import pdf_reader
+from modules import runtime_access as runtime_access_module
+from modules.runtime_access import (
+    AvailableFirmAccess,
+    RuntimeAccessConfigurationError,
+    RuntimeAccessConsistencyError,
+)
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -84,6 +91,26 @@ RAW_CANDIDATE_SENTINEL = "RAW PROVIDER CANDIDATE MUST NEVER RENDER"
 RENDERED_ONE = "Rendered specialist section one."
 RENDERED_TWO = "Rendered specialist section two."
 CLAIM_SENTINEL = "EXTRACTED CLAIM MUST NOT BECOME DRAFT PROSE"
+DEFAULT_USER_CLAIMS = {
+    "iss": "https://issuer.test",
+    "sub": "test-user-subject",
+    "exp": 4102444800,
+}
+
+
+class _StopExecution(Exception):
+    pass
+
+
+class _FakeUser:
+    def __init__(self, logged_in=True, claims=None):
+        self.is_logged_in = logged_in
+        self._claims = dict(
+            DEFAULT_USER_CLAIMS if claims is None else claims
+        )
+
+    def to_dict(self):
+        return dict(self._claims)
 
 
 class _UploadedFile:
@@ -120,12 +147,16 @@ class FakeStreamlit:
         button_values=None,
         text_values=None,
         session_state=None,
+        user=None,
+        selectbox_values=None,
     ):
         self.uploaded = uploaded
         self.supporting_uploads = supporting_uploads or []
         self.button_values = button_values or {}
         self.text_values = text_values or {}
         self.session_state = {} if session_state is None else session_state
+        self.user = user or _FakeUser()
+        self.selectbox_values = selectbox_values or {}
         self.calls = []
 
     def _record(self, name, *args, **kwargs):
@@ -157,6 +188,25 @@ class FakeStreamlit:
     def button(self, *args, **kwargs):
         self._record("button", *args, **kwargs)
         return bool(self.button_values.get(kwargs.get("key"), False))
+
+    def selectbox(self, *args, **kwargs):
+        self._record("selectbox", *args, **kwargs)
+        options = args[1] if len(args) > 1 else kwargs.get("options", [])
+        key = kwargs.get("key")
+        return self.selectbox_values.get(
+            key,
+            options[0] if options else None,
+        )
+
+    def login(self, *args, **kwargs):
+        self._record("login", *args, **kwargs)
+
+    def logout(self, *args, **kwargs):
+        self._record("logout", *args, **kwargs)
+
+    def stop(self):
+        self._record("stop")
+        raise _StopExecution()
 
     def spinner(self, *args, **kwargs):
         self._record("spinner", *args, **kwargs)
@@ -414,6 +464,12 @@ def run_app(
     button_values=None,
     text_values=None,
     evidence_intake_result=None,
+    logged_in=True,
+    user_claims=None,
+    available_firms=None,
+    access_error=None,
+    database_path_error=None,
+    selectbox_values=None,
 ):
     events = []
     uploaded = _UploadedFile(events) if upload else None
@@ -423,8 +479,20 @@ def run_app(
         button_values=button_values,
         text_values=text_values,
         session_state=session_state,
+        user=_FakeUser(
+            logged_in=logged_in,
+            claims=user_claims,
+        ),
+        selectbox_values=selectbox_values,
     )
     result = result or make_result()
+    if available_firms is None:
+        available_firms = [
+            AvailableFirmAccess(
+                firm_id="F-TEST",
+                display_name="Test Firm",
+            )
+        ]
 
     class FixedDate(date):
         calls = 0
@@ -461,10 +529,28 @@ def run_app(
         return original_evidence(*args, **kwargs)
 
     evidence_mock.side_effect = evidence_side_effect
+    db_path_mock = Mock(return_value="test-dwaar.db")
+    if database_path_error is not None:
+        db_path_mock.side_effect = database_path_error
+    firms_mock = Mock(return_value=available_firms)
+    if access_error is not None:
+        firms_mock.side_effect = access_error
+    fake.db_path_mock = db_path_mock
+    fake.firms_mock = firms_mock
 
     with (
         patch.dict(sys.modules, {"streamlit": fake}),
         patch("datetime.date", FixedDate),
+        patch.object(
+            runtime_access_module,
+            "database_path_from_environment",
+            db_path_mock,
+        ),
+        patch.object(
+            runtime_access_module,
+            "load_available_firms",
+            firms_mock,
+        ),
         patch.object(pdf_reader, "extract_document_pages", extract_mock),
         patch.object(
             orchestrator_module,
@@ -482,7 +568,13 @@ def run_app(
             return_value=[],
         ),
     ):
-        runpy.run_path(str(APP_PATH), run_name="__app_integration_test__")
+        try:
+            runpy.run_path(
+                str(APP_PATH),
+                run_name="__app_integration_test__",
+            )
+        except _StopExecution:
+            pass
 
     return (
         fake,
@@ -492,6 +584,173 @@ def run_app(
         events,
         FixedDate.calls,
     )
+
+
+class AuthenticationAndFirmGateTests(unittest.TestCase):
+    def test_logged_out_user_stops_before_upload_or_access_lookup(self):
+        fake, extractor, runner, _, events, today_calls = run_app(
+            logged_in=False,
+        )
+        extractor.assert_not_called()
+        runner.assert_not_called()
+        fake.db_path_mock.assert_not_called()
+        fake.firms_mock.assert_not_called()
+        self.assertEqual(events, [])
+        self.assertEqual(today_calls, 0)
+        self.assertEqual(calls_named(fake, "file_uploader"), [])
+        self.assertIn("Sign in to access", log_text(fake))
+        self.assertTrue(calls_named(fake, "stop"))
+
+    def test_logged_out_sign_in_button_invokes_streamlit_login(self):
+        fake, *_ = run_app(
+            logged_in=False,
+            button_values={"dwaar_sign_in": True},
+        )
+        self.assertEqual(len(calls_named(fake, "login")), 1)
+        self.assertTrue(calls_named(fake, "stop"))
+
+    def test_unprovisioned_user_never_reaches_uploader(self):
+        fake, extractor, runner, _, _, _ = run_app(
+            available_firms=[],
+        )
+        extractor.assert_not_called()
+        runner.assert_not_called()
+        self.assertEqual(calls_named(fake, "file_uploader"), [])
+        self.assertIn("not provisioned to create cases", log_text(fake))
+        self.assertIn("OIDC-", log_text(fake))
+        fake.db_path_mock.assert_called_once_with()
+        fake.firms_mock.assert_called_once()
+        _, args, _ = fake.firms_mock.mock_calls[0]
+        self.assertIsInstance(args[0], AuthenticatedPrincipal)
+        self.assertEqual(args[1], "test-dwaar.db")
+        self.assertIs(args[2], AccessPermission.CASE_CREATE)
+
+    def test_expired_oidc_identity_stops_before_firm_lookup(self):
+        fake, extractor, runner, _, _, _ = run_app(
+            user_claims={
+                "iss": "https://issuer.test",
+                "sub": "expired-user",
+                "exp": 1,
+            },
+        )
+        extractor.assert_not_called()
+        runner.assert_not_called()
+        fake.db_path_mock.assert_not_called()
+        fake.firms_mock.assert_not_called()
+        self.assertEqual(calls_named(fake, "file_uploader"), [])
+        self.assertIn("expired", log_text(fake).lower())
+
+    def test_database_configuration_failure_is_generic_and_closed(self):
+        fake, extractor, runner, _, _, _ = run_app(
+            database_path_error=RuntimeAccessConfigurationError(
+                "private path detail"
+            )
+        )
+        extractor.assert_not_called()
+        runner.assert_not_called()
+        fake.firms_mock.assert_not_called()
+        text = log_text(fake)
+        self.assertIn("case storage is not configured", text)
+        self.assertNotIn("private path detail", text)
+        self.assertEqual(calls_named(fake, "file_uploader"), [])
+
+    def test_access_consistency_failure_is_generic_and_closed(self):
+        fake, extractor, runner, _, _, _ = run_app(
+            access_error=RuntimeAccessConsistencyError(
+                "private database detail"
+            )
+        )
+        extractor.assert_not_called()
+        runner.assert_not_called()
+        text = log_text(fake)
+        self.assertIn("access configuration is inconsistent", text)
+        self.assertNotIn("private database detail", text)
+        self.assertEqual(calls_named(fake, "file_uploader"), [])
+
+    def test_default_authorized_path_requires_case_create(self):
+        fake, *_ = run_app(upload=False)
+        fake.db_path_mock.assert_called_once_with()
+        fake.firms_mock.assert_called_once()
+        args = fake.firms_mock.call_args.args
+        self.assertIsInstance(args[0], AuthenticatedPrincipal)
+        self.assertEqual(args[1], "test-dwaar.db")
+        self.assertIs(args[2], AccessPermission.CASE_CREATE)
+        self.assertIn("Active firm: Test Firm (F-TEST)", log_text(fake))
+
+    def test_multi_firm_selection_uses_selected_firm(self):
+        firms = [
+            AvailableFirmAccess("F-1", "Alpha"),
+            AvailableFirmAccess("F-2", "Beta"),
+        ]
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=firms,
+            selectbox_values={
+                "dwaar_active_firm_selector": "Beta (F-2)"
+            },
+        )
+        self.assertEqual(len(calls_named(fake, "selectbox")), 1)
+        self.assertIn("Active firm: Beta (F-2)", log_text(fake))
+        self.assertEqual(
+            fake.session_state["_dwaar_active_firm_id"],
+            "F-2",
+        )
+
+    def test_switching_firms_clears_notice_and_evidence_session_state(self):
+        shared_state = {
+            "_dwaar_active_firm_id": "F-1",
+            "_dwaar_notice_analysis_key": "notice-key",
+            "_dwaar_notice_analysis_result": object(),
+            "_dwaar_notice_document_pages": ["secret page"],
+            "_dwaar_notice_raw_text": "Firm A secret raw text",
+            "_dwaar_evidence_workspace_key": "evidence-key",
+            "_dwaar_evidence_intake_result": object(),
+            "_dwaar_evidence_reviews": [object()],
+        }
+        firms = [
+            AvailableFirmAccess("F-1", "Alpha"),
+            AvailableFirmAccess("F-2", "Beta"),
+        ]
+        fake, *_ = run_app(
+            upload=False,
+            session_state=shared_state,
+            available_firms=firms,
+            selectbox_values={
+                "dwaar_active_firm_selector": "Beta (F-2)"
+            },
+        )
+        self.assertEqual(shared_state["_dwaar_active_firm_id"], "F-2")
+        for key in (
+            "_dwaar_notice_analysis_key",
+            "_dwaar_notice_analysis_result",
+            "_dwaar_notice_document_pages",
+            "_dwaar_notice_raw_text",
+            "_dwaar_evidence_workspace_key",
+            "_dwaar_evidence_intake_result",
+            "_dwaar_evidence_reviews",
+        ):
+            self.assertNotIn(key, shared_state, key)
+        self.assertNotIn("Firm A secret raw text", log_text(fake))
+
+    def test_logout_clears_workspace_and_stops_before_uploader(self):
+        shared_state = {
+            "_dwaar_active_firm_id": "F-TEST",
+            "_dwaar_notice_analysis_key": "notice-key",
+            "_dwaar_notice_raw_text": "secret",
+            "_dwaar_evidence_reviews": [object()],
+        }
+        fake, extractor, runner, _, _, _ = run_app(
+            session_state=shared_state,
+            button_values={"dwaar_logout": True},
+        )
+        extractor.assert_not_called()
+        runner.assert_not_called()
+        self.assertEqual(len(calls_named(fake, "logout")), 1)
+        self.assertEqual(calls_named(fake, "file_uploader"), [])
+        self.assertNotIn("_dwaar_active_firm_id", shared_state)
+        self.assertNotIn("_dwaar_notice_analysis_key", shared_state)
+        self.assertNotIn("_dwaar_notice_raw_text", shared_state)
+        self.assertNotIn("_dwaar_evidence_reviews", shared_state)
 
 
 class SourceBoundaryTests(unittest.TestCase):
@@ -508,12 +767,15 @@ class SourceBoundaryTests(unittest.TestCase):
             {
                 "datetime",
                 "streamlit",
+                "domain.auth_models",
                 "domain.evidence_engine",
                 "domain.evidence_review",
                 "domain.models",
                 "domain.phase2_orchestrator",
                 "modules.evidence_workspace",
                 "modules.pdf_reader",
+                "modules.runtime_access",
+                "modules.runtime_security",
             },
         )
         self.assertIn("run_phase2_analysis_from_document_pages", SOURCE)

@@ -4,6 +4,7 @@ from datetime import date
 
 import streamlit as st
 
+from domain.auth_models import AccessPermission
 from domain.evidence_engine import propose_evidence_candidates
 from domain.evidence_review import (
     create_evidence_review,
@@ -22,6 +23,18 @@ from modules.evidence_workspace import (
     notice_analysis_key,
 )
 from modules.pdf_reader import extract_document_pages
+from modules.runtime_access import (
+    RuntimeAccessConfigurationError,
+    RuntimeAccessConsistencyError,
+    database_path_from_environment,
+    load_available_firms,
+)
+from modules.runtime_security import (
+    AuthenticationExpiredError,
+    AuthenticationNotYetValidError,
+    AuthenticationRequiredError,
+    principal_from_streamlit_user,
+)
 
 
 def _display(value):
@@ -270,6 +283,7 @@ _NOTICE_RAW_TEXT = "_dwaar_notice_raw_text"
 _EVIDENCE_KEY = "_dwaar_evidence_workspace_key"
 _EVIDENCE_INTAKE = "_dwaar_evidence_intake_result"
 _EVIDENCE_REVIEWS = "_dwaar_evidence_reviews"
+_ACTIVE_FIRM_KEY = "_dwaar_active_firm_id"
 
 
 def _uploaded_bytes(uploaded_file):
@@ -282,6 +296,127 @@ def _uploaded_bytes(uploaded_file):
 def _reset_evidence_workspace():
     for key in (_EVIDENCE_KEY, _EVIDENCE_INTAKE, _EVIDENCE_REVIEWS):
         st.session_state.pop(key, None)
+
+
+def _reset_notice_workspace():
+    for key in (
+        _NOTICE_KEY,
+        _NOTICE_RESULT,
+        _NOTICE_PAGES,
+        _NOTICE_RAW_TEXT,
+    ):
+        st.session_state.pop(key, None)
+    _reset_evidence_workspace()
+
+
+def _select_active_firm(firms):
+    if len(firms) == 1:
+        return firms[0]
+
+    labels = {
+        f"{firm.display_name} ({firm.firm_id})": firm
+        for firm in firms
+    }
+    selected_label = st.selectbox(
+        "Firm",
+        list(labels),
+        key="dwaar_active_firm_selector",
+    )
+    return labels[selected_label]
+
+
+def _require_app_access():
+    user = getattr(st, "user", None)
+    if user is None or not hasattr(user, "is_logged_in"):
+        st.error(
+            "Dwaar authentication is not configured on this deployment."
+        )
+        st.stop()
+
+    if not user.is_logged_in:
+        st.title("📋 Dwaar")
+        st.write(
+            "Sign in to access the GST notice workspace."
+        )
+        if st.button("Sign in", key="dwaar_sign_in"):
+            st.login()
+        st.stop()
+
+    try:
+        principal = principal_from_streamlit_user(user)
+    except AuthenticationExpiredError:
+        st.warning(
+            "Your sign-in session has expired. Please sign in again."
+        )
+        if st.button("Sign in again", key="dwaar_sign_in_again"):
+            st.logout()
+        st.stop()
+    except AuthenticationNotYetValidError:
+        st.error(
+            "Your sign-in session is not valid yet. Please sign in again."
+        )
+        if st.button("Sign in again", key="dwaar_sign_in_not_yet_valid"):
+            st.logout()
+        st.stop()
+    except AuthenticationRequiredError:
+        st.error(
+            "Dwaar could not verify the authenticated identity."
+        )
+        if st.button("Sign in again", key="dwaar_sign_in_invalid"):
+            st.logout()
+        st.stop()
+
+    try:
+        db_path = database_path_from_environment()
+        firms = load_available_firms(
+            principal,
+            db_path,
+            AccessPermission.CASE_CREATE,
+        )
+    except RuntimeAccessConfigurationError:
+        st.error(
+            "Dwaar case storage is not configured on this deployment."
+        )
+        st.stop()
+    except RuntimeAccessConsistencyError:
+        st.error(
+            "Dwaar access configuration is inconsistent. "
+            "Please contact the administrator."
+        )
+        st.stop()
+    except Exception:
+        st.error(
+            "Dwaar could not load your firm access."
+        )
+        st.stop()
+
+    if not firms:
+        st.error(
+            "Your account is signed in but is not provisioned to create "
+            "cases in Dwaar."
+        )
+        st.caption(f"Account ID: {principal.user_id}")
+        if st.button("Log out", key="dwaar_logout_unprovisioned"):
+            st.logout()
+        st.stop()
+
+    active_firm = _select_active_firm(firms)
+    previous_firm_id = st.session_state.get(_ACTIVE_FIRM_KEY)
+    if previous_firm_id != active_firm.firm_id:
+        _reset_notice_workspace()
+        st.session_state[_ACTIVE_FIRM_KEY] = active_firm.firm_id
+
+    if st.button("Log out", key="dwaar_logout"):
+        _reset_notice_workspace()
+        st.session_state.pop(_ACTIVE_FIRM_KEY, None)
+        st.logout()
+        st.stop()
+
+    st.caption(
+        f"Active firm: {active_firm.display_name} "
+        f"({active_firm.firm_id})"
+    )
+    return principal, active_firm
 
 
 def _notice_analysis(pdf_bytes):
@@ -469,12 +604,14 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
 
 
 st.set_page_config(
-    page_title="CA Notice AI",
+    page_title="Dwaar — GST Notice Workspace",
     page_icon="📋",
     layout="centered",
 )
 
-st.title("📋 CA Notice AI")
+_principal, _active_firm = _require_app_access()
+
+st.title("📋 Dwaar")
 st.write("Upload a GST notice PDF for structured Phase-2 analysis.")
 st.caption("Phase-2 outputs require professional review before use.")
 
