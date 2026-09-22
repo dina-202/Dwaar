@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -78,7 +79,7 @@ def bootstrap_initial_firm(
         permissions=frozenset(AccessPermission),
         active=True,
     )
-    permissions_json = __import__("json").dumps(
+    permissions_json = json.dumps(
         sorted(permission.value for permission in grant.permissions),
         separators=(",", ":"),
     )
