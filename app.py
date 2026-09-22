@@ -27,11 +27,15 @@ from modules.runtime_persistence import (
     RuntimePersistenceConfigurationError,
     build_authorized_case_service,
 )
+from modules.case_reopen_service import (
+    SavedCaseReopenError,
+    reopen_case_analysis,
+)
 from modules.runtime_access import (
     RuntimeAccessConfigurationError,
     RuntimeAccessConsistencyError,
     database_path_from_environment,
-    load_available_firms,
+    load_available_firms_for_permissions,
 )
 from modules.runtime_security import (
     AuthenticationExpiredError,
@@ -289,6 +293,8 @@ _EVIDENCE_INTAKE = "_dwaar_evidence_intake_result"
 _EVIDENCE_REVIEWS = "_dwaar_evidence_reviews"
 _ACTIVE_FIRM_KEY = "_dwaar_active_firm_id"
 _SAVED_INTAKES = "_dwaar_saved_intake_cases"
+_OPENED_CASE_ID = "_dwaar_opened_case_id"
+_OPENED_CASE_ANALYSIS = "_dwaar_opened_case_analysis"
 
 
 def _uploaded_bytes(uploaded_file):
@@ -310,6 +316,8 @@ def _reset_notice_workspace():
         _NOTICE_PAGES,
         _NOTICE_RAW_TEXT,
         _SAVED_INTAKES,
+        _OPENED_CASE_ID,
+        _OPENED_CASE_ANALYSIS,
     ):
         st.session_state.pop(key, None)
     _reset_evidence_workspace()
@@ -374,10 +382,13 @@ def _require_app_access():
 
     try:
         db_path = database_path_from_environment()
-        firms = load_available_firms(
+        firms = load_available_firms_for_permissions(
             principal,
             db_path,
-            AccessPermission.CASE_CREATE,
+            {
+                AccessPermission.CASE_CREATE,
+                AccessPermission.CASE_READ,
+            },
         )
     except RuntimeAccessConfigurationError:
         st.error(
@@ -398,7 +409,7 @@ def _require_app_access():
 
     if not firms:
         st.error(
-            "Your account is signed in but is not provisioned to create "
+            "Your account is signed in but is not provisioned to access "
             "cases in Dwaar."
         )
         st.caption(f"Account ID: {principal.user_id}")
@@ -423,6 +434,153 @@ def _require_app_access():
         f"({active_firm.firm_id})"
     )
     return principal, active_firm
+
+
+def _render_saved_cases_workspace(principal, active_firm):
+    if AccessPermission.CASE_READ not in active_firm.permissions:
+        return
+
+    st.header("Saved cases")
+    try:
+        service = build_authorized_case_service()
+        cases = service.list_cases(
+            principal,
+            active_firm.firm_id,
+        )
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Durable case storage is not fully configured on this "
+            "deployment."
+        )
+        return
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to read cases in "
+            "this firm."
+        )
+        return
+    except Exception:
+        st.error("Saved cases could not be loaded.")
+        return
+
+    if not cases:
+        st.write("No saved cases yet.")
+        return
+
+    st.dataframe(
+        [
+            {
+                "case_id": case.case_id,
+                "title": case.title,
+                "status": case.status.value,
+                "notice_form": case.notice_form.value,
+                "proceeding_type": case.proceeding_type.value,
+                "response_deadline": _display(case.response_deadline),
+            }
+            for case in cases
+        ],
+        hide_index=True,
+    )
+
+    labels = {
+        f"{case.title} — {case.case_id}": case
+        for case in cases
+    }
+    selected_label = st.selectbox(
+        "Saved case",
+        list(labels),
+        key="dwaar_saved_case_selector",
+    )
+    selected_case = labels[selected_label]
+
+    can_open_notice = (
+        AccessPermission.DOCUMENT_READ in active_firm.permissions
+    )
+    if not can_open_notice:
+        st.caption(
+            "You can view case metadata but do not have permission to "
+            "read stored notice documents."
+        )
+        return
+
+    open_clicked = st.button(
+        "Open saved case",
+        key=f"open_saved_case_{selected_case.case_id}",
+    )
+    cached_case_id = st.session_state.get(_OPENED_CASE_ID)
+    if open_clicked and cached_case_id != selected_case.case_id:
+        try:
+            with st.spinner("Opening saved case and reanalyzing notice..."):
+                reopened = reopen_case_analysis(
+                    service,
+                    principal,
+                    active_firm.firm_id,
+                    selected_case.case_id,
+                    date.today(),
+                )
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to open this case."
+            )
+            return
+        except LookupError:
+            st.error("The saved case is no longer available.")
+            return
+        except SavedCaseReopenError:
+            st.error(
+                "The saved notice could not be safely reopened."
+            )
+            return
+        except Exception:
+            st.error("The saved case could not be opened.")
+            return
+
+        st.session_state[_OPENED_CASE_ID] = selected_case.case_id
+        st.session_state[_OPENED_CASE_ANALYSIS] = reopened
+        _reset_evidence_workspace()
+
+    if st.session_state.get(_OPENED_CASE_ID) != selected_case.case_id:
+        return
+
+    reopened = st.session_state.get(_OPENED_CASE_ANALYSIS)
+    if reopened is None:
+        return
+
+    st.subheader("Opened case")
+    st.write(
+        {
+            "case_id": reopened.case.case_id,
+            "title": reopened.case.title,
+            "status": reopened.case.status.value,
+            "notice_filename": reopened.notice_document.original_filename,
+            "analysis_source": "recomputed_from_encrypted_notice",
+        }
+    )
+    st.caption(
+        "The persisted notice was decrypted and integrity-checked, then "
+        "the current analysis engine recomputed this result. The analysis "
+        "snapshot itself is not durable yet."
+    )
+
+    ocr_pages = [
+        page.page_number
+        for page in reopened.document_pages
+        if page.origin is SourceTextOrigin.OCR
+    ]
+    if ocr_pages:
+        st.warning(
+            "OCR was used on scanned page(s): "
+            + ", ".join(str(page) for page in ocr_pages)
+            + ". OCR-derived facts require verification."
+        )
+
+    _render_phase2_result(reopened.analysis)
+    _render_evidence_workspace(
+        reopened.notice_pdf_bytes,
+        reopened.analysis,
+    )
+    with st.expander("Extracted saved notice text"):
+        st.text(reopened.raw_text)
 
 
 def _notice_analysis(pdf_bytes):
@@ -719,44 +877,55 @@ st.set_page_config(
 _principal, _active_firm = _require_app_access()
 
 st.title("📋 Dwaar")
-st.write("Upload a GST notice PDF for structured Phase-2 analysis.")
-st.caption("Phase-2 outputs require professional review before use.")
+st.caption("GST notice workspace for professional review.")
 
-uploaded = st.file_uploader(
-    "Upload notice PDF",
-    type="pdf",
-    key="notice_pdf",
-)
+_render_saved_cases_workspace(_principal, _active_firm)
 
-if uploaded:
-    pdf_bytes = _uploaded_bytes(uploaded)
-    try:
-        result, document_pages, raw_text = _notice_analysis(pdf_bytes)
-    except RuntimeError as error:
-        st.error(str(error))
-    except Exception:
-        st.error("Phase-2 analysis could not be completed.")
-    else:
-        ocr_pages = [
-            page.page_number
-            for page in document_pages
-            if page.origin is SourceTextOrigin.OCR
-        ]
-        if ocr_pages:
-            st.warning(
-                "OCR was used on scanned page(s): "
-                + ", ".join(str(page) for page in ocr_pages)
-                + ". OCR-derived facts require verification and block "
-                "specialist drafting until reviewed."
+if AccessPermission.CASE_CREATE in _active_firm.permissions:
+    st.header("New notice intake")
+    st.write("Upload a GST notice PDF for structured Phase-2 analysis.")
+    st.caption("Phase-2 outputs require professional review before use.")
+
+    uploaded = st.file_uploader(
+        "Upload notice PDF",
+        type="pdf",
+        key="notice_pdf",
+    )
+
+    if uploaded:
+        pdf_bytes = _uploaded_bytes(uploaded)
+        try:
+            result, document_pages, raw_text = _notice_analysis(pdf_bytes)
+        except RuntimeError as error:
+            st.error(str(error))
+        except Exception:
+            st.error("Phase-2 analysis could not be completed.")
+        else:
+            ocr_pages = [
+                page.page_number
+                for page in document_pages
+                if page.origin is SourceTextOrigin.OCR
+            ]
+            if ocr_pages:
+                st.warning(
+                    "OCR was used on scanned page(s): "
+                    + ", ".join(str(page) for page in ocr_pages)
+                    + ". OCR-derived facts require verification and block "
+                    "specialist drafting until reviewed."
+                )
+            _render_phase2_result(result)
+            _render_save_intake_workspace(
+                _principal,
+                _active_firm,
+                uploaded,
+                pdf_bytes,
+                result,
             )
-        _render_phase2_result(result)
-        _render_save_intake_workspace(
-            _principal,
-            _active_firm,
-            uploaded,
-            pdf_bytes,
-            result,
-        )
-        _render_evidence_workspace(pdf_bytes, result)
-        with st.expander("Extracted notice text"):
-            st.text(raw_text)
+            _render_evidence_workspace(pdf_bytes, result)
+            with st.expander("Extracted notice text"):
+                st.text(raw_text)
+else:
+    st.caption(
+        "This firm access is read-only for case intake; new notice upload "
+        "requires CASE_CREATE."
+    )
