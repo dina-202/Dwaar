@@ -621,7 +621,10 @@ def run_app(
         persistence_service.list_clients.return_value = []
         persistence_service.list_registrations.return_value = []
         persistence_service.list_case_work_queue.return_value = []
+        persistence_service.get_case_timeline.return_value = []
     else:
+        if isinstance(persistence_service.get_case_timeline.return_value, Mock):
+            persistence_service.get_case_timeline.return_value = []
         if isinstance(persistence_service.list_cases.return_value, Mock):
             persistence_service.list_cases.return_value = []
         if isinstance(persistence_service.list_clients.return_value, Mock):
