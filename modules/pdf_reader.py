@@ -1,35 +1,44 @@
-"""PDF reading. This module has exactly one job: PDF bytes in, text out."""
+"""PDF text extraction with an additive page-aware provenance path."""
+
+from typing import List
 
 import fitz  # pip package is "pymupdf", import name is "fitz"
 
 
-def extract_text(pdf_bytes: bytes) -> str:
-    """
-    Extract all text from a PDF supplied as raw bytes.
+def extract_page_texts(pdf_bytes: bytes) -> List[str]:
+    """Extract embedded text for each PDF page in physical page order.
 
-    Streamlit's file_uploader hands us bytes, not a file path, so the PDF is
-    opened from an in-memory stream instead of from disk.
+    Page list index 0 corresponds to document page 1. This function does not
+    run OCR; a page with no embedded text is represented by an empty string.
 
     Args:
         pdf_bytes: Raw bytes of the PDF file.
 
     Returns:
-        All text in the document as a single string, pages joined in page order.
-        An empty string means the PDF has no text layer (i.e. it is a scan or
-        photo of a notice). That is not an error — there is simply nothing to
-        extract, and the caller should tell the user to upload a digital PDF.
+        One text string per physical PDF page, preserving page order.
 
     Raises:
-        RuntimeError: The bytes could not be opened as a PDF — corrupt file,
-            password-protected, or not a PDF at all. The message is safe to
-            show to the user.
+        RuntimeError: The bytes could not be opened/read as a PDF.
     """
     doc = None
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        return "".join(page.get_text() for page in doc)
-    except Exception as e:
-        raise RuntimeError(f"Could not read this PDF: {e}") from e
+        return [page.get_text() for page in doc]
+    except Exception as error:
+        raise RuntimeError(f"Could not read this PDF: {error}") from error
     finally:
         if doc is not None:
             doc.close()
+
+
+def extract_text(pdf_bytes: bytes) -> str:
+    """Backward-compatible flattened PDF text extraction.
+
+    The result is exactly the ordered concatenation of extract_page_texts(),
+    preserving the previous Phase-2 behavior while allowing newer callers to
+    retain page boundaries for deterministic source-page validation.
+
+    An empty string means the PDF contains no embedded text. OCR is a separate
+    ingestion step and is intentionally not performed here.
+    """
+    return "".join(extract_page_texts(pdf_bytes))
