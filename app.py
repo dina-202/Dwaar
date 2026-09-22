@@ -712,61 +712,54 @@ def _render_saved_cases_workspace(principal, active_firm):
     can_open_notice = (
         AccessPermission.DOCUMENT_READ in active_firm.permissions
     )
-    if not can_open_notice:
-        _render_snapshot_history(
-            principal,
-            active_firm,
-            selected_case,
-            None,
-        )
-        st.caption(
-            "You can view case metadata and analysis-history metadata but "
-            "do not have permission to read stored notice-derived content."
-        )
-        return
 
-    open_clicked = st.button(
-        "Open saved case",
-        key=f"open_saved_case_{selected_case.case_id}",
-    )
-    cached_case_id = st.session_state.get(_OPENED_CASE_ID)
-    if open_clicked and cached_case_id != selected_case.case_id:
-        try:
-            with st.spinner("Opening saved case and reanalyzing notice..."):
-                reopened = reopen_case_analysis(
-                    service,
-                    principal,
-                    active_firm.firm_id,
-                    selected_case.case_id,
-                    date.today(),
+    if can_open_notice:
+        open_clicked = st.button(
+            "Open / recompute current analysis",
+            key=f"open_saved_case_{selected_case.case_id}",
+        )
+        cached_case_id = st.session_state.get(_OPENED_CASE_ID)
+        if open_clicked and cached_case_id != selected_case.case_id:
+            try:
+                with st.spinner(
+                    "Opening saved case and reanalyzing notice..."
+                ):
+                    reopened = reopen_case_analysis(
+                        service,
+                        principal,
+                        active_firm.firm_id,
+                        selected_case.case_id,
+                        date.today(),
+                    )
+            except PermissionError:
+                st.error(
+                    "Your account is no longer authorized to open this case."
                 )
-        except PermissionError:
-            st.error(
-                "Your account is no longer authorized to open this case."
-            )
-            return
-        except LookupError:
-            st.error("The saved case is no longer available.")
-            return
-        except SavedCaseReopenError:
-            st.error(
-                "The saved notice could not be safely reopened."
-            )
-            return
-        except Exception:
-            st.error("The saved case could not be opened.")
-            return
+                return
+            except LookupError:
+                st.error("The saved case is no longer available.")
+                return
+            except SavedCaseReopenError:
+                st.error(
+                    "The saved notice could not be safely reopened."
+                )
+                return
+            except Exception:
+                st.error("The saved case could not be opened.")
+                return
 
-        st.session_state[_OPENED_CASE_ID] = selected_case.case_id
-        st.session_state[_OPENED_CASE_ANALYSIS] = reopened
-        st.session_state.pop(_LOADED_SNAPSHOT_ID, None)
-        st.session_state.pop(_LOADED_SNAPSHOT, None)
-        _reset_evidence_workspace()
+            st.session_state[_OPENED_CASE_ID] = selected_case.case_id
+            st.session_state[_OPENED_CASE_ANALYSIS] = reopened
+            st.session_state.pop(_LOADED_SNAPSHOT_ID, None)
+            st.session_state.pop(_LOADED_SNAPSHOT, None)
+            _reset_evidence_workspace()
 
-    if st.session_state.get(_OPENED_CASE_ID) != selected_case.case_id:
-        return
-
-    reopened = st.session_state.get(_OPENED_CASE_ANALYSIS)
+    reopened = (
+        st.session_state.get(_OPENED_CASE_ANALYSIS)
+        if st.session_state.get(_OPENED_CASE_ID)
+        == selected_case.case_id
+        else None
+    )
 
     _render_snapshot_history(
         principal,
@@ -774,6 +767,13 @@ def _render_saved_cases_workspace(principal, active_firm):
         selected_case,
         reopened,
     )
+
+    if not can_open_notice:
+        st.caption(
+            "You can view case metadata and analysis-history metadata but "
+            "do not have permission to read stored notice-derived content."
+        )
+        return
 
     if reopened is None:
         return
