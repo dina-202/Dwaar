@@ -4,9 +4,23 @@ from datetime import date
 
 import streamlit as st
 
-from domain.models import DraftGenerationStatus, ValidationStatus
+from domain.evidence_engine import propose_evidence_candidates
+from domain.evidence_review import (
+    create_evidence_review,
+    reviewed_candidate_ids,
+)
+from domain.models import (
+    DraftGenerationStatus,
+    EvidenceReviewStatus,
+    SourceTextOrigin,
+    ValidationStatus,
+)
 from domain.phase2_orchestrator import run_phase2_analysis_from_document_pages
-from domain.models import SourceTextOrigin
+from modules.evidence_workspace import (
+    build_evidence_documents,
+    evidence_workspace_key,
+    notice_analysis_key,
+)
 from modules.pdf_reader import extract_document_pages
 
 
@@ -248,6 +262,212 @@ def _render_phase2_result(result):
             _render_checks(draft.post_validation.checks)
 
 
+_NOTICE_KEY = "_dwaar_notice_analysis_key"
+_NOTICE_RESULT = "_dwaar_notice_analysis_result"
+_NOTICE_PAGES = "_dwaar_notice_document_pages"
+_NOTICE_RAW_TEXT = "_dwaar_notice_raw_text"
+
+_EVIDENCE_KEY = "_dwaar_evidence_workspace_key"
+_EVIDENCE_INTAKE = "_dwaar_evidence_intake_result"
+_EVIDENCE_REVIEWS = "_dwaar_evidence_reviews"
+
+
+def _uploaded_bytes(uploaded_file):
+    getvalue = getattr(uploaded_file, "getvalue", None)
+    if callable(getvalue):
+        return getvalue()
+    return uploaded_file.read()
+
+
+def _reset_evidence_workspace():
+    for key in (_EVIDENCE_KEY, _EVIDENCE_INTAKE, _EVIDENCE_REVIEWS):
+        st.session_state.pop(key, None)
+
+
+def _notice_analysis(pdf_bytes):
+    analysis_key = notice_analysis_key(pdf_bytes)
+    if st.session_state.get(_NOTICE_KEY) != analysis_key:
+        document_pages = extract_document_pages(pdf_bytes)
+        raw_text = "".join(page.text for page in document_pages)
+        today = date.today()
+        with st.spinner("Analyzing notice..."):
+            result = run_phase2_analysis_from_document_pages(
+                document_pages, today
+            )
+        st.session_state[_NOTICE_KEY] = analysis_key
+        st.session_state[_NOTICE_RESULT] = result
+        st.session_state[_NOTICE_PAGES] = document_pages
+        st.session_state[_NOTICE_RAW_TEXT] = raw_text
+        _reset_evidence_workspace()
+
+    return (
+        st.session_state[_NOTICE_RESULT],
+        st.session_state[_NOTICE_PAGES],
+        st.session_state[_NOTICE_RAW_TEXT],
+    )
+
+
+def _render_evidence_workspace(notice_pdf_bytes, result):
+    evidence_checklist = result.draft_result.evidence_checklist
+    if not evidence_checklist:
+        return
+
+    st.header("Supporting evidence workspace")
+    st.caption(
+        "Temporary session workspace. AI suggestions are candidates only; "
+        "Confirm/Reject creates an audit record and does not change taxpayer "
+        "facts or draft eligibility."
+    )
+    supporting_uploads = st.file_uploader(
+        "Upload supporting evidence PDFs",
+        type="pdf",
+        accept_multiple_files=True,
+        key="supporting_evidence_pdfs",
+    )
+    if not supporting_uploads:
+        st.write("No supporting evidence PDFs uploaded.")
+        return
+
+    supporting_payloads = [
+        (uploaded_file.name, _uploaded_bytes(uploaded_file))
+        for uploaded_file in supporting_uploads
+    ]
+    workspace_key = evidence_workspace_key(
+        notice_pdf_bytes,
+        supporting_payloads,
+        [item.evidence_id for item in evidence_checklist],
+    )
+
+    if st.session_state.get(_EVIDENCE_KEY) != workspace_key:
+        try:
+            documents = build_evidence_documents(supporting_payloads)
+            with st.spinner("Matching evidence to checklist..."):
+                intake_result = propose_evidence_candidates(
+                    evidence_checklist,
+                    documents,
+                )
+        except RuntimeError as error:
+            st.error(str(error))
+            return
+        except Exception:
+            st.error("Supporting evidence could not be analyzed.")
+            return
+
+        st.session_state[_EVIDENCE_KEY] = workspace_key
+        st.session_state[_EVIDENCE_INTAKE] = intake_result
+        st.session_state[_EVIDENCE_REVIEWS] = []
+
+    intake_result = st.session_state[_EVIDENCE_INTAKE]
+    reviews = st.session_state.setdefault(_EVIDENCE_REVIEWS, [])
+
+    st.write(
+        {
+            "evidence_intake_status": intake_result.status.value,
+            "candidate_count": len(intake_result.candidates),
+            "rejected_candidate_count": (
+                intake_result.rejected_candidate_count
+            ),
+        }
+    )
+
+    if intake_result.candidates:
+        st.dataframe(
+            [
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "evidence_id": candidate.evidence_id,
+                    "document_id": candidate.document_id,
+                    "source_page": candidate.source_page,
+                    "source_text": candidate.source_text,
+                    "source_origin": candidate.source_origin.value,
+                    "source_verification": (
+                        candidate.source_verification.value
+                    ),
+                    "review_status": candidate.review_status.value,
+                }
+                for candidate in intake_result.candidates
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write("No source-grounded evidence candidates were proposed.")
+
+    reviewed_ids = set(reviewed_candidate_ids(reviews))
+    for candidate in intake_result.candidates:
+        if candidate.candidate_id in reviewed_ids:
+            continue
+
+        st.subheader(f"Review {candidate.candidate_id}")
+        st.write(
+            {
+                "evidence_id": candidate.evidence_id,
+                "document_id": candidate.document_id,
+                "source_page": candidate.source_page,
+                "source_text": candidate.source_text,
+                "source_origin": candidate.source_origin.value,
+                "source_verification": (
+                    candidate.source_verification.value
+                ),
+            }
+        )
+        note = st.text_input(
+            "Reviewer note (optional)",
+            key=f"evidence_note_{workspace_key}_{candidate.candidate_id}",
+        )
+        if st.button(
+            f"Confirm {candidate.candidate_id}",
+            key=f"confirm_{workspace_key}_{candidate.candidate_id}",
+        ):
+            reviews.append(
+                create_evidence_review(
+                    candidate,
+                    EvidenceReviewStatus.CONFIRMED,
+                    reviews,
+                    note,
+                )
+            )
+            reviewed_ids.add(candidate.candidate_id)
+
+        if (
+            candidate.candidate_id not in reviewed_ids
+            and st.button(
+                f"Reject {candidate.candidate_id}",
+                key=f"reject_{workspace_key}_{candidate.candidate_id}",
+            )
+        ):
+            reviews.append(
+                create_evidence_review(
+                    candidate,
+                    EvidenceReviewStatus.REJECTED,
+                    reviews,
+                    note,
+                )
+            )
+            reviewed_ids.add(candidate.candidate_id)
+
+    if reviews:
+        st.subheader("Evidence review records")
+        st.dataframe(
+            [
+                {
+                    "review_id": review.review_id,
+                    "candidate_id": review.candidate_id,
+                    "evidence_id": review.evidence_id,
+                    "document_id": review.document_id,
+                    "source_page": review.source_page,
+                    "decision": review.decision.value,
+                    "source_origin": review.source_origin.value,
+                    "source_verification": (
+                        review.source_verification.value
+                    ),
+                    "reviewer_note": _display(review.reviewer_note),
+                }
+                for review in reviews
+            ],
+            hide_index=True,
+        )
+
+
 st.set_page_config(
     page_title="CA Notice AI",
     page_icon="📋",
@@ -258,37 +478,34 @@ st.title("📋 CA Notice AI")
 st.write("Upload a GST notice PDF for structured Phase-2 analysis.")
 st.caption("Phase-2 outputs require professional review before use.")
 
-uploaded = st.file_uploader("Upload notice PDF", type="pdf")
+uploaded = st.file_uploader(
+    "Upload notice PDF",
+    type="pdf",
+    key="notice_pdf",
+)
 
 if uploaded:
-    pdf_bytes = uploaded.read()
+    pdf_bytes = _uploaded_bytes(uploaded)
     try:
-        document_pages = extract_document_pages(pdf_bytes)
-        raw_text = "".join(page.text for page in document_pages)
+        result, document_pages, raw_text = _notice_analysis(pdf_bytes)
     except RuntimeError as error:
         st.error(str(error))
+    except Exception:
+        st.error("Phase-2 analysis could not be completed.")
     else:
-        today = date.today()
-        try:
-            with st.spinner("Analyzing notice..."):
-                result = run_phase2_analysis_from_document_pages(
-                    document_pages, today
-                )
-        except Exception:
-            st.error("Phase-2 analysis could not be completed.")
-        else:
-            ocr_pages = [
-                page.page_number
-                for page in document_pages
-                if page.origin is SourceTextOrigin.OCR
-            ]
-            if ocr_pages:
-                st.warning(
-                    "OCR was used on scanned page(s): "
-                    + ", ".join(str(page) for page in ocr_pages)
-                    + ". OCR-derived facts require verification and block "
-                    "specialist drafting until reviewed."
-                )
-            _render_phase2_result(result)
-            with st.expander("Extracted notice text"):
-                st.text(raw_text)
+        ocr_pages = [
+            page.page_number
+            for page in document_pages
+            if page.origin is SourceTextOrigin.OCR
+        ]
+        if ocr_pages:
+            st.warning(
+                "OCR was used on scanned page(s): "
+                + ", ".join(str(page) for page in ocr_pages)
+                + ". OCR-derived facts require verification and block "
+                "specialist drafting until reviewed."
+            )
+        _render_phase2_result(result)
+        _render_evidence_workspace(pdf_bytes, result)
+        with st.expander("Extracted notice text"):
+            st.text(raw_text)
