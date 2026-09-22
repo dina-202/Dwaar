@@ -16,6 +16,7 @@ from domain.auth_models import (
 )
 from domain.case_models import (
     CaseEventType,
+    CaseRecord,
     CaseStatus,
     Client,
     Firm,
