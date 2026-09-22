@@ -17,6 +17,7 @@ from domain.auth_models import (
 from domain.authorization import require_firm_permission
 from domain.client_workspace_models import ClientWorkspace
 from domain.case_operations_models import CaseWorkItem
+from domain.case_timeline_models import CaseTimelineItem
 from domain.case_models import (
     CaseDocumentKind,
     CaseEvent,
@@ -34,6 +35,7 @@ from domain.persistence_ports import (
     DocumentStore,
 )
 from modules.case_document_service import persist_pdf_document
+from modules.case_timeline import build_case_timeline
 from modules.case_operations import (
     allowed_status_targets,
     build_case_work_queue,
@@ -158,6 +160,22 @@ class AuthorizedCaseService:
             client=client,
             registrations=self._cases.list_registrations(client.client_id),
             cases=self._cases.list_cases_for_client(client.client_id),
+        )
+
+    def get_case_timeline(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+    ) -> List[CaseTimelineItem]:
+        """Return chronological read-only projection of case audit events."""
+        self._grant(principal, firm_id, AccessPermission.CASE_READ)
+        case = self._case_in_firm(firm_id, case_id)
+        if case is None:
+            raise LookupError("case does not exist")
+        return build_case_timeline(
+            self._cases.list_events(case.case_id)
         )
 
     def list_case_work_queue(
