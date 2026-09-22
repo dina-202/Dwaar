@@ -51,6 +51,7 @@ from modules.runtime_security import (
     AuthenticationRequiredError,
     principal_from_streamlit_user,
 )
+from workflows.gst.legal_research import resolve_gst_legal_brief
 
 
 def _display(value):
@@ -80,6 +81,61 @@ def _render_checks(checks):
         ],
         hide_index=True,
     )
+
+
+def _render_legal_brief(classification, deadline):
+    st.header("Verified legal sources")
+    as_of_date = deadline.notice_date
+    if as_of_date is None:
+        st.info(
+            "No notice date is available, so Dwaar is not selecting a "
+            "date-versioned legal position automatically."
+        )
+        return
+
+    brief = resolve_gst_legal_brief(
+        classification.proceeding_type,
+        as_of_date,
+    )
+    st.caption(
+        "Source-verified propositions for the notice-date legal position "
+        f"({as_of_date.isoformat()}). This is research support, not a "
+        "case-specific legal conclusion."
+    )
+
+    if not brief.catalog_valid:
+        st.error(
+            "The verified legal catalog failed validation. No legal "
+            "propositions are being trusted for this analysis."
+        )
+        return
+
+    if brief.matches:
+        st.dataframe(
+            [
+                {
+                    "topic": match.rule.topic.value,
+                    "provision": match.rule.provision,
+                    "proposition": match.rule.proposition,
+                    "effective_from": match.rule.effective_from,
+                    "effective_to": _display(match.rule.effective_to),
+                    "source": match.source.title,
+                    "official_url": match.source.official_url,
+                    "verified_at": match.rule.verified_at,
+                    "rule_id": match.rule.rule_id,
+                }
+                for match in brief.matches
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write("No source-verified proposition matched this workflow/date.")
+
+    if brief.unresolved_topics:
+        st.warning(
+            "CA legal research is still required for: "
+            + ", ".join(topic.value for topic in brief.unresolved_topics)
+        )
 
 
 def _render_phase2_result(result):
@@ -144,6 +200,8 @@ def _render_phase2_result(result):
             "deadline_conflict_status": preflight.deadline_conflict_status.value,
         }
     )
+
+    _render_legal_brief(classification, deadline)
 
     if result.arithmetic_results:
         st.header("Arithmetic results")
