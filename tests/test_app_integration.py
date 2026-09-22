@@ -2849,7 +2849,7 @@ class DurableIntakeUiTests(unittest.TestCase):
         self.assertEqual(runner.call_count, 1)
         self.assertEqual(
             fake.persistence_service_mock.call_count,
-            3,
+            4,
         )
         service.create_case_intake.assert_called_once()
         args = service.create_case_intake.call_args
