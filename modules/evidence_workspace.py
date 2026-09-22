@@ -11,6 +11,14 @@ from domain.models import EvidenceDocument
 from modules.pdf_reader import extract_document_pages
 
 
+def notice_analysis_key(notice_pdf_bytes: bytes) -> str:
+    """Return a deterministic key for one uploaded notice payload."""
+    digest = hashlib.sha256()
+    digest.update(b"DWAAR-NOTICE-ANALYSIS-V1\0")
+    digest.update(notice_pdf_bytes)
+    return digest.hexdigest()
+
+
 def evidence_workspace_key(
     notice_pdf_bytes: bytes,
     supporting_files: Sequence[Tuple[str, bytes]],
