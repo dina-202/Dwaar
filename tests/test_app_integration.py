@@ -9,6 +9,8 @@ import sys
 import unittest
 from unittest.mock import Mock, patch
 
+from domain import evidence_engine as evidence_engine_module
+from domain import evidence_review as evidence_review_module
 from domain import phase2_orchestrator as orchestrator_module
 from domain.models import (
     ArithmeticCalculationType,
@@ -28,7 +30,11 @@ from domain.models import (
     DraftPermission,
     DraftPostValidationResult,
     DraftSection,
+    EvidenceCandidate,
     EvidenceChecklistItem,
+    EvidenceIntakeResult,
+    EvidenceIntakeStatus,
+    EvidenceReviewStatus,
     EvidenceStatus,
     ExtractedFact,
     FactExtractionResult,
@@ -56,6 +62,7 @@ from domain.models import (
     ValidationItem,
     ValidationStatus,
 )
+from modules import evidence_workspace as evidence_workspace_module
 from modules import pdf_reader
 
 
@@ -80,12 +87,18 @@ CLAIM_SENTINEL = "EXTRACTED CLAIM MUST NOT BECOME DRAFT PROSE"
 
 
 class _UploadedFile:
-    def __init__(self, events):
+    def __init__(self, events, name="notice.pdf", payload=PDF_BYTES):
         self.events = events
+        self.name = name
+        self.payload = payload
 
     def read(self):
-        self.events.append("read")
-        return PDF_BYTES
+        self.events.append(f"read:{self.name}")
+        return self.payload
+
+    def getvalue(self):
+        self.events.append(f"getvalue:{self.name}")
+        return self.payload
 
 
 class _Context:
@@ -100,8 +113,19 @@ class _Context:
 
 
 class FakeStreamlit:
-    def __init__(self, uploaded):
+    def __init__(
+        self,
+        uploaded,
+        supporting_uploads=None,
+        button_values=None,
+        text_values=None,
+        session_state=None,
+    ):
         self.uploaded = uploaded
+        self.supporting_uploads = supporting_uploads or []
+        self.button_values = button_values or {}
+        self.text_values = text_values or {}
+        self.session_state = {} if session_state is None else session_state
         self.calls = []
 
     def _record(self, name, *args, **kwargs):
@@ -121,7 +145,18 @@ class FakeStreamlit:
 
     def file_uploader(self, *args, **kwargs):
         self._record("file_uploader", *args, **kwargs)
+        label = args[0] if args else kwargs.get("label", "")
+        if "supporting evidence" in str(label).lower():
+            return self.supporting_uploads
         return self.uploaded
+
+    def text_input(self, *args, **kwargs):
+        self._record("text_input", *args, **kwargs)
+        return self.text_values.get(kwargs.get("key"), "")
+
+    def button(self, *args, **kwargs):
+        self._record("button", *args, **kwargs)
+        return bool(self.button_values.get(kwargs.get("key"), False))
 
     def spinner(self, *args, **kwargs):
         self._record("spinner", *args, **kwargs)
@@ -374,10 +409,21 @@ def run_app(
     result=None,
     extraction_error=None,
     orchestrator_error=None,
+    supporting_uploads=None,
+    session_state=None,
+    button_values=None,
+    text_values=None,
+    evidence_intake_result=None,
 ):
     events = []
     uploaded = _UploadedFile(events) if upload else None
-    fake = FakeStreamlit(uploaded)
+    fake = FakeStreamlit(
+        uploaded,
+        supporting_uploads=supporting_uploads,
+        button_values=button_values,
+        text_values=text_values,
+        session_state=session_state,
+    )
     result = result or make_result()
 
     class FixedDate(date):
@@ -402,6 +448,20 @@ def run_app(
 
     extract_mock = Mock(side_effect=extract_side_effect)
     orchestrator_mock = Mock(side_effect=orchestrator_side_effect)
+    evidence_mock = Mock(
+        return_value=evidence_intake_result
+        if evidence_intake_result is not None
+        else None
+    )
+    original_evidence = evidence_engine_module.propose_evidence_candidates
+
+    def evidence_side_effect(*args, **kwargs):
+        if evidence_intake_result is not None:
+            return evidence_intake_result
+        return original_evidence(*args, **kwargs)
+
+    evidence_mock.side_effect = evidence_side_effect
+
     with (
         patch.dict(sys.modules, {"streamlit": fake}),
         patch("datetime.date", FixedDate),
@@ -411,10 +471,27 @@ def run_app(
             "run_phase2_analysis_from_document_pages",
             orchestrator_mock,
         ),
+        patch.object(
+            evidence_engine_module,
+            "propose_evidence_candidates",
+            evidence_mock,
+        ),
+        patch.object(
+            evidence_workspace_module,
+            "build_evidence_documents",
+            return_value=[],
+        ),
     ):
         runpy.run_path(str(APP_PATH), run_name="__app_integration_test__")
 
-    return fake, extract_mock, orchestrator_mock, events, FixedDate.calls
+    return (
+        fake,
+        extract_mock,
+        orchestrator_mock,
+        evidence_mock,
+        events,
+        FixedDate.calls,
+    )
 
 
 class SourceBoundaryTests(unittest.TestCase):
@@ -431,8 +508,11 @@ class SourceBoundaryTests(unittest.TestCase):
             {
                 "datetime",
                 "streamlit",
+                "domain.evidence_engine",
+                "domain.evidence_review",
                 "domain.models",
                 "domain.phase2_orchestrator",
+                "modules.evidence_workspace",
                 "modules.pdf_reader",
             },
         )
@@ -467,44 +547,44 @@ class SourceBoundaryTests(unittest.TestCase):
         lowered = SOURCE.lower()
         self.assertNotIn("download_button", lowered)
         self.assertNotIn("template_text", lowered)
-        self.assertNotIn("session_state", lowered)
+        self.assertIn("session_state", lowered)
 
 
 class UploadAndFailureTests(unittest.TestCase):
     def test_no_upload_means_no_extraction_or_orchestrator(self):
-        _, extractor, runner, events, today_calls = run_app(upload=False)
+        _, extractor, runner, _, events, today_calls = run_app(upload=False)
         extractor.assert_not_called()
         runner.assert_not_called()
         self.assertEqual(events, [])
         self.assertEqual(today_calls, 0)
 
     def test_bytes_text_and_today_flow_exactly_once_in_order(self):
-        _, extractor, runner, events, today_calls = run_app()
+        _, extractor, runner, _, events, today_calls = run_app()
         extractor.assert_called_once_with(PDF_BYTES)
         runner.assert_called_once_with(DOCUMENT_PAGES, TODAY)
-        self.assertEqual(events, ["read", "extract", "orchestrator"])
+        self.assertEqual(events, ["getvalue:notice.pdf", "extract", "orchestrator"])
         self.assertEqual(today_calls, 1)
         self.assertEqual(len(runner.call_args.args), 2)
         self.assertEqual(runner.call_args.kwargs, {})
 
     def test_pdf_runtime_error_is_displayed_and_stops_analysis(self):
         error = RuntimeError("Could not read this PDF: corrupt")
-        fake, extractor, runner, events, today_calls = run_app(
+        fake, extractor, runner, _, events, today_calls = run_app(
             extraction_error=error
         )
         extractor.assert_called_once_with(PDF_BYTES)
         runner.assert_not_called()
-        self.assertEqual(events, ["read", "extract"])
+        self.assertEqual(events, ["getvalue:notice.pdf", "extract"])
         self.assertEqual(today_calls, 0)
         self.assertIn(str(error), log_text(fake))
         self.assertEqual(len(calls_named(fake, "error")), 1)
 
     def test_unexpected_orchestrator_error_is_generic_and_has_no_fake_output(self):
-        fake, _, runner, events, today_calls = run_app(
+        fake, _, runner, _, events, today_calls = run_app(
             orchestrator_error=ValueError("private infrastructure detail")
         )
         runner.assert_called_once_with(DOCUMENT_PAGES, TODAY)
-        self.assertEqual(events, ["read", "extract", "orchestrator"])
+        self.assertEqual(events, ["getvalue:notice.pdf", "extract", "orchestrator"])
         self.assertEqual(today_calls, 1)
         text = log_text(fake)
         self.assertIn("Phase-2 analysis could not be completed.", text)
@@ -857,6 +937,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
                 "Review requirements",
                 "Triage summary",
                 "Specialist draft",
+                "Supporting evidence workspace",
             ],
         )
         self.assertEqual(fake.calls[-2][0], "expander")
@@ -864,7 +945,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         self.assertEqual(fake.calls[-1], ("text", (RAW_TEXT,), {}))
 
     def test_raw_text_is_only_displayed_in_final_extracted_text_area(self):
-        fake, _, runner, _, _ = run_app()
+        fake, _, runner, _, _, _ = run_app()
         displayed = [call for call in fake.calls if RAW_TEXT in repr(call)]
         self.assertEqual(displayed, [("text", (RAW_TEXT,), {})])
         runner.assert_called_once_with(DOCUMENT_PAGES, TODAY)
@@ -881,6 +962,141 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
             rendered_headers.index("Review requirements"),
             rendered_headers.index("Specialist draft"),
         )
+
+
+class EvidenceWorkspaceUiTests(unittest.TestCase):
+    def _supporting_upload(self):
+        return _UploadedFile(
+            [],
+            name="gstr2b.pdf",
+            payload=b"%PDF supporting sentinel",
+        )
+
+    def _intake_result(self):
+        return EvidenceIntakeResult(
+            status=EvidenceIntakeStatus.SUCCESS,
+            candidates=[
+                EvidenceCandidate(
+                    candidate_id="EC-001",
+                    evidence_id="evidence.e1",
+                    document_id="D-001",
+                    source_text="Supporting source text",
+                    source_page=1,
+                    source_origin=SourceTextOrigin.EMBEDDED,
+                    source_verification=SourceVerificationStatus.VERIFIED,
+                )
+            ],
+        )
+
+    def test_supporting_upload_renders_candidate_workspace(self):
+        fake, _, _, evidence_mock, _, _ = run_app(
+            supporting_uploads=[self._supporting_upload()],
+            evidence_intake_result=self._intake_result(),
+        )
+        text = log_text(fake)
+        self.assertIn("Supporting evidence workspace", headers(fake))
+        self.assertIn("EC-001", text)
+        self.assertIn("evidence.e1", text)
+        self.assertIn("Supporting source text", text)
+        evidence_mock.assert_called_once()
+
+    def test_unchanged_session_reuses_notice_and_evidence_results(self):
+        shared_state = {}
+        support = [self._supporting_upload()]
+        intake = self._intake_result()
+
+        first = run_app(
+            supporting_uploads=support,
+            session_state=shared_state,
+            evidence_intake_result=intake,
+        )
+        self.assertEqual(first[2].call_count, 1)
+        self.assertEqual(first[3].call_count, 1)
+
+        second = run_app(
+            supporting_uploads=support,
+            session_state=shared_state,
+            evidence_intake_result=intake,
+        )
+        self.assertEqual(second[2].call_count, 0)
+        self.assertEqual(second[3].call_count, 0)
+
+    def test_supporting_file_change_recomputes_evidence_not_notice(self):
+        shared_state = {}
+        intake = self._intake_result()
+        run_app(
+            supporting_uploads=[self._supporting_upload()],
+            session_state=shared_state,
+            evidence_intake_result=intake,
+        )
+        changed = _UploadedFile(
+            [],
+            name="different.pdf",
+            payload=b"%PDF changed supporting sentinel",
+        )
+        second = run_app(
+            supporting_uploads=[changed],
+            session_state=shared_state,
+            evidence_intake_result=intake,
+        )
+        self.assertEqual(second[2].call_count, 0)
+        self.assertEqual(second[3].call_count, 1)
+
+    def test_confirm_creates_review_record_without_mutating_phase2(self):
+        shared_state = {}
+        support = [self._supporting_upload()]
+        intake = self._intake_result()
+        workspace_key = evidence_workspace_module.evidence_workspace_key(
+            PDF_BYTES,
+            [("gstr2b.pdf", b"%PDF supporting sentinel")],
+            ["evidence.e1"],
+        )
+        button_key = f"confirm_{workspace_key}_EC-001"
+        note_key = f"evidence_note_{workspace_key}_EC-001"
+
+        original = make_result()
+        fake, _, runner, _, _, _ = run_app(
+            result=original,
+            supporting_uploads=support,
+            session_state=shared_state,
+            evidence_intake_result=intake,
+            button_values={button_key: True},
+            text_values={note_key: "Checked by CA"},
+        )
+
+        self.assertEqual(runner.call_count, 1)
+        reviews = shared_state["_dwaar_evidence_reviews"]
+        self.assertEqual(len(reviews), 1)
+        self.assertIs(
+            reviews[0].decision,
+            EvidenceReviewStatus.CONFIRMED,
+        )
+        self.assertEqual(reviews[0].reviewer_note, "Checked by CA")
+        self.assertIs(
+            original.draft_result.evidence_checklist[0].status,
+            EvidenceStatus.UNKNOWN,
+        )
+        self.assertIn("Evidence review records", log_text(fake))
+
+    def test_reject_creates_rejected_review_record(self):
+        shared_state = {}
+        support = [self._supporting_upload()]
+        intake = self._intake_result()
+        workspace_key = evidence_workspace_module.evidence_workspace_key(
+            PDF_BYTES,
+            [("gstr2b.pdf", b"%PDF supporting sentinel")],
+            ["evidence.e1"],
+        )
+        button_key = f"reject_{workspace_key}_EC-001"
+        run_app(
+            supporting_uploads=support,
+            session_state=shared_state,
+            evidence_intake_result=intake,
+            button_values={button_key: True},
+        )
+        reviews = shared_state["_dwaar_evidence_reviews"]
+        self.assertEqual(len(reviews), 1)
+        self.assertIs(reviews[0].decision, EvidenceReviewStatus.REJECTED)
 
 
 if __name__ == "__main__":
