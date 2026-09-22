@@ -43,6 +43,16 @@ class CaseRepository(Protocol):
     def create_case(self, case: CaseRecord) -> None:
         ...
 
+    def create_case_intake(
+        self,
+        client: Client,
+        registration: Optional[TaxRegistration],
+        case: CaseRecord,
+        document: StoredDocumentRef,
+        events: List[CaseEvent],
+    ) -> None:
+        ...
+
     def get_case(self, case_id: str) -> Optional[CaseRecord]:
         ...
 
