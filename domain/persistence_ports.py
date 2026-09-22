@@ -7,6 +7,7 @@ cloud object storage without changing domain callers.
 
 from typing import List, Optional, Protocol
 
+from domain.auth_models import FirmAccessGrant
 from domain.case_models import (
     CaseEvent,
     CaseRecord,
@@ -71,6 +72,26 @@ class CaseRepository(Protocol):
         ...
 
     def get_snapshot(self, case_id: str) -> Optional[CaseSnapshot]:
+        ...
+
+
+class AccessGrantRepository(Protocol):
+    """Persistent firm-access grant lookup boundary."""
+
+    def save_grant(self, grant: FirmAccessGrant) -> None:
+        ...
+
+    def get_grant(
+        self,
+        user_id: str,
+        firm_id: str,
+    ) -> Optional[FirmAccessGrant]:
+        ...
+
+    def list_grants_for_user(
+        self,
+        user_id: str,
+    ) -> List[FirmAccessGrant]:
         ...
 
 
