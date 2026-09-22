@@ -27,12 +27,13 @@ from domain.case_models import (
 from domain.models import NoticeForm, ProceedingType
 
 
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 _PROHIBITED_EVENT_KEYS = frozenset(
     {
         "raw_text",
         "source_text",
         "reviewer_note",
+        "draft_text",
         "document_bytes",
         "payload_bytes",
         "access_token",
@@ -225,6 +226,41 @@ class LocalSQLiteCaseRepository:
                     ON evidence_reviews(
                         snapshot_id, reviewed_at, review_id
                     );
+
+                CREATE TABLE IF NOT EXISTS draft_versions (
+                    draft_version_id TEXT PRIMARY KEY,
+                    case_id TEXT NOT NULL,
+                    source_snapshot_id TEXT NOT NULL,
+                    parent_draft_version_id TEXT,
+                    version_number INTEGER NOT NULL,
+                    generated_baseline INTEGER NOT NULL,
+                    content_sha256 TEXT NOT NULL,
+                    byte_size INTEGER NOT NULL,
+                    sha256_hex TEXT NOT NULL,
+                    storage_key TEXT NOT NULL UNIQUE,
+                    review_status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    reviewed_at TEXT,
+                    reviewed_by TEXT,
+                    approved_at TEXT,
+                    approved_by TEXT,
+                    FOREIGN KEY (case_id) REFERENCES cases(case_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    FOREIGN KEY (source_snapshot_id)
+                        REFERENCES analysis_snapshots(snapshot_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    FOREIGN KEY (parent_draft_version_id)
+                        REFERENCES draft_versions(draft_version_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    UNIQUE (case_id, version_number),
+                    CHECK (version_number >= 1),
+                    CHECK (generated_baseline IN (0, 1)),
+                    CHECK (byte_size > 0)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_draft_versions_case_version
+                    ON draft_versions(case_id, version_number);
                 """
             )
             current = connection.execute(
@@ -237,10 +273,10 @@ class LocalSQLiteCaseRepository:
                 )
             else:
                 current_version = int(current["value"])
-                if current_version in (1, 2):
-                    # v2 added analysis_snapshots; v3 adds evidence_reviews.
-                    # Both tables are created idempotently by the schema
-                    # script above, so this explicit bump records migration.
+                if current_version in (1, 2, 3):
+                    # v2 added analysis_snapshots; v3 evidence_reviews;
+                    # v4 draft_versions. Tables are created idempotently
+                    # above, so this explicit bump records migration.
                     connection.execute(
                         """
                         UPDATE schema_meta

@@ -6,6 +6,7 @@ import streamlit as st
 
 from domain.auth_models import AccessPermission
 from domain.case_models import CaseDocumentKind, CaseStatus
+from domain.draft_work_product_models import DraftReviewStatus
 from domain.evidence_engine import propose_evidence_candidates
 from domain.evidence_review import (
     create_evidence_review,
@@ -28,6 +29,7 @@ from modules.runtime_persistence import (
     RuntimePersistenceConfigurationError,
     build_authorized_analysis_snapshot_service,
     build_authorized_case_service,
+    build_authorized_draft_work_product_service,
     build_authorized_evidence_review_service,
     build_authorized_evidence_workspace_service,
 )
@@ -663,6 +665,361 @@ def _render_snapshot_history(
     if loaded is None:
         return
     _render_historical_snapshot(loaded)
+
+
+def _render_draft_work_product_workspace(
+    principal,
+    active_firm,
+    reopened,
+):
+    st.header("Draft work product")
+    st.caption(
+        "Draft content is stored as immutable encrypted versions. "
+        "Generated baselines are bound to saved analysis snapshots; "
+        "professional edits create new versions. Approval does not "
+        "record filing."
+    )
+
+    try:
+        draft_service = build_authorized_draft_work_product_service()
+        versions = draft_service.list_versions(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+        )
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Draft work-product storage is not fully configured on this "
+            "deployment."
+        )
+        return
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to view draft history "
+            "for this case."
+        )
+        return
+    except Exception:
+        st.error("Draft work-product history could not be loaded.")
+        return
+
+    if versions:
+        st.dataframe(
+            [
+                {
+                    "draft_version_id": item.draft_version_id,
+                    "version_number": item.version_number,
+                    "source_snapshot_id": item.source_snapshot_id,
+                    "parent_draft_version_id": _display(
+                        item.parent_draft_version_id
+                    ),
+                    "generated_baseline": item.generated_baseline,
+                    "review_status": item.review_status.value,
+                    "created_at": item.created_at.isoformat(),
+                    "created_by": item.created_by,
+                    "reviewed_at": _display(item.reviewed_at),
+                    "reviewed_by": _display(item.reviewed_by),
+                    "approved_at": _display(item.approved_at),
+                    "approved_by": _display(item.approved_by),
+                }
+                for item in versions
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write("No durable draft work-product versions yet.")
+
+    if AccessPermission.CASE_UPDATE in active_firm.permissions:
+        try:
+            snapshot_service = build_authorized_analysis_snapshot_service()
+            snapshots = snapshot_service.list_snapshot_history(
+                principal,
+                active_firm.firm_id,
+                case_id=reopened.case.case_id,
+            )
+        except RuntimePersistenceConfigurationError:
+            st.error(
+                "Analysis history storage is not fully configured on this "
+                "deployment."
+            )
+            return
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to use analysis "
+                "history for draft creation."
+            )
+            return
+        except Exception:
+            st.error(
+                "Analysis history could not be loaded for draft creation."
+            )
+            return
+
+        if snapshots:
+            snapshot_labels = {
+                (
+                    f"{item.created_at.isoformat()} — "
+                    f"{item.engine_version} — {item.snapshot_id}"
+                ): item
+                for item in reversed(snapshots)
+            }
+            selected_snapshot_label = st.selectbox(
+                "Draft baseline analysis snapshot",
+                list(snapshot_labels),
+                key=f"draft_baseline_snapshot_{reopened.case.case_id}",
+            )
+            selected_snapshot = snapshot_labels[
+                selected_snapshot_label
+            ]
+            already_seeded = any(
+                item.generated_baseline
+                and item.source_snapshot_id
+                == selected_snapshot.snapshot_id
+                for item in versions
+            )
+            if already_seeded:
+                st.caption(
+                    "This analysis snapshot already has a generated "
+                    "draft baseline."
+                )
+            elif st.button(
+                "Create generated draft baseline",
+                key=(
+                    f"create_draft_baseline_"
+                    f"{reopened.case.case_id}_"
+                    f"{selected_snapshot.snapshot_id}"
+                ),
+            ):
+                try:
+                    created = draft_service.create_generated_baseline(
+                        principal,
+                        active_firm.firm_id,
+                        case_id=reopened.case.case_id,
+                        snapshot_id=selected_snapshot.snapshot_id,
+                        created_at=datetime.now(timezone.utc),
+                    )
+                except ValueError:
+                    st.error(
+                        "The selected snapshot cannot seed a professional "
+                        "draft baseline. Its generated draft may be absent, "
+                        "failed, or not post-validated."
+                    )
+                except PermissionError:
+                    st.error(
+                        "Your account is no longer authorized to create "
+                        "draft versions for this case."
+                    )
+                except Exception:
+                    st.error(
+                        "The generated draft baseline could not be saved."
+                    )
+                else:
+                    versions = draft_service.list_versions(
+                        principal,
+                        active_firm.firm_id,
+                        case_id=reopened.case.case_id,
+                    )
+                    st.write(
+                        {
+                            "created_draft_version_id": (
+                                created.draft_version_id
+                            ),
+                            "version_number": created.version_number,
+                            "source_snapshot_id": (
+                                created.source_snapshot_id
+                            ),
+                        }
+                    )
+        else:
+            st.warning(
+                "Save an analysis snapshot before creating a durable "
+                "draft work product."
+            )
+
+    if not versions:
+        return
+
+    labels = {
+        (
+            f"v{item.version_number} — "
+            f"{item.review_status.value} — {item.draft_version_id}"
+        ): item
+        for item in reversed(versions)
+    }
+    selected_label = st.selectbox(
+        "Draft version",
+        list(labels),
+        key=f"draft_version_selector_{reopened.case.case_id}",
+    )
+    selected = labels[selected_label]
+
+    try:
+        loaded = draft_service.load_version(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+            draft_version_id=selected.draft_version_id,
+        )
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to read this draft "
+            "version."
+        )
+        return
+    except LookupError:
+        st.error("The selected draft version is no longer available.")
+        return
+    except Exception:
+        st.error("The selected draft version could not be loaded.")
+        return
+
+    st.write(
+        {
+            "draft_version_id": selected.draft_version_id,
+            "version_number": selected.version_number,
+            "source_snapshot_id": selected.source_snapshot_id,
+            "review_status": selected.review_status.value,
+            "content_sha256": selected.content_sha256,
+        }
+    )
+
+    latest = versions[-1]
+    is_latest = latest.draft_version_id == selected.draft_version_id
+    draft_text = loaded.payload["draft_text"]
+
+    if AccessPermission.CASE_UPDATE in active_firm.permissions and is_latest:
+        edited_text = st.text_area(
+            "Professional draft text",
+            value=draft_text,
+            height=420,
+            key=f"draft_editor_{selected.draft_version_id}",
+        )
+        if st.button(
+            "Save edited draft as new version",
+            key=f"save_draft_edit_{selected.draft_version_id}",
+        ):
+            try:
+                created = draft_service.create_edited_version(
+                    principal,
+                    active_firm.firm_id,
+                    case_id=reopened.case.case_id,
+                    parent_draft_version_id=selected.draft_version_id,
+                    draft_text=edited_text,
+                    created_at=datetime.now(timezone.utc),
+                )
+            except (ValueError, TypeError) as error:
+                st.error(str(error))
+            except PermissionError:
+                st.error(
+                    "Your account is no longer authorized to create "
+                    "draft versions for this case."
+                )
+            except Exception:
+                st.error("The edited draft version could not be saved.")
+            else:
+                st.write(
+                    {
+                        "created_draft_version_id": (
+                            created.draft_version_id
+                        ),
+                        "version_number": created.version_number,
+                        "parent_draft_version_id": (
+                            created.parent_draft_version_id
+                        ),
+                        "review_status": created.review_status.value,
+                    }
+                )
+    else:
+        st.text_area(
+            "Professional draft text",
+            value=draft_text,
+            height=420,
+            disabled=True,
+            key=f"draft_view_{selected.draft_version_id}",
+        )
+        if not is_latest:
+            st.caption(
+                "Historical draft versions are immutable. Select the "
+                "latest version to create a new edit."
+            )
+
+    if AccessPermission.DRAFT_REVIEW in active_firm.permissions:
+        target_status = None
+        action_label = None
+        if selected.review_status is DraftReviewStatus.WORKING:
+            target_status = DraftReviewStatus.REVIEWED
+            action_label = "Mark draft reviewed"
+        elif selected.review_status is DraftReviewStatus.REVIEWED:
+            target_status = DraftReviewStatus.APPROVED
+            action_label = "Approve draft"
+
+        if target_status is not None and st.button(
+            action_label,
+            key=(
+                f"draft_review_{selected.draft_version_id}_"
+                f"{target_status.value}"
+            ),
+        ):
+            try:
+                updated = draft_service.transition_review(
+                    principal,
+                    active_firm.firm_id,
+                    case_id=reopened.case.case_id,
+                    draft_version_id=selected.draft_version_id,
+                    target_status=target_status,
+                    occurred_at=datetime.now(timezone.utc),
+                )
+            except (ValueError, TypeError) as error:
+                st.error(str(error))
+            except PermissionError:
+                st.error(
+                    "Your account is no longer authorized to review this "
+                    "draft."
+                )
+            except Exception:
+                st.error("The draft review state could not be saved.")
+            else:
+                selected = updated
+                st.write(
+                    {
+                        "reviewed_draft_version_id": (
+                            updated.draft_version_id
+                        ),
+                        "review_status": updated.review_status.value,
+                    }
+                )
+
+    if selected.review_status in {
+        DraftReviewStatus.REVIEWED,
+        DraftReviewStatus.APPROVED,
+    }:
+        try:
+            docx_bytes = draft_service.export_version_docx(
+                principal,
+                active_firm.firm_id,
+                case_id=reopened.case.case_id,
+                draft_version_id=selected.draft_version_id,
+            )
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to export this draft."
+            )
+        except Exception:
+            st.error("The reviewed draft DOCX could not be prepared.")
+        else:
+            st.download_button(
+                "Download reviewed draft DOCX",
+                data=docx_bytes,
+                file_name=(
+                    f"{reopened.case.case_id}-"
+                    f"draft-v{selected.version_number}.docx"
+                ),
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+                key=f"download_draft_{selected.draft_version_id}",
+            )
 
 
 def _render_persisted_evidence_workspace(
@@ -1652,6 +2009,11 @@ def _render_saved_cases_workspace(principal, active_firm):
         active_firm,
         reopened,
         service,
+    )
+    _render_draft_work_product_workspace(
+        principal,
+        active_firm,
+        reopened,
     )
     with st.expander("Extracted saved notice text"):
         st.text(reopened.raw_text)

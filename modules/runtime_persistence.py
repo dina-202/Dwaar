@@ -10,6 +10,9 @@ from modules.authorized_analysis_snapshot_service import (
     AuthorizedAnalysisSnapshotService,
 )
 from modules.authorized_case_service import AuthorizedCaseService
+from modules.authorized_draft_work_product_service import (
+    AuthorizedDraftWorkProductService,
+)
 from modules.authorized_evidence_review_service import (
     AuthorizedEvidenceReviewService,
 )
@@ -32,6 +35,9 @@ from modules.sqlite_analysis_snapshot_repository import (
     LocalSQLiteAnalysisSnapshotRepository,
 )
 from modules.sqlite_case_repository import LocalSQLiteCaseRepository
+from modules.sqlite_draft_version_repository import (
+    LocalSQLiteDraftVersionRepository,
+)
 from modules.sqlite_evidence_review_repository import (
     LocalSQLiteEvidenceReviewRepository,
 )
@@ -132,6 +138,38 @@ def build_authorized_evidence_workspace_service(
     return AuthorizedEvidenceWorkspaceService(
         case_service,
         access_repository,
+    )
+
+
+def build_authorized_draft_work_product_service(
+    environment: Optional[Mapping[str, str]] = None,
+) -> AuthorizedDraftWorkProductService:
+    """Build encrypted immutable draft version/review service."""
+    (
+        db_path,
+        case_repository,
+        access_repository,
+        document_store,
+    ) = _build_runtime_components(environment)
+    case_service = AuthorizedCaseService(
+        case_repository,
+        access_repository,
+        document_store,
+    )
+    snapshot_repository = LocalSQLiteAnalysisSnapshotRepository(db_path)
+    snapshot_service = AuthorizedAnalysisSnapshotService(
+        case_service,
+        access_repository,
+        snapshot_repository,
+        document_store,
+    )
+    draft_repository = LocalSQLiteDraftVersionRepository(db_path)
+    return AuthorizedDraftWorkProductService(
+        case_service,
+        snapshot_service,
+        access_repository,
+        draft_repository,
+        document_store,
     )
 
 
