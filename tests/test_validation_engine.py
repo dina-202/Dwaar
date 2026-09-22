@@ -1218,6 +1218,8 @@ class RoleCompatibilityTests(unittest.TestCase):
         FactRole.GOODS_VALUE_OR_TAX_PAYABLE,
         FactRole.OWNER_CAME_FORWARD_STATUS,
         FactRole.ORDER_DATE_OR_ENFORCEMENT_STATUS,
+        FactRole.NOTICE_SERVICE_DATE,
+        FactRole.RESPONSE_PERIOD,
     )
 
     def _role_check(self, fact_type, fact_role, status=FactStatus.CONFIRMED,
