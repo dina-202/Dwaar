@@ -18,6 +18,7 @@ from domain.drafting_engine import (
     generate_specialist_draft,
 )
 from domain.fact_engine import (
+    extract_facts_with_page_provenance,
     extract_facts_with_status,
 )
 from domain.models import (
@@ -303,14 +304,12 @@ def _build_triage_summary(
     )
 
 
-def run_phase2_analysis(
-    raw_text: str,
+def _assemble_phase2_result(
+    classification: _NoticeClassification,
+    extraction_result: _FactExtractionResult,
     today: _date,
 ) -> _Phase2AnalysisResult:
-    """Run the exact UI-independent Phase-2 pipeline from §24."""
-    classification = classify_notice(raw_text)
-    extraction_result = extract_facts_with_status(raw_text, classification)
-
+    """Run deterministic downstream Phase-2 stages after fact extraction."""
     notice_date, hearing_date_text = _build_deadline_inputs(
         extraction_result.facts
     )
@@ -361,4 +360,52 @@ def run_phase2_analysis(
         validation_result=validation_result,
         draft_result=draft_result,
         triage_summary=triage_summary,
+    )
+
+
+def run_phase2_analysis(
+    raw_text: str,
+    today: _date,
+) -> _Phase2AnalysisResult:
+    """Run the backward-compatible raw-text Phase-2 pipeline from §24."""
+    classification = classify_notice(raw_text)
+    extraction_result = extract_facts_with_status(raw_text, classification)
+    return _assemble_phase2_result(
+        classification,
+        extraction_result,
+        today,
+    )
+
+
+def run_phase2_analysis_from_pages(
+    page_texts: _List[str],
+    today: _date,
+) -> _Phase2AnalysisResult:
+    """Run Phase 2 with deterministic page-aware fact provenance.
+
+    Classification and every downstream engine still receive the exact
+    legacy flattened text representation. Only fact provenance gains page
+    boundaries, so this path is additive rather than a classification or
+    workflow semantics change.
+    """
+    if (
+        not isinstance(page_texts, list)
+        or any(not isinstance(page_text, str) for page_text in page_texts)
+    ):
+        raw_text = ""
+        safe_pages: _List[str] = []
+    else:
+        safe_pages = page_texts
+        raw_text = "".join(safe_pages)
+
+    classification = classify_notice(raw_text)
+    extraction_result = extract_facts_with_page_provenance(
+        raw_text,
+        classification,
+        safe_pages,
+    )
+    return _assemble_phase2_result(
+        classification,
+        extraction_result,
+        today,
     )
