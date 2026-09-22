@@ -781,6 +781,20 @@ class LocalSQLiteCaseRepository:
             ).fetchall()
         return [self._case_from_row(row) for row in rows]
 
+    def list_cases_for_client(
+        self, client_id: str
+    ) -> List[CaseRecord]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM cases
+                WHERE client_id = ?
+                ORDER BY opened_at DESC, case_id ASC
+                """,
+                (client_id,),
+            ).fetchall()
+        return [self._case_from_row(row) for row in rows]
+
     def update_case(self, case: CaseRecord) -> None:
         with self._connect() as connection:
             current = connection.execute(
