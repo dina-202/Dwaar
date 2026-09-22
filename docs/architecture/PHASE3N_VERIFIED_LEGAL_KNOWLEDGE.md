@@ -270,7 +270,11 @@ Phase 3N initial implementation adds:
 - `domain/legal_knowledge_models.py` — immutable contracts;
 - `domain/legal_knowledge.py` — fail-closed catalog validator and resolver;
 - `workflows/gst/legal_knowledge.py` — versioned GST source/rule pack;
-- `tests/test_legal_knowledge.py` — offline deterministic tests.
+- `workflows/gst/legal_research.py` — closed per-workflow research-topic plans;
+- `app.py` — read-only verified-legal-source panel using the notice date as the explicit version-selection date;
+- `tests/test_legal_knowledge.py` and `tests/test_gst_legal_research.py` — offline deterministic tests.
+
+The legal panel's notice-date basis is displayed explicitly. It is a research view, not a claim that the notice date is the correct substantive-law date for every issue. Tax-period-dependent topics remain unresolved until a later contract supplies the correct legal applicability date.
 
 No dependency change is required.
 
@@ -295,10 +299,10 @@ The initial 3N layer is complete when:
 
 After this foundation is green:
 
-1. add a deterministic per-workflow legal-research plan;
-2. surface the legal brief in the professional case workspace;
-3. add curated notification/rule/circular packs for RCM, ITC and reply-form questions;
-4. introduce a closed Python-rendered legal-rule draft block;
-5. bind saved legal briefs to analysis snapshots so historical cases retain the exact catalog version used.
+1. expand curated notification/rule/circular packs for RCM, ITC and reply-form questions;
+2. add explicit legal-applicability date inputs for tax-period-dependent rules instead of reusing the notice date;
+3. introduce a closed Python-rendered legal-rule draft block;
+4. bind saved legal briefs to analysis snapshots so historical cases retain the exact catalog version used;
+5. add professional source-refresh/re-verification workflow and expiry warnings.
 
 No step may bypass source verification in order to make the UI look more complete.
