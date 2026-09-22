@@ -262,6 +262,7 @@ class PersistencePortTests(unittest.TestCase):
                 "create_case",
                 "create_case_intake",
                 "create_client",
+                "create_existing_client_case_intake",
                 "create_firm",
                 "create_registration",
                 "get_case",
@@ -270,8 +271,10 @@ class PersistencePortTests(unittest.TestCase):
                 "get_registration",
                 "get_snapshot",
                 "list_cases",
+                "list_clients",
                 "list_document_refs",
                 "list_events",
+                "list_registrations",
                 "update_case",
             ],
         )

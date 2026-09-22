@@ -17,7 +17,9 @@ from domain.authorization import require_firm_permission
 from domain.case_models import (
     CaseDocumentKind,
     CaseRecord,
+    Client,
     StoredDocumentRef,
+    TaxRegistration,
 )
 from domain.models import NoticeForm, ProceedingType
 from domain.persistence_ports import (
@@ -26,7 +28,10 @@ from domain.persistence_ports import (
     DocumentStore,
 )
 from modules.case_document_service import persist_pdf_document
-from modules.case_intake_service import persist_new_case_intake
+from modules.case_intake_service import (
+    persist_existing_client_case_intake,
+    persist_new_case_intake,
+)
 
 
 class StoredDocumentConsistencyError(RuntimeError):
@@ -92,6 +97,39 @@ class AuthorizedCaseService:
         self._grant(principal, firm_id, AccessPermission.CASE_READ)
         return self._case_in_firm(firm_id, case_id)
 
+    def list_clients(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+    ) -> List[Client]:
+        """List clients visible inside one authorized firm."""
+        self._grant(principal, firm_id, AccessPermission.CASE_READ)
+        return self._cases.list_clients(firm_id)
+
+    def list_registrations(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        client_id: str,
+    ) -> List[TaxRegistration]:
+        """List tax registrations for one client in the selected firm."""
+        self._grant(principal, firm_id, AccessPermission.CASE_READ)
+        client = self._case_client_in_firm(firm_id, client_id)
+        if client is None:
+            raise LookupError("client does not exist")
+        return self._cases.list_registrations(client.client_id)
+
+    def _case_client_in_firm(
+        self,
+        firm_id: str,
+        client_id: str,
+    ) -> Optional[Client]:
+        client = self._cases.get_client(client_id)
+        if client is None or client.firm_id != firm_id:
+            return None
+        return client
+
     def create_case(
         self,
         principal: AuthenticatedPrincipal,
@@ -128,6 +166,52 @@ class AuthorizedCaseService:
             firm_id=firm_id,
             client_name=client_name,
             gstin=gstin,
+            case_title=case_title,
+            proceeding_type=proceeding_type,
+            notice_form=notice_form,
+            response_deadline=response_deadline,
+            notice_filename=notice_filename,
+            notice_payload=notice_payload,
+            actor_id=principal.user_id,
+            opened_at=opened_at,
+        )
+
+    def create_existing_client_case_intake(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        client_id: str,
+        registration_id: Optional[str],
+        case_title: str,
+        proceeding_type: ProceedingType,
+        notice_form: NoticeForm,
+        response_deadline: Optional[date],
+        notice_filename: str,
+        notice_payload: bytes,
+        opened_at: datetime,
+    ) -> CaseRecord:
+        """Create a durable intake case for an explicitly selected client."""
+        self._grant(principal, firm_id, AccessPermission.CASE_CREATE)
+        client = self._case_client_in_firm(firm_id, client_id)
+        if client is None:
+            raise LookupError("client does not exist")
+        if registration_id is not None:
+            registration = self._cases.get_registration(registration_id)
+            if (
+                registration is None
+                or registration.client_id != client.client_id
+            ):
+                raise LookupError(
+                    "registration does not exist for the selected client"
+                )
+
+        return persist_existing_client_case_intake(
+            self._cases,
+            self._documents,
+            firm_id=firm_id,
+            client_id=client.client_id,
+            registration_id=registration_id,
             case_title=case_title,
             proceeding_type=proceeding_type,
             notice_form=notice_form,

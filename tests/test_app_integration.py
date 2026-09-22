@@ -27,7 +27,9 @@ from domain.case_models import (
     CaseDocumentKind,
     CaseRecord,
     CaseStatus,
+    Client,
     StoredDocumentRef,
+    TaxRegistration,
 )
 from domain.models import (
     ArithmeticCalculationType,
@@ -584,8 +586,18 @@ def run_app(
     if persistence_service is None:
         persistence_service = Mock()
         persistence_service.list_cases.return_value = []
-    elif isinstance(persistence_service.list_cases.return_value, Mock):
-        persistence_service.list_cases.return_value = []
+        persistence_service.list_clients.return_value = []
+        persistence_service.list_registrations.return_value = []
+    else:
+        if isinstance(persistence_service.list_cases.return_value, Mock):
+            persistence_service.list_cases.return_value = []
+        if isinstance(persistence_service.list_clients.return_value, Mock):
+            persistence_service.list_clients.return_value = []
+        if isinstance(
+            persistence_service.list_registrations.return_value,
+            Mock,
+        ):
+            persistence_service.list_registrations.return_value = []
     persistence_service_mock = Mock(
         return_value=persistence_service
     )
@@ -2401,6 +2413,11 @@ class DurableIntakeUiTests(unittest.TestCase):
             "client": f"intake_client_{save_key}",
             "gstin": f"intake_gstin_{save_key}",
             "title": f"intake_title_{save_key}",
+            "mode": f"intake_client_mode_{save_key}",
+            "existing_client": f"intake_existing_client_{save_key}",
+            "existing_registration": (
+                f"intake_existing_registration_{save_key}"
+            ),
         }
 
     def test_analysis_renders_save_panel_without_persisting(self):
@@ -2411,7 +2428,7 @@ class DurableIntakeUiTests(unittest.TestCase):
             1,
         )
         self.assertIn(
-            "current analysis is not yet persisted",
+            "Dwaar never auto-merges clients by name or GSTIN",
             log_text(fake),
         )
 
@@ -2421,6 +2438,8 @@ class DurableIntakeUiTests(unittest.TestCase):
         saved_case = Mock()
         saved_case.case_id = "CASE-SAVED-1"
         saved_case.status.value = "intake"
+        saved_case.client_id = "CLIENT-NEW"
+        saved_case.registration_id = "REG-NEW"
         service.create_case_intake.return_value = saved_case
 
         fake, _, runner, _, _, _ = run_app(
@@ -2471,6 +2490,165 @@ class DurableIntakeUiTests(unittest.TestCase):
         )
         self.assertIn("CASE-SAVED-1", log_text(fake))
 
+    def test_existing_client_mode_reuses_selected_client_and_registration(self):
+        keys = self._save_keys()
+        service = Mock()
+        client = Client(
+            "CLIENT-EXISTING",
+            "F-TEST",
+            "Existing Taxpayer",
+            datetime(2026, 7, 1, tzinfo=timezone.utc),
+        )
+        registration = TaxRegistration(
+            "REG-EXISTING",
+            client.client_id,
+            "IN-GST",
+            "GSTIN",
+            "06ABCDE1234F1Z5",
+            datetime(2026, 7, 1, tzinfo=timezone.utc),
+        )
+        service.list_cases.return_value = []
+        service.list_clients.return_value = [client]
+        service.list_registrations.return_value = [registration]
+        saved_case = Mock()
+        saved_case.case_id = "CASE-REUSED"
+        saved_case.status.value = "intake"
+        saved_case.client_id = client.client_id
+        saved_case.registration_id = registration.registration_id
+        service.create_existing_client_case_intake.return_value = saved_case
+
+        client_label = f"{client.display_name} — {client.client_id}"
+        registration_label = (
+            f"GSTIN: {registration.identifier_value} — "
+            f"{registration.registration_id}"
+        )
+        fake, *_ = run_app(
+            persistence_service=service,
+            selectbox_values={
+                keys["mode"]: "Existing client",
+                keys["existing_client"]: client_label,
+                keys["existing_registration"]: registration_label,
+            },
+            button_values={keys["button"]: True},
+            text_values={keys["title"]: "Second notice"},
+        )
+
+        service.list_clients.assert_called_once()
+        service.list_registrations.assert_called_once_with(
+            ANY,
+            "F-TEST",
+            client_id="CLIENT-EXISTING",
+        )
+        service.create_existing_client_case_intake.assert_called_once()
+        kwargs = (
+            service.create_existing_client_case_intake.call_args.kwargs
+        )
+        self.assertEqual(kwargs["client_id"], "CLIENT-EXISTING")
+        self.assertEqual(kwargs["registration_id"], "REG-EXISTING")
+        self.assertEqual(kwargs["case_title"], "Second notice")
+        service.create_case_intake.assert_not_called()
+        self.assertIn("CASE-REUSED", log_text(fake))
+        self.assertIn("CLIENT-EXISTING", log_text(fake))
+
+    def test_existing_client_can_explicitly_choose_no_registration(self):
+        keys = self._save_keys()
+        service = Mock()
+        client = Client(
+            "CLIENT-EXISTING",
+            "F-TEST",
+            "Existing Taxpayer",
+            datetime(2026, 7, 1, tzinfo=timezone.utc),
+        )
+        service.list_cases.return_value = []
+        service.list_clients.return_value = [client]
+        service.list_registrations.return_value = []
+        saved_case = Mock()
+        saved_case.case_id = "CASE-REUSED"
+        saved_case.status.value = "intake"
+        saved_case.client_id = client.client_id
+        saved_case.registration_id = None
+        service.create_existing_client_case_intake.return_value = saved_case
+
+        fake, *_ = run_app(
+            persistence_service=service,
+            selectbox_values={
+                keys["mode"]: "Existing client",
+                keys["existing_client"]: (
+                    f"{client.display_name} — {client.client_id}"
+                ),
+                keys["existing_registration"]: "No registration",
+            },
+            button_values={keys["button"]: True},
+            text_values={keys["title"]: "Registration-free matter"},
+        )
+
+        kwargs = (
+            service.create_existing_client_case_intake.call_args.kwargs
+        )
+        self.assertIsNone(kwargs["registration_id"])
+        self.assertIn("CASE-REUSED", log_text(fake))
+
+    def test_new_client_remains_default_even_when_existing_clients_exist(self):
+        keys = self._save_keys()
+        service = Mock()
+        service.list_cases.return_value = []
+        service.list_clients.return_value = [
+            Client(
+                "CLIENT-EXISTING",
+                "F-TEST",
+                "Existing Taxpayer",
+                datetime(2026, 7, 1, tzinfo=timezone.utc),
+            )
+        ]
+        saved_case = Mock()
+        saved_case.case_id = "CASE-NEW"
+        saved_case.status.value = "intake"
+        saved_case.client_id = "CLIENT-NEW"
+        saved_case.registration_id = None
+        service.create_case_intake.return_value = saved_case
+
+        run_app(
+            persistence_service=service,
+            button_values={keys["button"]: True},
+            text_values={
+                keys["client"]: "Another Taxpayer",
+                keys["title"]: "New taxpayer matter",
+            },
+        )
+
+        service.create_case_intake.assert_called_once()
+        service.create_existing_client_case_intake.assert_not_called()
+
+    def test_create_only_user_is_not_allowed_to_browse_existing_clients(self):
+        keys = self._save_keys()
+        service = Mock()
+        saved_case = Mock()
+        saved_case.case_id = "CASE-NEW"
+        saved_case.status.value = "intake"
+        saved_case.client_id = "CLIENT-NEW"
+        saved_case.registration_id = None
+        service.create_case_intake.return_value = saved_case
+        firm = AvailableFirmAccess(
+            firm_id="F-TEST",
+            display_name="Test Firm",
+            permissions=frozenset({AccessPermission.CASE_CREATE}),
+        )
+
+        fake, *_ = run_app(
+            available_firms=[firm],
+            persistence_service=service,
+            button_values={keys["button"]: True},
+            text_values={
+                keys["client"]: "New Client",
+                keys["title"]: "Matter",
+            },
+        )
+
+        service.list_clients.assert_not_called()
+        service.list_registrations.assert_not_called()
+        service.create_case_intake.assert_called_once()
+        self.assertNotIn("Existing client", log_text(fake))
+
     def test_saved_notice_does_not_create_duplicate_on_rerun(self):
         keys = self._save_keys()
         shared_state = {}
@@ -2478,6 +2656,8 @@ class DurableIntakeUiTests(unittest.TestCase):
         saved_case = Mock()
         saved_case.case_id = "CASE-SAVED-1"
         saved_case.status.value = "intake"
+        saved_case.client_id = "CLIENT-NEW"
+        saved_case.registration_id = None
         first_service.create_case_intake.return_value = saved_case
 
         run_app(

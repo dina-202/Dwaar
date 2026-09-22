@@ -347,6 +347,27 @@ class LocalSQLiteCaseRepository:
             created_at=self._parse_dt(row["created_at"]),
         )
 
+    def list_clients(self, firm_id: str) -> List[Client]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM clients
+                WHERE firm_id = ?
+                ORDER BY display_name COLLATE NOCASE ASC,
+                         created_at ASC, client_id ASC
+                """,
+                (firm_id,),
+            ).fetchall()
+        return [
+            Client(
+                client_id=row["client_id"],
+                firm_id=row["firm_id"],
+                display_name=row["display_name"],
+                created_at=self._parse_dt(row["created_at"]),
+            )
+            for row in rows
+        ]
+
     def create_registration(self, registration: TaxRegistration) -> None:
         with self._connect() as connection:
             self._execute_insert(
@@ -390,6 +411,33 @@ class LocalSQLiteCaseRepository:
             identifier_value=row["identifier_value"],
             created_at=self._parse_dt(row["created_at"]),
         )
+
+    def list_registrations(
+        self, client_id: str
+    ) -> List[TaxRegistration]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM tax_registrations
+                WHERE client_id = ?
+                ORDER BY identifier_type ASC,
+                         identifier_value ASC,
+                         created_at ASC,
+                         registration_id ASC
+                """,
+                (client_id,),
+            ).fetchall()
+        return [
+            TaxRegistration(
+                registration_id=row["registration_id"],
+                client_id=row["client_id"],
+                jurisdiction=row["jurisdiction"],
+                identifier_type=row["identifier_type"],
+                identifier_value=row["identifier_value"],
+                created_at=self._parse_dt(row["created_at"]),
+            )
+            for row in rows
+        ]
 
     def _validate_case_relationships(
         self, connection: sqlite3.Connection, case: CaseRecord
@@ -581,6 +629,77 @@ class LocalSQLiteCaseRepository:
                     "Tax registration",
                 )
 
+            self._execute_insert(
+                connection,
+                """
+                INSERT INTO cases(
+                    case_id, firm_id, client_id, registration_id, title,
+                    status, proceeding_type, notice_form, opened_at,
+                    response_deadline, assigned_to, reviewer_id, closed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    case.case_id,
+                    case.firm_id,
+                    case.client_id,
+                    case.registration_id,
+                    case.title,
+                    case.status.value,
+                    case.proceeding_type.value,
+                    case.notice_form.value,
+                    self._dt(case.opened_at),
+                    self._date(case.response_deadline),
+                    case.assigned_to,
+                    case.reviewer_id,
+                    (
+                        None
+                        if case.closed_at is None
+                        else self._dt(case.closed_at)
+                    ),
+                ),
+                "Case",
+            )
+            self._insert_document_ref(connection, document)
+            for event in events:
+                self._insert_event(connection, event)
+
+
+    def create_existing_client_case_intake(
+        self,
+        case: CaseRecord,
+        document: StoredDocumentRef,
+        events: List[CaseEvent],
+    ) -> None:
+        """Atomically create a case/notice/events for an existing client."""
+        if not isinstance(case, CaseRecord):
+            raise TypeError("case must be a CaseRecord")
+        if not isinstance(document, StoredDocumentRef):
+            raise TypeError("document must be a StoredDocumentRef")
+        if (
+            not isinstance(events, list)
+            or not events
+            or any(not isinstance(event, CaseEvent) for event in events)
+        ):
+            raise TypeError("events must be a non-empty list of CaseEvent")
+        if document.case_id != case.case_id:
+            raise RepositoryConflictError(
+                "Notice document must belong to the intake case."
+            )
+        if any(event.case_id != case.case_id for event in events):
+            raise RepositoryConflictError(
+                "All intake events must belong to the intake case."
+            )
+
+        self._validate_document_ref(document)
+        self._dt(case.opened_at)
+        self._dt(document.created_at)
+        for event in events:
+            self._validate_event_payload(event.payload)
+            self._dt(event.occurred_at)
+
+        with self._connect() as connection:
+            self._validate_case_relationships(connection, case)
             self._execute_insert(
                 connection,
                 """
