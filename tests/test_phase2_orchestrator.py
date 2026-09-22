@@ -25,6 +25,7 @@ from domain.models import (
     DraftEligibility,
     DraftFailureCode,
     DraftGenerationStatus,
+    DocumentPageText,
     DraftPermission,
     ExtractedFact,
     FactExtractionResult,
@@ -40,6 +41,8 @@ from domain.models import (
     PreflightResult,
     ProceedingType,
     RequirementKind,
+    SourceTextOrigin,
+    SourceVerificationStatus,
     SpecialistDraftResult,
     SupportLevel,
     TriageSummary,
@@ -266,7 +269,11 @@ class PublicApiAndPurityTests(unittest.TestCase):
         ]
         self.assertEqual(
             public_functions,
-            ["run_phase2_analysis", "run_phase2_analysis_from_pages"],
+            [
+                "run_phase2_analysis",
+                "run_phase2_analysis_from_pages",
+                "run_phase2_analysis_from_document_pages",
+            ],
         )
 
     def test_exact_signature_and_required_today(self):
@@ -281,6 +288,17 @@ class PublicApiAndPurityTests(unittest.TestCase):
         signature = inspect.signature(orchestrator.run_phase2_analysis_from_pages)
         self.assertEqual(list(signature.parameters), ["page_texts", "today"])
         self.assertEqual(str(signature.parameters["page_texts"].annotation), "typing.List[str]")
+        self.assertIs(signature.parameters["today"].annotation, date)
+        self.assertIs(signature.return_annotation, Phase2AnalysisResult)
+
+    def test_document_page_signature_is_additive_and_exact(self):
+        signature = inspect.signature(
+            orchestrator.run_phase2_analysis_from_document_pages
+        )
+        self.assertEqual(
+            list(signature.parameters),
+            ["document_pages", "today"],
+        )
         self.assertIs(signature.parameters["today"].annotation, date)
         self.assertIs(signature.return_annotation, Phase2AnalysisResult)
 
@@ -586,6 +604,113 @@ class DeadlineMappingTests(unittest.TestCase):
             make_fact("F-2", FactType.HEARING_DETAILS, "", status=FactStatus.CONFIRMED),
         ]
         self.assertIsNone(orchestrator._build_deadline_inputs(facts)[1])
+
+
+class SourceVerificationInputSafetyTests(unittest.TestCase):
+    def test_unverified_ocr_notice_date_is_not_deadline_input(self):
+        fact = make_fact(
+            "F-OCR-DATE",
+            FactType.NOTICE_DATE,
+            "Date: 17-08-2026",
+        )
+        fact.source_origin = SourceTextOrigin.OCR
+        fact.source_verification = (
+            SourceVerificationStatus.REQUIRES_VERIFICATION
+        )
+        with patch.object(orchestrator, "_parse_date_text") as parser:
+            notice_date, _ = orchestrator._build_deadline_inputs([fact])
+        self.assertIsNone(notice_date)
+        parser.assert_not_called()
+
+    def test_unverified_ocr_amount_is_not_arithmetic_operand(self):
+        left, right = make_itc_facts()
+        left.source_origin = SourceTextOrigin.OCR
+        left.source_verification = (
+            SourceVerificationStatus.REQUIRES_VERIFICATION
+        )
+        profile = make_profile([
+            make_requirement(
+                RequirementKind.DERIVED,
+                ArithmeticCalculationType.ITC_DIFFERENCE,
+            )
+        ])
+        with (
+            patch.object(
+                orchestrator,
+                "get_validation_profile",
+                return_value=profile,
+            ),
+            patch.object(orchestrator, "run_arithmetic") as runner,
+        ):
+            results = orchestrator._build_arithmetic_results(
+                make_classification(),
+                make_extraction([left, right]),
+            )
+        runner.assert_not_called()
+        self.assertIs(
+            results[0].status,
+            ArithmeticStatus.INSUFFICIENT_DATA,
+        )
+        self.assertEqual(results[0].source_fact_ids, ["F-R"])
+
+
+class DocumentPageOrchestrationTests(unittest.TestCase):
+    def test_document_pages_preserve_origin_into_fact_extractor(self):
+        pages = [
+            DocumentPageText(
+                page_number=1,
+                text="embedded\n",
+                origin=SourceTextOrigin.EMBEDDED,
+                verification=SourceVerificationStatus.VERIFIED,
+            ),
+            DocumentPageText(
+                page_number=2,
+                text="recognized",
+                origin=SourceTextOrigin.OCR,
+                verification=(
+                    SourceVerificationStatus.REQUIRES_VERIFICATION
+                ),
+                ocr_language="eng",
+                ocr_dpi=300,
+            ),
+        ]
+        raw_text = "embedded\nrecognized"
+        fake_classification = make_classification()
+        fake_extraction = make_extraction()
+        sentinel = object()
+        with (
+            patch.object(
+                orchestrator,
+                "classify_notice",
+                return_value=fake_classification,
+            ) as classifier,
+            patch.object(
+                orchestrator,
+                "extract_facts_with_document_provenance",
+                return_value=fake_extraction,
+            ) as extractor,
+            patch.object(
+                orchestrator,
+                "_assemble_phase2_result",
+                return_value=sentinel,
+            ) as assembler,
+        ):
+            result = orchestrator.run_phase2_analysis_from_document_pages(
+                pages,
+                date(2026, 9, 22),
+            )
+        self.assertIs(result, sentinel)
+        classifier.assert_called_once_with(raw_text)
+        extractor.assert_called_once_with(
+            raw_text,
+            fake_classification,
+            pages,
+        )
+        assembler.assert_called_once_with(
+            fake_classification,
+            fake_extraction,
+            date(2026, 9, 22),
+        )
 
 
 class ArithmeticDiscoveryTests(unittest.TestCase):
