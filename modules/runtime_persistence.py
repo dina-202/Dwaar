@@ -10,6 +10,9 @@ from modules.authorized_analysis_snapshot_service import (
     AuthorizedAnalysisSnapshotService,
 )
 from modules.authorized_case_service import AuthorizedCaseService
+from modules.authorized_evidence_review_service import (
+    AuthorizedEvidenceReviewService,
+)
 from modules.authorized_evidence_workspace_service import (
     AuthorizedEvidenceWorkspaceService,
 )
@@ -29,6 +32,9 @@ from modules.sqlite_analysis_snapshot_repository import (
     LocalSQLiteAnalysisSnapshotRepository,
 )
 from modules.sqlite_case_repository import LocalSQLiteCaseRepository
+from modules.sqlite_evidence_review_repository import (
+    LocalSQLiteEvidenceReviewRepository,
+)
 
 
 class RuntimePersistenceConfigurationError(RuntimeError):
@@ -126,6 +132,38 @@ def build_authorized_evidence_workspace_service(
     return AuthorizedEvidenceWorkspaceService(
         case_service,
         access_repository,
+    )
+
+
+def build_authorized_evidence_review_service(
+    environment: Optional[Mapping[str, str]] = None,
+) -> AuthorizedEvidenceReviewService:
+    """Build encrypted snapshot-bound evidence review service."""
+    (
+        db_path,
+        case_repository,
+        access_repository,
+        document_store,
+    ) = _build_runtime_components(environment)
+    case_service = AuthorizedCaseService(
+        case_repository,
+        access_repository,
+        document_store,
+    )
+    snapshot_repository = LocalSQLiteAnalysisSnapshotRepository(db_path)
+    snapshot_service = AuthorizedAnalysisSnapshotService(
+        case_service,
+        access_repository,
+        snapshot_repository,
+        document_store,
+    )
+    review_repository = LocalSQLiteEvidenceReviewRepository(db_path)
+    return AuthorizedEvidenceReviewService(
+        case_service,
+        snapshot_service,
+        access_repository,
+        review_repository,
+        document_store,
     )
 
 
