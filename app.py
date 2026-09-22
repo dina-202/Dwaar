@@ -573,17 +573,24 @@ def _render_snapshot_history(
             except Exception:
                 st.error("The analysis snapshot could not be saved.")
             else:
-                history = snapshot_service.list_snapshot_history(
-                    principal,
-                    active_firm.firm_id,
-                    case_id=reopened.case.case_id,
-                )
                 st.write(
                     {
                         "saved_snapshot_id": saved.snapshot_id,
                         "engine_version": saved.engine_version,
                     }
                 )
+                try:
+                    history = snapshot_service.list_snapshot_history(
+                        principal,
+                        active_firm.firm_id,
+                        case_id=reopened.case.case_id,
+                    )
+                except Exception:
+                    st.error(
+                        "The snapshot was saved, but analysis history "
+                        "could not be refreshed."
+                    )
+                    return
 
     if not history:
         st.write("No saved analysis snapshots yet.")
@@ -763,6 +770,41 @@ def _render_saved_cases_workspace(principal, active_firm):
     reopened = st.session_state.get(_OPENED_CASE_ANALYSIS)
     if reopened is None:
         return
+
+    if st.button(
+        "Re-run with current engine",
+        key=f"rerun_saved_case_{selected_case.case_id}",
+    ):
+        try:
+            with st.spinner("Re-running saved notice with current engine..."):
+                reopened = reopen_case_analysis(
+                    service,
+                    principal,
+                    active_firm.firm_id,
+                    selected_case.case_id,
+                    date.today(),
+                )
+        except PermissionError:
+            st.error(
+                "Your account is no longer authorized to re-run this case."
+            )
+            return
+        except LookupError:
+            st.error("The saved case is no longer available.")
+            return
+        except SavedCaseReopenError:
+            st.error(
+                "The saved notice could not be safely re-run."
+            )
+            return
+        except Exception:
+            st.error("The saved case could not be re-run.")
+            return
+
+        st.session_state[_OPENED_CASE_ANALYSIS] = reopened
+        st.session_state.pop(_OPENED_SNAPSHOT_ID, None)
+        st.session_state.pop(_OPENED_SNAPSHOT, None)
+        _reset_evidence_workspace()
 
     st.subheader("Opened case")
     st.write(
