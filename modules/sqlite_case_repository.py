@@ -490,7 +490,10 @@ class LocalSQLiteCaseRepository:
                 ),
             )
 
-    def add_document_ref(self, document: StoredDocumentRef) -> None:
+    @staticmethod
+    def _validate_document_ref(document: StoredDocumentRef) -> None:
+        if not isinstance(document, StoredDocumentRef):
+            raise TypeError("document must be a StoredDocumentRef")
         if len(document.sha256_hex) != 64:
             raise ValueError("document sha256_hex must contain 64 hex chars")
         try:
@@ -500,29 +503,38 @@ class LocalSQLiteCaseRepository:
                 "document sha256_hex must contain 64 hex chars"
             ) from error
 
-        with self._connect() as connection:
-            self._execute_insert(
-                connection,
-                """
-                INSERT INTO case_documents(
-                    document_id, case_id, kind, original_filename, media_type,
-                    byte_size, sha256_hex, storage_key, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    document.document_id,
-                    document.case_id,
-                    document.kind.value,
-                    document.original_filename,
-                    document.media_type,
-                    document.byte_size,
-                    document.sha256_hex.lower(),
-                    document.storage_key,
-                    self._dt(document.created_at),
-                ),
-                "Document reference",
+    def _insert_document_ref(
+        self,
+        connection: sqlite3.Connection,
+        document: StoredDocumentRef,
+    ) -> None:
+        self._validate_document_ref(document)
+        self._execute_insert(
+            connection,
+            """
+            INSERT INTO case_documents(
+                document_id, case_id, kind, original_filename, media_type,
+                byte_size, sha256_hex, storage_key, created_at
             )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                document.document_id,
+                document.case_id,
+                document.kind.value,
+                document.original_filename,
+                document.media_type,
+                document.byte_size,
+                document.sha256_hex.lower(),
+                document.storage_key,
+                self._dt(document.created_at),
+            ),
+            "Document reference",
+        )
+
+    def add_document_ref(self, document: StoredDocumentRef) -> None:
+        with self._connect() as connection:
+            self._insert_document_ref(connection, document)
 
     @staticmethod
     def _document_from_row(row: sqlite3.Row) -> StoredDocumentRef:
@@ -581,28 +593,68 @@ class LocalSQLiteCaseRepository:
             ensure_ascii=False,
         )
 
-    def append_event(self, event: CaseEvent) -> None:
+    def _insert_event(
+        self,
+        connection: sqlite3.Connection,
+        event: CaseEvent,
+    ) -> None:
+        if not isinstance(event, CaseEvent):
+            raise TypeError("event must be a CaseEvent")
         payload_json = self._validate_event_payload(event.payload)
-        with self._connect() as connection:
-            self._execute_insert(
-                connection,
-                """
-                INSERT INTO case_events(
-                    event_id, case_id, event_type, occurred_at,
-                    actor_id, payload_json
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.event_id,
-                    event.case_id,
-                    event.event_type.value,
-                    self._dt(event.occurred_at),
-                    event.actor_id,
-                    payload_json,
-                ),
-                "Case event",
+        self._execute_insert(
+            connection,
+            """
+            INSERT INTO case_events(
+                event_id, case_id, event_type, occurred_at,
+                actor_id, payload_json
             )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.event_id,
+                event.case_id,
+                event.event_type.value,
+                self._dt(event.occurred_at),
+                event.actor_id,
+                payload_json,
+            ),
+            "Case event",
+        )
+
+    def add_document_with_event(
+        self,
+        document: StoredDocumentRef,
+        event: CaseEvent,
+    ) -> None:
+        """Persist document metadata and its audit event atomically."""
+        if not isinstance(document, StoredDocumentRef):
+            raise TypeError("document must be a StoredDocumentRef")
+        if not isinstance(event, CaseEvent):
+            raise TypeError("event must be a CaseEvent")
+        if document.case_id != event.case_id:
+            raise RepositoryConflictError(
+                "Document and audit event must belong to the same case."
+            )
+
+        # Validate outside the transaction where possible so malformed
+        # metadata never begins a write transaction.
+        self._validate_document_ref(document)
+        self._validate_event_payload(event.payload)
+        self._dt(document.created_at)
+        self._dt(event.occurred_at)
+
+        with self._connect() as connection:
+            try:
+                self._insert_document_ref(connection, document)
+                self._insert_event(connection, event)
+            except Exception:
+                # sqlite context manager rolls the transaction back when
+                # an exception exits this block.
+                raise
+
+    def append_event(self, event: CaseEvent) -> None:
+        with self._connect() as connection:
+            self._insert_event(connection, event)
 
     @staticmethod
     def _event_from_row(row: sqlite3.Row) -> CaseEvent:
