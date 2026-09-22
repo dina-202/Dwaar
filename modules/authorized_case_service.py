@@ -428,6 +428,11 @@ class AuthorizedCaseService:
         firm_id: str,
         case: CaseRecord,
     ) -> None:
+        """Update non-operational case metadata only.
+
+        Status, deadline, assignment, reviewer and closure state must use
+        update_case_operations() so those changes are audited atomically.
+        """
         self._grant(principal, firm_id, AccessPermission.CASE_UPDATE)
         if not isinstance(case, CaseRecord):
             raise TypeError("case must be a CaseRecord")
@@ -436,6 +441,26 @@ class AuthorizedCaseService:
             raise LookupError("case does not exist")
         if case.firm_id != firm_id:
             raise AuthorizationError("access denied")
+
+        operational_before = (
+            existing.status,
+            existing.response_deadline,
+            existing.assigned_to,
+            existing.reviewer_id,
+            existing.closed_at,
+        )
+        operational_after = (
+            case.status,
+            case.response_deadline,
+            case.assigned_to,
+            case.reviewer_id,
+            case.closed_at,
+        )
+        if operational_before != operational_after:
+            raise ValueError(
+                "operational case fields must use update_case_operations"
+            )
+
         self._cases.update_case(case)
 
     def list_documents(
