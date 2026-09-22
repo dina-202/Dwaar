@@ -5,7 +5,7 @@ from datetime import date
 
 from domain.auth_models import AuthenticatedPrincipal
 from domain.case_models import CaseDocumentKind, CaseRecord, StoredDocumentRef
-from domain.models import Phase2AnalysisResult
+from domain.models import DocumentPageText, Phase2AnalysisResult
 from modules.authorized_case_service import AuthorizedCaseService
 from modules.pdf_reader import extract_document_pages
 from domain.phase2_orchestrator import run_phase2_analysis_from_document_pages
@@ -20,6 +20,8 @@ class ReopenedCaseAnalysis:
     case: CaseRecord
     notice_document: StoredDocumentRef
     notice_pdf_bytes: bytes
+    document_pages: list[DocumentPageText]
+    raw_text: str
     analysis: Phase2AnalysisResult
 
 
@@ -69,6 +71,7 @@ def reopen_case_analysis(
             "saved notice could not be parsed"
         ) from error
 
+    raw_text = "".join(page.text for page in document_pages)
     analysis = run_phase2_analysis_from_document_pages(
         document_pages,
         today,
@@ -77,5 +80,7 @@ def reopen_case_analysis(
         case=case,
         notice_document=notice_document,
         notice_pdf_bytes=pdf_bytes,
+        document_pages=document_pages,
+        raw_text=raw_text,
         analysis=analysis,
     )
