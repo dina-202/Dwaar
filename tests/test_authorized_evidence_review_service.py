@@ -146,6 +146,35 @@ class AuthorizedEvidenceReviewTests(unittest.TestCase):
         )
         return service, case_service, snapshot_service, access, reviews, store
 
+    def test_snapshot_evidence_checklist_uses_selected_snapshot_contract(self):
+        service, _, snapshot_service, *_ = self.build()
+        snapshot_service.load_snapshot.return_value = snapshot("evidence.one")
+        checklist = service.snapshot_evidence_checklist(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+        self.assertEqual(len(checklist), 1)
+        self.assertEqual(checklist[0].evidence_id, "evidence.one")
+        self.assertEqual(checklist[0].requirement_text, "GSTR-2B")
+        self.assertEqual(checklist[0].status.value, "unknown")
+
+    def test_snapshot_evidence_checklist_fails_closed_on_duplicate_ids(self):
+        service, _, snapshot_service, *_ = self.build()
+        loaded = snapshot()
+        loaded.payload["draft"]["evidence_checklist"].append(
+            dict(loaded.payload["draft"]["evidence_checklist"][0])
+        )
+        snapshot_service.load_snapshot.return_value = loaded
+        with self.assertRaisesRegex(ValueError, "item is invalid"):
+            service.snapshot_evidence_checklist(
+                PRINCIPAL,
+                "F-1",
+                case_id="CASE-1",
+                snapshot_id="SNAP-1",
+            )
+
     @mock.patch(
         "modules.authorized_evidence_review_service.persist_evidence_review"
     )
