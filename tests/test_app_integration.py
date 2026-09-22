@@ -1,7 +1,7 @@
 """Offline integration tests for the Step-10.2 Streamlit shell."""
 
 import ast
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import pathlib
 import runpy
@@ -79,7 +79,10 @@ from modules.runtime_access import (
     RuntimeAccessConfigurationError,
     RuntimeAccessConsistencyError,
 )
-from modules.case_reopen_service import ReopenedCaseAnalysis
+from modules.case_reopen_service import (
+    ReopenedCaseAnalysis,
+    SavedCaseReopenError,
+)
 from modules.runtime_persistence import (
     RuntimePersistenceConfigurationError,
 )
