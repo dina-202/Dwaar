@@ -238,6 +238,33 @@ def _build_extraction_prompt(
     )
 
 
+def _build_page_aware_extraction_prompt(
+    raw_text: str,
+    classification: NoticeClassification,
+    page_texts: List[str],
+) -> str:
+    """Build the focused extraction prompt with machine-owned page markers.
+
+    The ordinary raw-text prompt remains the compatibility path. This helper
+    replaces only the NOTICE_TEXT payload with ordered page containers so the
+    model can propose source_page. The markers themselves are not part of
+    raw_text and therefore can never satisfy exact provenance validation.
+    """
+    prompt = _build_extraction_prompt(raw_text, classification)
+    plain_payload = "<NOTICE_TEXT>\n" + raw_text + "\n</NOTICE_TEXT>"
+    marked_pages = []
+    for page_number, page_text in enumerate(page_texts, start=1):
+        marked_pages.append(
+            f'<PAGE number="{page_number}">\n{page_text}\n</PAGE>'
+        )
+    marked_payload = (
+        "<NOTICE_TEXT>\n"
+        + "\n".join(marked_pages)
+        + "\n</NOTICE_TEXT>"
+    )
+    return prompt.replace(plain_payload, marked_payload, 1)
+
+
 def _parse_candidate(response: str) -> Optional[Dict]:
     """Strictly parse the LLM response into a candidate JSON dict.
 
@@ -398,6 +425,117 @@ def _validate_item(
     return (fact_type, fact_role, claim, source_text, source_page)
 
 
+def _validate_item_with_pages(
+    item,
+    raw_text: str,
+    page_texts: List[str],
+) -> Optional[Tuple[FactType, FactRole, str, str, Optional[int]]]:
+    """Validate one candidate and deterministically substantiate source_page.
+
+    This is additive to the legacy validator. Exact-document provenance is
+    checked first by _validate_item. Page-aware validation then requires the
+    exact source_text to occur on at least one supplied page.
+
+    A model-claimed page must be one of those exact matches. When the model
+    returns null, Python may assign a page only when there is exactly one
+    matching page. Multiple exact page matches stay unresolved (None).
+    """
+    validated = _validate_item(item, raw_text)
+    if validated is None:
+        return None
+
+    fact_type, fact_role, claim, source_text, source_page = validated
+    matching_pages = [
+        page_number
+        for page_number, page_text in enumerate(page_texts, start=1)
+        if isinstance(page_text, str) and source_text in page_text
+    ]
+    if not matching_pages:
+        return None
+
+    if source_page is not None:
+        if source_page not in matching_pages:
+            return None
+        substantiated_page = source_page
+    elif len(matching_pages) == 1:
+        substantiated_page = matching_pages[0]
+    else:
+        substantiated_page = None
+
+    return (
+        fact_type,
+        fact_role,
+        claim,
+        source_text,
+        substantiated_page,
+    )
+
+
+def _extract_facts_result(
+    raw_text: str,
+    classification: NoticeClassification,
+    prompt: str,
+    page_texts: Optional[List[str]] = None,
+) -> FactExtractionResult:
+    """Shared one-call extraction implementation for legacy and page-aware APIs."""
+    try:
+        response = call_gemini(prompt)  # exactly one LLM call, existing router
+    except Exception:
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.FAILED
+        )
+
+    candidate = _parse_candidate(response)
+    if candidate is None:
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.FAILED
+        )
+    facts = candidate.get("facts")
+    if not isinstance(facts, list):
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.FAILED
+        )
+
+    accepted: List[ExtractedFact] = []
+    rejected_item_count = 0
+    for item in facts:
+        if page_texts is None:
+            validated = _validate_item(item, raw_text)
+        else:
+            validated = _validate_item_with_pages(
+                item, raw_text, page_texts
+            )
+        if validated is None:
+            rejected_item_count += 1
+            continue
+        fact_type, fact_role, claim, source_text, source_page = validated
+        status = _status_for_fact_type(fact_type)
+        permission = _draft_permission_for_status(status)
+        fact_id = f"F-{len(accepted) + 1:03d}"
+        accepted.append(
+            ExtractedFact(
+                fact_id=fact_id,
+                claim=claim,
+                status=status,
+                source_text=source_text,
+                source_page=source_page,
+                allowed_in_draft=permission,
+                fact_type=fact_type,
+                fact_role=fact_role,
+            )
+        )
+
+    return FactExtractionResult(
+        facts=accepted,
+        status=(
+            FactExtractionStatus.SUCCESS
+            if rejected_item_count == 0
+            else FactExtractionStatus.PARTIAL
+        ),
+        rejected_item_count=rejected_item_count,
+    )
+
+
 def extract_facts_with_status(
     raw_text: str, classification: NoticeClassification
 ) -> FactExtractionResult:
@@ -445,55 +583,41 @@ def extract_facts_with_status(
         )
 
     prompt = _build_extraction_prompt(raw_text, classification)
-    try:
-        response = call_gemini(prompt)  # exactly one LLM call, existing router
-    except Exception:
+    return _extract_facts_result(raw_text, classification, prompt)
+
+
+def extract_facts_with_page_provenance(
+    raw_text: str,
+    classification: NoticeClassification,
+    page_texts: List[str],
+) -> FactExtractionResult:
+    """Extract facts with deterministic page-level source substantiation.
+
+    This additive API keeps the legacy fact-extraction contracts unchanged.
+    Invalid page_texts are treated as unusable input rather than repaired.
+    """
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return FactExtractionResult(
+            facts=[], status=FactExtractionStatus.NO_INPUT
+        )
+    if (
+        not isinstance(page_texts, list)
+        or not page_texts
+        or any(not isinstance(page_text, str) for page_text in page_texts)
+        or "".join(page_texts) != raw_text
+    ):
         return FactExtractionResult(
             facts=[], status=FactExtractionStatus.FAILED
         )
 
-    candidate = _parse_candidate(response)
-    if candidate is None:
-        return FactExtractionResult(
-            facts=[], status=FactExtractionStatus.FAILED
-        )
-    facts = candidate.get("facts")
-    if not isinstance(facts, list):
-        return FactExtractionResult(
-            facts=[], status=FactExtractionStatus.FAILED
-        )
-
-    accepted: List[ExtractedFact] = []
-    rejected_item_count = 0
-    for item in facts:
-        validated = _validate_item(item, raw_text)
-        if validated is None:
-            rejected_item_count += 1  # rejected items consume no ID
-            continue
-        fact_type, fact_role, claim, source_text, source_page = validated
-        status = _status_for_fact_type(fact_type)
-        permission = _draft_permission_for_status(status)
-        fact_id = f"F-{len(accepted) + 1:03d}"
-        accepted.append(
-            ExtractedFact(
-                fact_id=fact_id,
-                claim=claim,
-                status=status,
-                source_text=source_text,
-                source_page=source_page,
-                allowed_in_draft=permission,
-                fact_type=fact_type,
-                fact_role=fact_role,
-            )
-        )
-    return FactExtractionResult(
-        facts=accepted,
-        status=(
-            FactExtractionStatus.SUCCESS
-            if rejected_item_count == 0
-            else FactExtractionStatus.PARTIAL
-        ),
-        rejected_item_count=rejected_item_count,
+    prompt = _build_page_aware_extraction_prompt(
+        raw_text, classification, page_texts
+    )
+    return _extract_facts_result(
+        raw_text,
+        classification,
+        prompt,
+        page_texts=page_texts,
     )
 
 

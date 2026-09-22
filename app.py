@@ -5,8 +5,8 @@ from datetime import date
 import streamlit as st
 
 from domain.models import DraftGenerationStatus, ValidationStatus
-from domain.phase2_orchestrator import run_phase2_analysis
-from modules.pdf_reader import extract_text
+from domain.phase2_orchestrator import run_phase2_analysis_from_pages
+from modules.pdf_reader import extract_page_texts
 
 
 def _display(value):
@@ -260,14 +260,15 @@ uploaded = st.file_uploader("Upload notice PDF", type="pdf")
 if uploaded:
     pdf_bytes = uploaded.read()
     try:
-        raw_text = extract_text(pdf_bytes)
+        page_texts = extract_page_texts(pdf_bytes)
+        raw_text = "".join(page_texts)
     except RuntimeError as error:
         st.error(str(error))
     else:
         today = date.today()
         try:
             with st.spinner("Analyzing notice..."):
-                result = run_phase2_analysis(raw_text, today)
+                result = run_phase2_analysis_from_pages(page_texts, today)
         except Exception:
             st.error("Phase-2 analysis could not be completed.")
         else:

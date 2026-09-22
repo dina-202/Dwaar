@@ -378,7 +378,7 @@ def run_app(
         events.append("extract")
         if extraction_error is not None:
             raise extraction_error
-        return RAW_TEXT
+        return [RAW_TEXT]
 
     def orchestrator_side_effect(*args):
         events.append("orchestrator")
@@ -391,10 +391,10 @@ def run_app(
     with (
         patch.dict(sys.modules, {"streamlit": fake}),
         patch("datetime.date", FixedDate),
-        patch.object(pdf_reader, "extract_text", extract_mock),
+        patch.object(pdf_reader, "extract_page_texts", extract_mock),
         patch.object(
             orchestrator_module,
-            "run_phase2_analysis",
+            "run_phase2_analysis_from_pages",
             orchestrator_mock,
         ),
     ):
@@ -422,8 +422,8 @@ class SourceBoundaryTests(unittest.TestCase):
                 "modules.pdf_reader",
             },
         )
-        self.assertIn("run_phase2_analysis", SOURCE)
-        self.assertIn("extract_text", SOURCE)
+        self.assertIn("run_phase2_analysis_from_pages", SOURCE)
+        self.assertIn("extract_page_texts", SOURCE)
 
     def test_no_direct_engine_or_legacy_runtime_reference(self):
         lowered = SOURCE.lower()
@@ -467,7 +467,7 @@ class UploadAndFailureTests(unittest.TestCase):
     def test_bytes_text_and_today_flow_exactly_once_in_order(self):
         _, extractor, runner, events, today_calls = run_app()
         extractor.assert_called_once_with(PDF_BYTES)
-        runner.assert_called_once_with(RAW_TEXT, TODAY)
+        runner.assert_called_once_with([RAW_TEXT], TODAY)
         self.assertEqual(events, ["read", "extract", "orchestrator"])
         self.assertEqual(today_calls, 1)
         self.assertEqual(len(runner.call_args.args), 2)
@@ -489,7 +489,7 @@ class UploadAndFailureTests(unittest.TestCase):
         fake, _, runner, events, today_calls = run_app(
             orchestrator_error=ValueError("private infrastructure detail")
         )
-        runner.assert_called_once_with(RAW_TEXT, TODAY)
+        runner.assert_called_once_with([RAW_TEXT], TODAY)
         self.assertEqual(events, ["read", "extract", "orchestrator"])
         self.assertEqual(today_calls, 1)
         text = log_text(fake)
@@ -853,7 +853,7 @@ class RenderOrderAndRawTextTests(unittest.TestCase):
         fake, _, runner, _, _ = run_app()
         displayed = [call for call in fake.calls if RAW_TEXT in repr(call)]
         self.assertEqual(displayed, [("text", (RAW_TEXT,), {})])
-        runner.assert_called_once_with(RAW_TEXT, TODAY)
+        runner.assert_called_once_with([RAW_TEXT], TODAY)
         self.assertNotIn("raw_text", Phase2AnalysisResult.__dataclass_fields__)
 
     def test_absent_optional_sections_preserve_relative_order(self):
