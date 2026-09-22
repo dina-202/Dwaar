@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Sequence, Tuple
+from typing import List
 
 from domain.auth_models import AuthenticatedPrincipal
 from domain.case_models import CaseDocumentKind, StoredDocumentRef
@@ -27,35 +27,32 @@ class PersistedEvidenceWorkspace:
     intake_result: EvidenceIntakeResult
 
 
-def add_supporting_evidence_pdfs(
+def add_supporting_evidence_pdf(
     service: AuthorizedCaseService,
     principal: AuthenticatedPrincipal,
     firm_id: str,
     *,
     case_id: str,
-    files: Sequence[Tuple[str, bytes]],
+    filename: str,
+    payload: bytes,
     created_at: datetime,
-) -> List[StoredDocumentRef]:
-    """Persist supporting PDFs one-by-one through authorized document storage."""
-    if not isinstance(files, Sequence) or not files:
-        raise ValueError("files must contain at least one supporting PDF")
+) -> StoredDocumentRef:
+    """Persist exactly one supporting PDF through authorized storage.
+
+    One file per call keeps success/failure semantics honest: this operation
+    is durable independently and makes no batch-atomicity claim.
+    """
     if not isinstance(created_at, datetime) or created_at.tzinfo is None:
         raise ValueError("created_at must be timezone-aware")
-
-    persisted: List[StoredDocumentRef] = []
-    for filename, payload in files:
-        persisted.append(
-            service.add_pdf_document(
-                principal,
-                firm_id,
-                case_id=case_id,
-                kind=CaseDocumentKind.SUPPORTING_EVIDENCE,
-                original_filename=filename,
-                payload=payload,
-                created_at=created_at,
-            )
-        )
-    return persisted
+    return service.add_pdf_document(
+        principal,
+        firm_id,
+        case_id=case_id,
+        kind=CaseDocumentKind.SUPPORTING_EVIDENCE,
+        original_filename=filename,
+        payload=payload,
+        created_at=created_at,
+    )
 
 
 def load_supporting_evidence_documents(
