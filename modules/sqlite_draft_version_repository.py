@@ -310,10 +310,12 @@ class LocalSQLiteDraftVersionRepository:
             raise RepositoryConflictError(
                 "Draft review event belongs to another case."
             )
-        if event.actor_id not in {
-            version.reviewed_by,
-            version.approved_by,
-        }:
+        expected_actor = (
+            version.reviewed_by
+            if version.review_status is DraftReviewStatus.REVIEWED
+            else version.approved_by
+        )
+        if event.actor_id != expected_actor:
             raise RepositoryConflictError(
                 "Draft review audit actor is inconsistent."
             )
