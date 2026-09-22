@@ -154,5 +154,78 @@ class DeadlineEngineSpecCases(unittest.TestCase):
         self.assertTrue(result.notes)
 
 
+class Phase3BDeadlineSafetyTests(unittest.TestCase):
+    def test_working_days_are_not_treated_as_calendar_days(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=date(2026, 8, 22),
+            response_period_text="7 working days from date of service",
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertIsNone(result.response_period_days)
+        self.assertIsNone(result.response_deadline)
+        self.assertEqual(
+            result.deadline_confidence,
+            DeadlineConfidence.UNKNOWN,
+        )
+        self.assertEqual(result.deadline_status, DeadlineStatus.UNKNOWN)
+        self.assertTrue(result.portal_verification_required)
+
+    def test_business_days_are_also_fail_closed(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=date(2026, 8, 22),
+            response_period_text="7 business days from receipt",
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertIsNone(result.response_period_days)
+        self.assertIsNone(result.response_deadline)
+
+    def test_receipt_based_period_without_service_date_stays_unknown(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=None,
+            response_period_text="15 days from receipt of this notice",
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertEqual(result.response_period_days, 15)
+        self.assertIsNone(result.response_deadline)
+        self.assertEqual(
+            result.deadline_confidence,
+            DeadlineConfidence.UNKNOWN,
+        )
+        self.assertTrue(result.portal_verification_required)
+
+    def test_received_language_without_service_date_stays_unknown(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=None,
+            response_period_text="reply within 15 days after notice is received",
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertEqual(result.response_period_days, 15)
+        self.assertIsNone(result.response_deadline)
+        self.assertEqual(result.deadline_status, DeadlineStatus.UNKNOWN)
+
+    def test_receipt_based_period_with_service_date_can_calculate(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=date(2026, 8, 22),
+            response_period_text="15 days from receipt of this notice",
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertEqual(result.response_period_days, 15)
+        self.assertEqual(result.response_deadline, date(2026, 9, 6))
+        self.assertEqual(
+            result.deadline_confidence,
+            DeadlineConfidence.CONFIRMED,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

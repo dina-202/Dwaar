@@ -93,6 +93,8 @@ RICH_NOTICE = (
     "Goods: 100 bags of cement\n"
     "Vehicle No: MH12AB1234\n"
     "Seized on 10-08-2026\n"
+    "Notice served on 18-08-2026\n"
+    "Furnish reply within 15 days of service\n"
 )
 
 DEFAULT_SOURCE = "Reference No. ZD2608260012345"
@@ -130,6 +132,8 @@ DOCUMENT_DETAIL_ROLES = (
     FactRole.GOODS_VALUE_OR_TAX_PAYABLE,
     FactRole.OWNER_CAME_FORWARD_STATUS,
     FactRole.ORDER_DATE_OR_ENFORCEMENT_STATUS,
+    FactRole.NOTICE_SERVICE_DATE,
+    FactRole.RESPONSE_PERIOD,
 )
 
 
@@ -778,7 +782,7 @@ class DepartmentAllegationRoleCompatibilityTests(unittest.TestCase):
 
 
 class DocumentDetailRoleCompatibilityTests(unittest.TestCase):
-    """§19.1 + §19.5: the eight document-detail roles accept only
+    """§19.1 + Phase 3B: document-detail roles accept only
     DOCUMENT_DETAIL, and DOCUMENT_DETAIL maps to CONFIRMED / YES."""
 
     SOURCES = {
@@ -790,6 +794,8 @@ class DocumentDetailRoleCompatibilityTests(unittest.TestCase):
         FactRole.GOODS_VALUE_OR_TAX_PAYABLE: "Goods: 100 bags of cement",
         FactRole.OWNER_CAME_FORWARD_STATUS: "Vehicle No: MH12AB1234",
         FactRole.ORDER_DATE_OR_ENFORCEMENT_STATUS: "Seized on 10-08-2026",
+        FactRole.NOTICE_SERVICE_DATE: "Notice served on 18-08-2026",
+        FactRole.RESPONSE_PERIOD: "Furnish reply within 15 days of service",
     }
 
     def test_each_role_accepted_with_document_detail(self):
@@ -830,6 +836,46 @@ class DocumentDetailRoleCompatibilityTests(unittest.TestCase):
                             source_text=self.SOURCES[role],
                         ),
                     )
+
+
+class DeadlineInputRoleGroundingTests(unittest.TestCase):
+    def test_service_date_role_requires_document_detail(self):
+        result, _ = run_extraction(
+            RICH_NOTICE,
+            facts_response(
+                candidate(
+                    fact_type="document_detail",
+                    fact_role="notice_service_date",
+                    claim="Notice was served on 18-08-2026",
+                    source_text="Notice served on 18-08-2026",
+                )
+            ),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIs(result[0].fact_role, FactRole.NOTICE_SERVICE_DATE)
+        self.assertIs(result[0].status, FactStatus.CONFIRMED)
+
+    def test_response_period_role_requires_document_detail(self):
+        result, _ = run_extraction(
+            RICH_NOTICE,
+            facts_response(
+                candidate(
+                    fact_type="document_detail",
+                    fact_role="response_period",
+                    claim="Reply period stated",
+                    source_text="Furnish reply within 15 days of service",
+                )
+            ),
+        )
+        self.assertEqual(len(result), 1)
+        self.assertIs(result[0].fact_role, FactRole.RESPONSE_PERIOD)
+
+    def test_prompt_prohibits_inferred_statutory_period(self):
+        prompt = capture_prompt(RICH_NOTICE)
+        self.assertIn("notice_service_date", prompt)
+        self.assertIn("response_period", prompt)
+        self.assertIn("never convert words to a number", prompt)
+        self.assertIn("infer a period", prompt)
 
 
 class ExplicitProceduralDateRoleTests(unittest.TestCase):

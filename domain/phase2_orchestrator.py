@@ -54,7 +54,6 @@ from workflows.gst.validation_profiles import (
 
 _ALLOWED_DEADLINE_STATUSES = (
     _FactStatus.CONFIRMED,
-    _FactStatus.ALLEGED,
 )
 
 _AMOUNT_TOKEN_REGEX = (
@@ -114,13 +113,57 @@ def _deadline_candidates(
     ]
 
 
+def _deadline_role_candidates(
+    facts: _List[_ExtractedFact],
+    role: _FactRole,
+) -> _List[_ExtractedFact]:
+    """Verified confirmed document-detail facts for one deadline role."""
+    return [
+        fact
+        for fact in facts
+        if fact.fact_type is _FactType.DOCUMENT_DETAIL
+        and fact.fact_role is role
+        and fact.status is _FactStatus.CONFIRMED
+        and fact.source_verification is _SourceVerificationStatus.VERIFIED
+        and bool(fact.source_text)
+    ]
+
+
 def _build_deadline_inputs(
     facts: _List[_ExtractedFact],
-) -> _Tuple[_Optional[_date], _Optional[str]]:
+) -> _Tuple[
+    _Optional[_date],
+    _Optional[_date],
+    _Optional[str],
+    _Optional[str],
+]:
+    """Map only unambiguous, verified document-native deadline inputs.
+
+    Returns (notice_date, service_date, response_period_text,
+    hearing_date_text). No statutory period is inferred here.
+    """
     notice_candidates = _deadline_candidates(facts, _FactType.NOTICE_DATE)
     notice_date = (
         _parse_date_text(notice_candidates[0].source_text)
         if len(notice_candidates) == 1
+        else None
+    )
+
+    service_candidates = _deadline_role_candidates(
+        facts, _FactRole.NOTICE_SERVICE_DATE
+    )
+    service_date = (
+        _parse_date_text(service_candidates[0].source_text)
+        if len(service_candidates) == 1
+        else None
+    )
+
+    period_candidates = _deadline_role_candidates(
+        facts, _FactRole.RESPONSE_PERIOD
+    )
+    response_period_text = (
+        period_candidates[0].source_text
+        if len(period_candidates) == 1
         else None
     )
 
@@ -132,7 +175,12 @@ def _build_deadline_inputs(
         if len(hearing_candidates) == 1
         else None
     )
-    return notice_date, hearing_date_text
+    return (
+        notice_date,
+        service_date,
+        response_period_text,
+        hearing_date_text,
+    )
 
 
 def _operand_candidates(
@@ -315,13 +363,16 @@ def _assemble_phase2_result(
     today: _date,
 ) -> _Phase2AnalysisResult:
     """Run deterministic downstream Phase-2 stages after fact extraction."""
-    notice_date, hearing_date_text = _build_deadline_inputs(
-        extraction_result.facts
-    )
+    (
+        notice_date,
+        service_date,
+        response_period_text,
+        hearing_date_text,
+    ) = _build_deadline_inputs(extraction_result.facts)
     deadline_result = calculate_deadline(
         notice_date=notice_date,
-        service_date=None,
-        response_period_text=None,
+        service_date=service_date,
+        response_period_text=response_period_text,
         hearing_date_text=hearing_date_text,
         today=today,
     )
