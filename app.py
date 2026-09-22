@@ -2103,6 +2103,52 @@ def _render_client_workspace(principal, active_firm):
         )
 
 
+def _render_case_timeline(
+    principal,
+    active_firm,
+    reopened,
+    case_service,
+):
+    st.header("Case timeline")
+    try:
+        items = case_service.get_case_timeline(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+        )
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to view this case timeline."
+        )
+        return
+    except LookupError:
+        st.error("The case timeline is no longer available.")
+        return
+    except Exception:
+        st.error("The case timeline could not be loaded.")
+        return
+
+    if not items:
+        st.write("No case activity has been recorded yet.")
+        return
+
+    st.dataframe(
+        [
+            {
+                "occurred_at": item.occurred_at.isoformat(),
+                "category": item.category.value,
+                "event_type": item.event_type.value,
+                "title": item.title,
+                "summary": item.summary,
+                "actor_id": _display(item.actor_id),
+                "event_id": item.event_id,
+            }
+            for item in items
+        ],
+        hide_index=True,
+    )
+
+
 def _render_saved_cases_workspace(principal, active_firm):
     if AccessPermission.CASE_READ not in active_firm.permissions:
         return
@@ -2289,6 +2335,12 @@ def _render_saved_cases_workspace(principal, active_firm):
             + ". OCR-derived facts require verification."
         )
 
+    _render_case_timeline(
+        principal,
+        active_firm,
+        reopened,
+        service,
+    )
     _render_phase2_result(reopened.analysis)
     _render_snapshot_history(
         principal,
