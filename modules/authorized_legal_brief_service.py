@@ -1,0 +1,204 @@
+"""Tenant-safe authorization boundary for snapshot-bound legal briefs."""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import List
+
+from domain.analysis_snapshot_models import AnalysisSnapshotRef
+from domain.auth_models import (
+    AccessPermission,
+    AuthenticatedPrincipal,
+    AuthorizationError,
+)
+from domain.authorization import require_firm_permission
+from domain.legal_brief_models import LegalBriefRef, LoadedLegalBrief
+from domain.models import ProceedingType
+from domain.persistence_ports import (
+    AccessGrantRepository,
+    DocumentStore,
+    LegalBriefRepository,
+)
+from modules.authorized_analysis_snapshot_service import (
+    AuthorizedAnalysisSnapshotService,
+)
+from modules.authorized_case_service import AuthorizedCaseService
+from modules.legal_brief_service import (
+    list_legal_brief_refs,
+    load_legal_brief,
+    persist_legal_brief,
+)
+from workflows.gst.legal_research import resolve_gst_legal_brief
+
+
+class AuthorizedLegalBriefService:
+    """Authorized save/list/load for immutable legal research briefs."""
+
+    def __init__(
+        self,
+        case_service: AuthorizedCaseService,
+        snapshot_service: AuthorizedAnalysisSnapshotService,
+        access_repository: AccessGrantRepository,
+        brief_repository: LegalBriefRepository,
+        document_store: DocumentStore,
+    ):
+        self._cases = case_service
+        self._snapshots = snapshot_service
+        self._access = access_repository
+        self._briefs = brief_repository
+        self._documents = document_store
+
+    def _require(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        permission: AccessPermission,
+    ) -> None:
+        grant = self._access.get_grant(principal.user_id, firm_id)
+        if grant is None:
+            raise AuthorizationError("access denied")
+        require_firm_permission(
+            principal,
+            grant,
+            firm_id,
+            permission,
+        )
+
+    def _snapshot(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+        snapshot_id: str,
+    ) -> AnalysisSnapshotRef:
+        history = self._snapshots.list_snapshot_history(
+            principal,
+            firm_id,
+            case_id=case_id,
+        )
+        for snapshot in history:
+            if snapshot.snapshot_id == snapshot_id:
+                return snapshot
+        raise LookupError("analysis snapshot does not exist")
+
+    def save_for_snapshot(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+        snapshot_id: str,
+        created_at: datetime,
+    ) -> LegalBriefRef:
+        case = self._cases.get_case(principal, firm_id, case_id)
+        if case is None:
+            raise LookupError("case does not exist")
+        snapshot = self._snapshot(
+            principal,
+            firm_id,
+            case_id=case.case_id,
+            snapshot_id=snapshot_id,
+        )
+        loaded = self._snapshots.load_snapshot(
+            principal,
+            firm_id,
+            case_id=case.case_id,
+            snapshot_id=snapshot.snapshot_id,
+        )
+        deadline = loaded.payload.get("deadline")
+        classification = loaded.payload.get("classification")
+        if not isinstance(deadline, dict) or not isinstance(
+            classification, dict
+        ):
+            raise ValueError("analysis snapshot legal-date binding is invalid")
+
+        notice_date_text = deadline.get("notice_date")
+        proceeding_text = classification.get("proceeding_type")
+        if not isinstance(notice_date_text, str) or not notice_date_text:
+            raise ValueError(
+                "analysis snapshot has no notice date for legal versioning"
+            )
+        if not isinstance(proceeding_text, str) or not proceeding_text:
+            raise ValueError(
+                "analysis snapshot has no proceeding type for legal research"
+            )
+        try:
+            as_of_date = date.fromisoformat(notice_date_text)
+            proceeding_type = ProceedingType(proceeding_text)
+        except ValueError as error:
+            raise ValueError(
+                "analysis snapshot legal binding values are invalid"
+            ) from error
+
+        # Saving durable professional history is a case mutation. The
+        # snapshot read above is already CASE_READ-authorized.
+        self._require(
+            principal,
+            firm_id,
+            AccessPermission.CASE_UPDATE,
+        )
+        result = resolve_gst_legal_brief(
+            proceeding_type,
+            as_of_date,
+        )
+        return persist_legal_brief(
+            self._briefs,
+            self._documents,
+            case_id=case.case_id,
+            snapshot=snapshot,
+            result=result,
+            as_of_date=as_of_date,
+            proceeding_type=proceeding_type,
+            actor_id=principal.user_id,
+            created_at=created_at,
+        )
+
+    def list_for_snapshot(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+        snapshot_id: str,
+    ) -> List[LegalBriefRef]:
+        case = self._cases.get_case(principal, firm_id, case_id)
+        if case is None:
+            raise LookupError("case does not exist")
+        snapshot = self._snapshot(
+            principal,
+            firm_id,
+            case_id=case.case_id,
+            snapshot_id=snapshot_id,
+        )
+        return list_legal_brief_refs(
+            self._briefs,
+            snapshot_id=snapshot.snapshot_id,
+        )
+
+    def load(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+        legal_brief_id: str,
+    ) -> LoadedLegalBrief:
+        case = self._cases.get_case(principal, firm_id, case_id)
+        if case is None:
+            raise LookupError("case does not exist")
+        brief = self._briefs.get_brief_ref(legal_brief_id)
+        if brief is None or brief.case_id != case.case_id:
+            raise LookupError("legal brief does not exist")
+        snapshot = self._snapshot(
+            principal,
+            firm_id,
+            case_id=case.case_id,
+            snapshot_id=brief.snapshot_id,
+        )
+        return load_legal_brief(
+            self._briefs,
+            self._documents,
+            legal_brief_id=brief.legal_brief_id,
+            expected_snapshot=snapshot,
+        )
