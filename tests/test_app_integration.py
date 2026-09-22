@@ -7,7 +7,7 @@ import pathlib
 import runpy
 import sys
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from domain import evidence_engine as evidence_engine_module
 from domain import evidence_review as evidence_review_module
@@ -2230,7 +2230,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
         )
 
         review_service.snapshot_evidence_checklist.assert_called_once_with(
-            mock.ANY,
+            ANY,
             "F-TEST",
             case_id="CASE-1",
             snapshot_id="SNAP-1",
@@ -2348,7 +2348,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
         )
 
         review_service.load_review.assert_called_once_with(
-            mock.ANY,
+            ANY,
             "F-TEST",
             case_id="CASE-1",
             snapshot_id="SNAP-1",
