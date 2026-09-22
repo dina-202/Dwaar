@@ -34,6 +34,10 @@ from domain.case_operations_models import (
     CaseWorkItem,
     WorkQueueDeadlineStatus,
 )
+from domain.case_timeline_models import (
+    CaseTimelineItem,
+    TimelineCategory,
+)
 from domain.case_models import (
     CaseDocumentKind,
     CaseRecord,
@@ -1759,6 +1763,103 @@ class SavedCaseWorkspaceUiTests(unittest.TestCase):
             text.lower(),
         )
         self.assertNotIn("private storage/parser detail", text)
+
+class CaseTimelineUiTests(unittest.TestCase):
+    def _case(self):
+        return CaseRecord(
+            case_id="CASE-1",
+            firm_id="F-TEST",
+            client_id="CLIENT-1",
+            registration_id=None,
+            title="Saved matter",
+            status=CaseStatus.ANALYZED,
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            notice_form=NoticeForm.DRC_01,
+            opened_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _notice(self):
+        return StoredDocumentRef(
+            document_id="DOC-1",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="saved-notice.pdf",
+            media_type="application/pdf",
+            byte_size=len(PDF_BYTES),
+            sha256_hex="a" * 64,
+            storage_key="objects/" + "b" * 32,
+            created_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+        )
+
+    def _reopened(self):
+        return ReopenedCaseAnalysis(
+            case=self._case(),
+            notice_document=self._notice(),
+            notice_pdf_bytes=PDF_BYTES,
+            document_pages=DOCUMENT_PAGES,
+            raw_text=RAW_TEXT,
+            analysis=make_result(),
+        )
+
+    def _service(self):
+        service = Mock()
+        service.list_cases.return_value = [self._case()]
+        service.list_clients.return_value = []
+        service.list_documents.return_value = []
+        service.list_case_work_queue.return_value = []
+        return service
+
+    def test_timeline_renders_authorized_projection(self):
+        service = self._service()
+        service.get_case_timeline.return_value = [
+            CaseTimelineItem(
+                event_id="EV-FILE",
+                event_type=CaseEventType.FILING_RECORDED,
+                category=TimelineCategory.FILING,
+                occurred_at=datetime(
+                    2026, 9, 22, 12, 0, tzinfo=timezone.utc
+                ),
+                actor_id="OIDC-FILER",
+                title="Filing recorded",
+                summary="Portal / filing reference ARN-123.",
+            )
+        ]
+
+        fake, *_ = run_app(
+            upload=False,
+            persistence_service=service,
+            reopen_result=self._reopened(),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        self.assertIn("Case timeline", headers(fake))
+        text = log_text(fake)
+        self.assertIn("ARN-123", text)
+        self.assertIn("filing", text)
+        self.assertIn("OIDC-FILER", text)
+        service.get_case_timeline.assert_called_once_with(
+            ANY,
+            "F-TEST",
+            case_id="CASE-1",
+        )
+
+    def test_timeline_failure_is_generic(self):
+        service = self._service()
+        service.get_case_timeline.side_effect = RuntimeError(
+            "private audit database detail"
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            persistence_service=service,
+            reopen_result=self._reopened(),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        text = log_text(fake)
+        self.assertIn("case timeline could not be loaded", text.lower())
+        self.assertNotIn("private audit database detail", text)
+
 
 class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
     def _firm(self, *, case_update=False):
