@@ -2533,7 +2533,6 @@ def _render_persisted_evidence_workspace(
                     [
                         {
                             "document_id": item.document_id,
-                        "reviewed_by": item.reviewed_by,
                             "sha256": item.sha256_hex,
                         }
                         for item in attached
@@ -3010,6 +3009,7 @@ def _render_persisted_evidence_workspace(
                         "review_id": item.review_id,
                         "evidence_id": item.evidence_id,
                         "document_id": item.document_id,
+                        "reviewed_by": item.reviewed_by,
                     }
                     for item in durable_reviews
                 ],
