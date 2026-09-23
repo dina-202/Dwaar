@@ -83,6 +83,7 @@ from workflows.gst.drafting_profiles import (
 )
 
 DEEP_TYPES = (
+    ProceedingType.GST_SEC61_SCRUTINY,
     ProceedingType.GST_SEC73_ITC,
     ProceedingType.GST_SEC73_GENERAL,
     ProceedingType.GST_SEC73_RCM,
@@ -2011,6 +2012,7 @@ class JsonEncodingTests(unittest.TestCase):
 class PromptAssetTests(unittest.TestCase):
     EXPECTED_RELATIVE_PATHS = {
         "base_rules.txt",
+        "gst/sec61_scrutiny.txt",
         "gst/sec73_itc.txt",
         "gst/sec73_general.txt",
         "gst/sec73_rcm.txt",
@@ -2018,7 +2020,7 @@ class PromptAssetTests(unittest.TestCase):
         "gst/sec129.txt",
     }
 
-    def test_exactly_six_active_prompt_files_exist(self):
+    def test_exactly_seven_active_prompt_files_exist(self):
         found = {
             path.relative_to(engine._PROMPTS_DIR).as_posix()
             for path in engine._PROMPTS_DIR.rglob("*.txt")
@@ -2039,6 +2041,7 @@ class PromptAssetTests(unittest.TestCase):
         expected = {
             key: engine._PROMPTS_DIR / "gst" / f"{key}.txt"
             for key in (
+                "sec61_scrutiny",
                 "sec73_itc",
                 "sec73_general",
                 "sec73_rcm",
@@ -2174,7 +2177,7 @@ class BasePromptTests(unittest.TestCase):
 
 class WorkflowPromptTests(unittest.TestCase):
     SECTION_ID_PATTERN = re.compile(
-        r"\b(?:sec73_itc|sec73_general|sec73_rcm|sec74_fraud|sec129)"
+        r"\b(?:sec61_scrutiny|sec73_itc|sec73_general|sec73_rcm|sec74_fraud|sec129)"
         r"\.s\d+\b"
     )
 
@@ -2216,6 +2219,26 @@ class WorkflowPromptTests(unittest.TestCase):
             found = set(self.SECTION_ID_PATTERN.findall(prompt))
             expected = {spec.section_id for spec in profile.sections}
             self.assertEqual(found, expected, ptype.name)
+
+    def test_sec61_keeps_discrepancy_as_allegation(self):
+        _, prompt = self._workflow_prompt(
+            ProceedingType.GST_SEC61_SCRUTINY
+        )
+        normalized = " ".join(prompt.split())
+        self.assertIn(
+            "department-stated discrepancy as an allegation",
+            normalized,
+        )
+
+    def test_sec61_does_not_inject_generic_reply_period(self):
+        _, prompt = self._workflow_prompt(
+            ProceedingType.GST_SEC61_SCRUTINY
+        )
+        normalized = " ".join(prompt.split())
+        self.assertIn(
+            "Do not supply a generic Rule 99 response period",
+            normalized,
+        )
 
     def test_itc_reconciliation_not_final_liability(self):
         _, prompt = self._workflow_prompt(ProceedingType.GST_SEC73_ITC)
@@ -3636,7 +3659,14 @@ class Step9E2ProvenancePreparationTests(unittest.TestCase):
         )
         self.assertEqual(
             list(engine._PROVENANCE_WORKFLOW_PROMPT_PATHS.keys()),
-            ["sec73_itc", "sec73_general", "sec73_rcm", "sec74_fraud", "sec129"],
+            [
+                "sec61_scrutiny",
+                "sec73_itc",
+                "sec73_general",
+                "sec73_rcm",
+                "sec74_fraud",
+                "sec129",
+            ],
         )
         for path in engine._PROVENANCE_WORKFLOW_PROMPT_PATHS.values():
             self.assertTrue(path.is_file(), path)
@@ -3649,6 +3679,7 @@ class Step9E2ProvenancePreparationTests(unittest.TestCase):
             found,
             {
                 "base_rules.txt",
+                "gst/sec61_scrutiny.txt",
                 "gst/sec73_itc.txt",
                 "gst/sec73_general.txt",
                 "gst/sec73_rcm.txt",
