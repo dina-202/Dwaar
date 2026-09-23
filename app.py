@@ -1224,17 +1224,42 @@ def _render_historical_snapshot(snapshot):
     )
 
     classification = payload["classification"]
+    historical_form = classification["notice_form"]
+    historical_proceeding = classification["proceeding_type"]
+    proceeding_labels = {
+        "gst_sec73_itc": "Section 73 — ITC",
+        "gst_sec73_general": "Section 73 — General",
+        "gst_sec73_rcm": "Section 73 — RCM",
+        "gst_sec74_fraud": "Section 74 — Fraud allegation",
+        "gst_sec129_enforcement": "Section 129 — Enforcement",
+        "unknown": "Intake",
+    }
     st.write(
         "**Notice:** "
-        + classification["notice_form"].replace("_", " ").upper()
+        + (
+            "Notice form not identified"
+            if historical_form == "unknown"
+            else historical_form.replace("_", "-").upper()
+        )
         + " · **Proceeding:** "
-        + classification["proceeding_type"].replace("_", " ").title()
+        + proceeding_labels.get(
+            historical_proceeding,
+            _friendly_enum(historical_proceeding),
+        )
     )
+    support_labels = {
+        "deep_workflow": "Specialist workflow",
+        "triage_only": "Triage review",
+        "unknown": "Support not determined",
+    }
     st.caption(
-        "Support: "
-        + classification["support_level"].replace("_", " ").title()
+        "Analysis coverage: "
+        + support_labels.get(
+            classification["support_level"],
+            _friendly_enum(classification["support_level"]),
+        )
         + " · Confidence: "
-        + classification["confidence"].replace("_", " ").title()
+        + _friendly_enum(classification["confidence"])
     )
     if _engineering_diagnostics_enabled():
         with st.expander("Technical details — historical snapshot"):
@@ -1251,7 +1276,24 @@ def _render_historical_snapshot(snapshot):
     extraction = payload["extraction"]
     historical_facts = extraction["facts"]
     if historical_facts:
-        st.dataframe(historical_facts, hide_index=True)
+        st.subheader("Historical source-grounded facts")
+        st.dataframe(
+            [
+                {
+                    "Type": _friendly_enum(item["fact_type"]),
+                    "Source evidence": _display(item["source_text"]),
+                    "Source page": _display(item["source_page"]),
+                    "Verification": _friendly_enum(
+                        item["source_verification"]
+                    ),
+                }
+                for item in historical_facts
+            ],
+            hide_index=True,
+        )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — historical facts"):
+                st.dataframe(historical_facts, hide_index=True)
     else:
         st.write("Historical snapshot contains no extracted facts.")
 
