@@ -37,7 +37,6 @@ from domain.models import (
     FactStatus as _FactStatus,
     FactType as _FactType,
     NoticeClassification as _NoticeClassification,
-    ClassificationRunStatus as _ClassificationRunStatus,
     Phase2AnalysisResult as _Phase2AnalysisResult,
     ProceedingType as _ProceedingType,
     RequirementKind as _RequirementKind,
@@ -46,7 +45,7 @@ from domain.models import (
     TriageSummary as _TriageSummary,
 )
 from domain.preflight_engine import run_preflight
-from domain.proceeding_classifier import classify_notice
+from domain.proceeding_classifier import classify_notice, classifier_failed
 from domain.validation_engine import run_validation
 from workflows.gst.validation_profiles import (
     get_validation_profile,
@@ -322,7 +321,7 @@ def _build_triage_summary(
 ) -> _Optional[_TriageSummary]:
     if extraction_result.status is _FactExtractionStatus.NO_INPUT:
         message = _NO_INPUT_MESSAGE
-    elif classification.classification_status is _ClassificationRunStatus.FAILED:
+    elif classifier_failed(classification):
         message = _CLASSIFICATION_FAILED_MESSAGE
     elif extraction_result.status is _FactExtractionStatus.FAILED:
         message = _FAILED_MESSAGE
