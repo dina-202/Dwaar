@@ -120,6 +120,7 @@ class AuthorizedFactReviewService:
         case_id: str,
         snapshot_id: str,
     ):
+        self._require(principal, firm_id)
         case = self._cases.get_case(principal, firm_id, case_id)
         if case is None:
             raise LookupError("case does not exist")
@@ -159,7 +160,6 @@ class AuthorizedFactReviewService:
         reviewer_note: Optional[str],
         reviewed_at: datetime,
     ) -> FactReviewRef:
-        self._require(principal, firm_id)
         case, snapshot = self._snapshot(
             principal,
             firm_id,
