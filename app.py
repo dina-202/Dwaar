@@ -3033,9 +3033,9 @@ def _render_case_work_queue(principal, active_firm):
         return
 
     st.caption(
-        "Deadline ordering is preserved from the case work queue. "
-        "Attention shows deterministic unresolved workflow state and its "
-        "owning workspace; it is not a priority score or legal verdict."
+        "Cases are ordered by response deadline. Needs attention highlights "
+        "unfinished professional work such as legal research, evidence, "
+        "draft review, or filing follow-up; it does not rank legal importance."
     )
     st.dataframe(
         [
@@ -3109,8 +3109,8 @@ def _render_case_work_queue(principal, active_firm):
         )
     else:
         st.caption(
-            "No closed professional-attention condition is currently "
-            "emitted for the selected case."
+            "No outstanding professional action is currently flagged for "
+            "the selected case."
         )
 
     if st.button(
@@ -3156,7 +3156,7 @@ def _render_case_work_queue(principal, active_firm):
         return
 
     status_labels = {
-        status.value: status
+        _friendly_enum(status): status
         for status in status_targets
     }
     status_label = st.selectbox(
@@ -3470,8 +3470,8 @@ def _render_professional_case_attention(
         )
     else:
         st.write(
-            "No operational attention item is currently identified by "
-            "the deterministic workbench projection."
+            "No outstanding professional action is currently flagged for "
+            "this case."
         )
 
     if _engineering_diagnostics_enabled():
