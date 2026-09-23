@@ -114,6 +114,99 @@ class LegalQuestionPlanTests(unittest.TestCase):
             ],
         )
 
+    def test_fy2018_19_itc_mismatch_regime_is_research_ready(self):
+        facts = [
+            notice_date(),
+            fact("F-T", FactType.TAX_PERIOD, "FY 2018-19"),
+        ]
+        plan = build_gst_legal_question_plan(
+            ProceedingType.GST_SEC73_ITC,
+            facts,
+            build_legal_date_context(facts),
+        )
+        mismatch = [
+            item for item in plan.questions
+            if item.question_id == "gst_sec73_itc.mismatch_verification"
+        ][0]
+        self.assertIs(
+            mismatch.status,
+            LegalQuestionStatus.SOURCE_VERIFIED_RESEARCH_READY,
+        )
+        self.assertEqual(
+            mismatch.matched_rule_ids,
+            ("cbic.itc_mismatch_verification.fy2017_2018.v1",),
+        )
+
+    def test_fy2019_20_itc_mismatch_uses_circular_193_version(self):
+        facts = [
+            notice_date(),
+            fact("F-T", FactType.TAX_PERIOD, "FY 2019-20"),
+        ]
+        plan = build_gst_legal_question_plan(
+            ProceedingType.GST_SEC73_ITC,
+            facts,
+            build_legal_date_context(facts),
+        )
+        mismatch = [
+            item for item in plan.questions
+            if item.question_id == "gst_sec73_itc.mismatch_verification"
+        ][0]
+        self.assertIs(
+            mismatch.status,
+            LegalQuestionStatus.SOURCE_VERIFIED_RESEARCH_READY,
+        )
+        self.assertEqual(
+            mismatch.matched_rule_ids,
+            ("cbic.itc_mismatch_verification.2019_2021.v2",),
+        )
+
+    def test_fy2021_22_mismatch_stays_unresolved_across_2022_boundary(self):
+        facts = [
+            notice_date(),
+            fact("F-T", FactType.TAX_PERIOD, "FY 2021-22"),
+        ]
+        plan = build_gst_legal_question_plan(
+            ProceedingType.GST_SEC73_ITC,
+            facts,
+            build_legal_date_context(facts),
+        )
+        mismatch = [
+            item for item in plan.questions
+            if item.question_id == "gst_sec73_itc.mismatch_verification"
+        ][0]
+        self.assertIs(
+            mismatch.status,
+            LegalQuestionStatus.AUTHORITY_UNCURATED,
+        )
+        self.assertEqual(mismatch.matched_rule_ids, ())
+
+    def test_period_through_december_2021_can_resolve_circular_193(self):
+        facts = [
+            notice_date(),
+            fact(
+                "F-T",
+                FactType.TAX_PERIOD,
+                "Period 01/04/2021 to 31/12/2021",
+            ),
+        ]
+        plan = build_gst_legal_question_plan(
+            ProceedingType.GST_SEC73_ITC,
+            facts,
+            build_legal_date_context(facts),
+        )
+        mismatch = [
+            item for item in plan.questions
+            if item.question_id == "gst_sec73_itc.mismatch_verification"
+        ][0]
+        self.assertIs(
+            mismatch.status,
+            LegalQuestionStatus.SOURCE_VERIFIED_RESEARCH_READY,
+        )
+        self.assertEqual(
+            mismatch.matched_rule_ids,
+            ("cbic.itc_mismatch_verification.2019_2021.v2",),
+        )
+
     def test_itc_question_requires_period_and_both_mismatch_amount_facts(self):
         facts = [
             notice_date(),
