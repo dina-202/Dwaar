@@ -1549,6 +1549,118 @@ class DraftSafetyTests(unittest.TestCase):
                 self.assertEqual(calls_named(fake, "markdown"), [])
 
 
+class TriageWorkingSummaryUiTests(unittest.TestCase):
+    def _triage_result(self, *, extraction_status=FactExtractionStatus.SUCCESS):
+        result = make_result(
+            support_level=SupportLevel.TRIAGE_ONLY,
+            proceeding_type=ProceedingType.UNKNOWN,
+            extraction_status=extraction_status,
+            include_arithmetic=False,
+            draft_status=DraftGenerationStatus.BLOCKED,
+            draft_eligibility=DraftEligibility.BLOCKED,
+            post_status=None,
+            triage_summary=TriageSummary(
+                proceeding_type=ProceedingType.UNKNOWN,
+                notice_form=NoticeForm.ASMT_10,
+                support_level=SupportLevel.TRIAGE_ONLY,
+                classification_confidence=ClassificationConfidence.HIGH,
+                extraction_status=extraction_status,
+                portal_verification_required=True,
+                authority_verification_required=True,
+                communication_identifier_status=CommunicationIdentifierStatus.DIN_PRESENT,
+                authority_details_status=AuthorityDetailsStatus.PARTIAL,
+                deadline_status=DeadlineStatus.UNKNOWN,
+                hearing_status=HearingStatus.NOT_SCHEDULED,
+                requested_document_fact_ids=["F-REQ"],
+                referenced_annexure_fact_ids=[],
+                message="This notice is recognized for triage.",
+            ),
+        )
+        result.classification.notice_form = NoticeForm.ASMT_10
+        result.classification.notice_family = NoticeFamily.ASSESSMENT_SCRUTINY
+        result.extraction_result.facts = [
+            ExtractedFact(
+                fact_id="F-001",
+                claim="model claim must not render",
+                status=FactStatus.CONFIRMED,
+                source_text="Notice No. ASMT-10/123",
+                source_page=1,
+                allowed_in_draft=DraftPermission.YES,
+                fact_type=FactType.NOTICE_REFERENCE,
+                fact_role=FactRole.NONE,
+            ),
+            ExtractedFact(
+                fact_id="F-002",
+                claim="model claim must not render",
+                status=FactStatus.CONFIRMED,
+                source_text="GSTIN: 06AABCA1234H1Z5",
+                source_page=1,
+                allowed_in_draft=DraftPermission.YES,
+                fact_type=FactType.GSTIN,
+                fact_role=FactRole.NONE,
+            ),
+            ExtractedFact(
+                fact_id="F-003",
+                claim="model claim must not render",
+                status=FactStatus.CONFIRMED,
+                source_text="Reply within 30 days from the date of receipt",
+                source_page=1,
+                allowed_in_draft=DraftPermission.YES,
+                fact_type=FactType.DOCUMENT_DETAIL,
+                fact_role=FactRole.RESPONSE_PERIOD,
+            ),
+            ExtractedFact(
+                fact_id="F-004",
+                claim="Department alleges discrepancy",
+                status=FactStatus.ALLEGED,
+                source_text="Total Aggregate Discrepancy: Rs. 11,05,300",
+                source_page=1,
+                allowed_in_draft=DraftPermission.CONDITIONAL,
+                fact_type=FactType.DEPARTMENT_ALLEGATION,
+                fact_role=FactRole.DEPARTMENT_ALLEGED_AMOUNT,
+            ),
+            ExtractedFact(
+                fact_id="F-005",
+                claim="Requested records",
+                status=FactStatus.CONFIRMED,
+                source_text="Purchase register, Sales register and GST ledger",
+                source_page=2,
+                allowed_in_draft=DraftPermission.YES,
+                fact_type=FactType.REQUESTED_DOCUMENT,
+                fact_role=FactRole.NONE,
+            ),
+        ]
+        result.deadline_result.response_period_days = 30
+        result.deadline_result.response_deadline = None
+        return result
+
+    def test_triage_only_notice_renders_source_grounded_working_summary(self):
+        fake, *_ = run_app(result=self._triage_result())
+        text = log_text(fake)
+        self.assertIn("Triage working summary", text)
+        self.assertIn("Key notice details", text)
+        self.assertIn("Reply within 30 days from the date of receipt", text)
+        self.assertIn("Department allegations", text)
+        self.assertIn("Documents requested in the notice", text)
+        self.assertIn("Next review steps", text)
+        self.assertIn("Confirm the actual service/receipt date", text)
+        self.assertNotIn("model claim must not render", text)
+
+    def test_partial_triage_warns_that_positive_findings_may_be_incomplete(self):
+        fake, *_ = run_app(
+            result=self._triage_result(
+                extraction_status=FactExtractionStatus.PARTIAL,
+            )
+        )
+        text = log_text(fake)
+        self.assertIn("Fact extraction was partial", text)
+        self.assertIn("list may be incomplete", text)
+
+    def test_deep_workflow_does_not_render_triage_working_summary(self):
+        fake, *_ = run_app(result=make_result())
+        self.assertNotIn("Triage working summary", log_text(fake))
+
+
 class RenderOrderAndRawTextTests(unittest.TestCase):
     def test_full_functional_render_order_and_raw_text_last(self):
         triage_message = "Deterministic triage message sentinel."
