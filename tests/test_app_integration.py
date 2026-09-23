@@ -34,6 +34,11 @@ from domain.case_operations_models import (
     CaseWorkItem,
     WorkQueueDeadlineStatus,
 )
+from domain.professional_queue_models import ProfessionalQueueItem
+from domain.professional_workbench_models import (
+    CaseAttentionCode,
+    CaseWorkspace,
+)
 from domain.case_timeline_models import (
     CaseTimelineItem,
     TimelineCategory,
@@ -543,6 +548,8 @@ def run_app(
     draft_service_error=None,
     filing_service=None,
     filing_service_error=None,
+    professional_workbench_service=None,
+    professional_workbench_service_error=None,
     persisted_evidence_ref=None,
     persisted_evidence_error=None,
     reopen_result=None,
@@ -728,6 +735,34 @@ def run_app(
     if filing_service_error is not None:
         filing_service_mock.side_effect = filing_service_error
 
+    if professional_workbench_service is None:
+        professional_workbench_service = Mock()
+
+        def professional_queue_side_effect(principal, firm_id, *, today):
+            return [
+                ProfessionalQueueItem(
+                    work_item=item,
+                    attention_codes=(),
+                    attention_workspaces=(),
+                )
+                for item in persistence_service.list_case_work_queue(
+                    principal,
+                    firm_id,
+                    today=today,
+                )
+            ]
+
+        professional_workbench_service.list_case_attention_queue.side_effect = (
+            professional_queue_side_effect
+        )
+    professional_workbench_service_mock = Mock(
+        return_value=professional_workbench_service
+    )
+    if professional_workbench_service_error is not None:
+        professional_workbench_service_mock.side_effect = (
+            professional_workbench_service_error
+        )
+
     persisted_evidence_mock = Mock(return_value=persisted_evidence_ref)
     if persisted_evidence_error is not None:
         persisted_evidence_mock.side_effect = persisted_evidence_error
@@ -744,6 +779,9 @@ def run_app(
     fake.evidence_review_service_mock = evidence_review_service_mock
     fake.draft_service_mock = draft_service_mock
     fake.filing_service_mock = filing_service_mock
+    fake.professional_workbench_service_mock = (
+        professional_workbench_service_mock
+    )
     fake.persisted_evidence_mock = persisted_evidence_mock
     fake.reopen_mock = reopen_mock
 
@@ -789,6 +827,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_filing_service",
             filing_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_professional_workbench_service",
+            professional_workbench_service_mock,
         ),
         patch.object(
             case_evidence_service_module,
