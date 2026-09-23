@@ -1287,21 +1287,59 @@ class UploadAndFailureTests(unittest.TestCase):
         self.assertEqual(len(runner.call_args.args), 2)
         self.assertEqual(runner.call_args.kwargs, {})
 
-    def test_pdf_runtime_error_is_displayed_and_stops_analysis(self):
-        error = RuntimeError("Could not read this PDF: corrupt")
+    def test_pdf_runtime_error_is_generic_in_customer_mode(self):
+        error = RuntimeError(
+            "provider api key SECRET-123 / private ciphertext detail"
+        )
         fake, extractor, runner, _, events, today_calls = run_app(
-            extraction_error=error
+            extraction_error=error,
+            engineering_diagnostics=False,
         )
         extractor.assert_called_once_with(PDF_BYTES)
         runner.assert_not_called()
         self.assertEqual(events, ["getvalue:notice.pdf", "extract"])
         self.assertEqual(today_calls, 1)
-        self.assertIn(str(error), log_text(fake))
-        self.assertEqual(len(calls_named(fake, "error")), 1)
+        text = log_text(fake)
+        self.assertIn(
+            "The notice PDF could not be read or analyzed safely.",
+            text,
+        )
+        self.assertNotIn("SECRET-123", text)
+        self.assertNotIn("private ciphertext detail", text)
+        self.assertEqual(
+            [
+                call
+                for call in calls_named(fake, "expander")
+                if call[1]
+                and "notice analysis failure" in str(call[1][0]).lower()
+            ],
+            [],
+        )
+
+    def test_pdf_runtime_error_detail_is_engineering_only(self):
+        error = RuntimeError("private parser/provider detail")
+        fake, *_ = run_app(
+            extraction_error=error,
+            engineering_diagnostics=True,
+        )
+        text = log_text(fake)
+        self.assertIn(
+            "The notice PDF could not be read or analyzed safely.",
+            text,
+        )
+        self.assertIn("private parser/provider detail", text)
+        technical = [
+            call
+            for call in calls_named(fake, "expander")
+            if call[1]
+            and "notice analysis failure" in str(call[1][0]).lower()
+        ]
+        self.assertEqual(len(technical), 1)
 
     def test_unexpected_orchestrator_error_is_generic_and_has_no_fake_output(self):
         fake, _, runner, _, events, today_calls = run_app(
-            orchestrator_error=ValueError("private infrastructure detail")
+            orchestrator_error=ValueError("private infrastructure detail"),
+            engineering_diagnostics=False,
         )
         runner.assert_called_once_with(DOCUMENT_PAGES, TODAY)
         self.assertEqual(events, ["getvalue:notice.pdf", "extract", "orchestrator"])
