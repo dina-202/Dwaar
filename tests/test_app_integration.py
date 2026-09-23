@@ -1001,7 +1001,7 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
                 AccessPermission.CASE_READ,
             },
         )
-        self.assertIn("Active firm: Test Firm (F-TEST)", log_text(fake))
+        self.assertIn("Active firm: Test Firm", log_text(fake))
 
     def test_multi_firm_selection_uses_selected_firm(self):
         firms = [
@@ -1032,11 +1032,11 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             upload=False,
             available_firms=firms,
             selectbox_values={
-                "dwaar_active_firm_selector": "Beta (F-2)"
+                "dwaar_active_firm_selector": "2. Beta"
             },
         )
         self.assertEqual(len(calls_named(fake, "selectbox")), 1)
-        self.assertIn("Active firm: Beta (F-2)", log_text(fake))
+        self.assertIn("Active firm: Beta", log_text(fake))
         self.assertEqual(
             fake.session_state["_dwaar_active_firm_id"],
             "F-2",
@@ -1083,7 +1083,7 @@ class AuthenticationAndFirmGateTests(unittest.TestCase):
             session_state=shared_state,
             available_firms=firms,
             selectbox_values={
-                "dwaar_active_firm_selector": "Beta (F-2)"
+                "dwaar_active_firm_selector": "2. Beta"
             },
         )
         self.assertEqual(shared_state["_dwaar_active_firm_id"], "F-2")
@@ -2924,7 +2924,7 @@ class DraftWorkProductUiTests(unittest.TestCase):
             reopen_result=self._reopened(),
             selectbox_values={
                 "draft_version_selector_CASE-1": (
-                    "v1 — working — DRAFT-1"
+                    "2. Version 1 · Working"
                 )
             },
             button_values={"open_saved_case_CASE-1": True},
@@ -4085,14 +4085,12 @@ class ClientWorkspaceUiTests(unittest.TestCase):
 
     def test_focus_from_client_workspace_moves_case_to_saved_case_selector(self):
         service, client, _, newer, older = self._service()
-        selected_case_label = f"{older.title} — {older.case_id}"
+        selected_case_label = "2. Older DRC-01 · DRC-01"
         fake, *_ = run_app(
             upload=False,
             persistence_service=service,
             selectbox_values={
-                "dwaar_client_workspace_selector": (
-                    f"{client.display_name} — {client.client_id}"
-                ),
+                "dwaar_client_workspace_selector": client.display_name,
                 f"dwaar_client_case_selector_{client.client_id}": (
                     selected_case_label
                 ),
@@ -4113,7 +4111,8 @@ class ClientWorkspaceUiTests(unittest.TestCase):
         ]
         self.assertEqual(len(saved_case_selects), 1)
         saved_options = saved_case_selects[0][1][1]
-        self.assertTrue(saved_options[0].endswith(older.case_id))
+        self.assertIn(older.title, saved_options[0])
+        self.assertNotIn(older.case_id, saved_options[0])
         self.assertIn(
             "Open saved case",
             log_text(fake),
@@ -4267,11 +4266,8 @@ class DurableIntakeUiTests(unittest.TestCase):
         saved_case.registration_id = registration.registration_id
         service.create_existing_client_case_intake.return_value = saved_case
 
-        client_label = f"{client.display_name} — {client.client_id}"
-        registration_label = (
-            f"GSTIN: {registration.identifier_value} — "
-            f"{registration.registration_id}"
-        )
+        client_label = client.display_name
+        registration_label = f"GSTIN: {registration.identifier_value}"
         fake, *_ = run_app(
             persistence_service=service,
             selectbox_values={
@@ -4324,7 +4320,7 @@ class DurableIntakeUiTests(unittest.TestCase):
             selectbox_values={
                 keys["mode"]: "Existing client",
                 keys["existing_client"]: (
-                    f"{client.display_name} — {client.client_id}"
+                    client.display_name
                 ),
                 keys["existing_registration"]: "No registration",
             },
