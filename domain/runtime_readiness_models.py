@@ -15,6 +15,7 @@ class RuntimeReadinessCode(Enum):
     OBJECT_STORE_CONFIGURATION = "object_store_configuration"
     DOCUMENT_KEY_CONFIGURATION = "document_key_configuration"
     DOCUMENT_KEY_ID_CONFIGURATION = "document_key_id_configuration"
+    OCR_RUNTIME = "ocr_runtime"
     DB_OPEN_AND_MIGRATION = "db_open_and_migration"
     DB_INTEGRITY = "db_integrity"
     OBJECT_STORE_ROUND_TRIP = "object_store_round_trip"
