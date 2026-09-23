@@ -1800,6 +1800,32 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
             log_text(fake),
         )
 
+    def test_gstr3a_uses_same_safe_enhanced_triage_surface(self):
+        result = self._triage_result()
+        result.classification.notice_form = NoticeForm.GSTR_3A
+        result.classification.notice_family = NoticeFamily.RETURN_COMPLIANCE
+        result.triage_summary.notice_form = NoticeForm.GSTR_3A
+        response_fact = next(
+            fact
+            for fact in result.extraction_result.facts
+            if fact.fact_role is FactRole.RESPONSE_PERIOD
+        )
+        response_fact.source_text = (
+            "Furnish the return within 15 days from the date of receipt"
+        )
+        result.deadline_result.response_period_days = 15
+
+        fake, *_ = run_app(result=result)
+        text = log_text(fake)
+        self.assertIn("GSTR-3A", text)
+        self.assertIn("Return compliance", text)
+        self.assertIn("Triage working summary", headers(fake))
+        self.assertIn("Notice-stated response period", text)
+        self.assertIn("15 day(s)", text)
+        self.assertIn("service/receipt date", text)
+        self.assertIn("Legal research status", headers(fake))
+        self.assertNotIn("Specialist draft", headers(fake))
+
     def test_partial_triage_warns_that_positive_findings_may_be_incomplete(self):
         fake, *_ = run_app(
             result=self._triage_result(
