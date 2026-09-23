@@ -40,6 +40,7 @@ def build_professional_case_attention(
     legal_evidence_contract_drift: bool = False,
     specialist_workflow_available: bool = True,
     triage_evidence_review_pending: bool = False,
+    notice_evidence_review_pending: bool = False,
 ) -> ProfessionalCaseAttention:
     """Build read-only operational attention facts.
 
@@ -62,6 +63,9 @@ def build_professional_case_attention(
 
     if not isinstance(triage_evidence_review_pending, bool):
         raise TypeError("triage_evidence_review_pending must be a bool")
+
+    if not isinstance(notice_evidence_review_pending, bool):
+        raise TypeError("notice_evidence_review_pending must be a bool")
 
     for values, expected, label in (
         (snapshots, AnalysisSnapshotRef, "snapshots"),
@@ -172,6 +176,17 @@ def build_professional_case_attention(
                     "One or more records requested or referenced in the "
                     "latest triage analysis do not yet have a human-confirmed "
                     "evidence match.",
+                    latest_snapshot.snapshot_id,
+                )
+            )
+
+        if notice_evidence_review_pending:
+            items.append(
+                CaseAttentionItem(
+                    CaseAttentionCode.NOTICE_EVIDENCE_REVIEW_PENDING,
+                    "One or more records requested or referenced in the "
+                    "latest notice analysis do not yet have a "
+                    "human-confirmed evidence match.",
                     latest_snapshot.snapshot_id,
                 )
             )
