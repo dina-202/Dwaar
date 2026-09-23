@@ -1919,6 +1919,48 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
         self.assertIs(checklist[0].status, EvidenceStatus.UNKNOWN)
         self.assertNotIn("Requested records", repr(checklist))
 
+    def test_triage_referenced_annexure_can_drive_evidence_workspace(self):
+        result = self._triage_result()
+        result.extraction_result.facts = [
+            fact
+            for fact in result.extraction_result.facts
+            if fact.fact_type is not FactType.REQUESTED_DOCUMENT
+        ]
+        result.triage_summary.requested_document_fact_ids = []
+        result.preflight_result.requested_document_fact_ids = []
+        result.triage_summary.referenced_annexure_fact_ids = ["F-008"]
+        result.preflight_result.referenced_annexure_fact_ids = ["F-008"]
+        support = [
+            _UploadedFile(
+                [],
+                name="annexure-a.pdf",
+                payload=b"%PDF annexure supporting sentinel",
+            )
+        ]
+        intake = EvidenceIntakeResult(
+            status=EvidenceIntakeStatus.SUCCESS,
+            candidates=[],
+        )
+
+        fake, _, _, evidence_mock, _, _ = run_app(
+            result=result,
+            supporting_uploads=support,
+            evidence_intake_result=intake,
+        )
+        self.assertIn("Supporting evidence workspace", log_text(fake))
+        evidence_mock.assert_called_once()
+        checklist = evidence_mock.call_args.args[0]
+        self.assertEqual(len(checklist), 1)
+        self.assertEqual(
+            checklist[0].evidence_id,
+            "triage.referenced_annexure.F-008",
+        )
+        self.assertEqual(
+            checklist[0].requirement_text,
+            "Notice-referenced annexure: Annexure A",
+        )
+        self.assertIs(checklist[0].status, EvidenceStatus.UNKNOWN)
+
     def test_triage_without_requested_records_does_not_open_evidence_workspace(self):
         result = self._triage_result()
         result.extraction_result.facts = [
