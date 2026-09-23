@@ -176,15 +176,14 @@ def build_professional_case_attention(
                 )
             )
 
-        if latest_draft is None and (
-            specialist_workflow_available or latest_snapshot is None
-        ):
-            items.append(
-                CaseAttentionItem(
-                    CaseAttentionCode.DRAFT_NOT_STARTED,
-                    "No durable professional draft version exists.",
+        if latest_draft is None:
+            if specialist_workflow_available or latest_snapshot is None:
+                items.append(
+                    CaseAttentionItem(
+                        CaseAttentionCode.DRAFT_NOT_STARTED,
+                        "No durable professional draft version exists.",
+                    )
                 )
-            )
         elif latest_draft.review_status is DraftReviewStatus.WORKING:
             items.append(
                 CaseAttentionItem(
