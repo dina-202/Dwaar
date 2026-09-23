@@ -1439,6 +1439,23 @@ class PromptContractTests(unittest.TestCase):
         )
 
 
+    def test_prompt_requires_itemized_asmt10_discrepancy_extraction(self):
+        prompt = capture_prompt(DEFAULT_SOURCE)
+        self.assertIn("ASMT-10 SCRUTINY COMPLETENESS", prompt)
+        self.assertIn(
+            "one department_allegation candidate for EACH separately stated",
+            prompt,
+        )
+        self.assertIn(
+            "never merge distinct discrepancies into one summary",
+            prompt,
+        )
+        self.assertIn(
+            'use fact_role "none" unless the source span itself establishes',
+            prompt,
+        )
+
+
 class PromptRoleContractTests(unittest.TestCase):
     """§19.4 prompt: five-field schema, full role vocabulary, explicit
     \"none\" instruction, compatibility guidance, safety rules."""
