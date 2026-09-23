@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from domain.auth_models import (
     AccessPermission,
@@ -11,6 +11,7 @@ from domain.auth_models import (
     AuthorizationError,
 )
 from domain.authorization import require_firm_permission
+from domain.fact_review_models import FactReviewDecision
 from domain.draft_work_product_models import (
     DraftReviewStatus,
     DraftVersionRef,
@@ -20,6 +21,7 @@ from domain.persistence_ports import (
     AccessGrantRepository,
     DocumentStore,
     DraftVersionRepository,
+    FactReviewRepository,
 )
 from modules.authorized_analysis_snapshot_service import (
     AuthorizedAnalysisSnapshotService,
@@ -45,12 +47,14 @@ class AuthorizedDraftWorkProductService:
         access_repository: AccessGrantRepository,
         draft_repository: DraftVersionRepository,
         document_store: DocumentStore,
+        fact_review_repository: Optional[FactReviewRepository] = None,
     ):
         self._cases = case_service
         self._snapshots = snapshot_service
         self._access = access_repository
         self._drafts = draft_repository
         self._documents = document_store
+        self._fact_reviews = fact_review_repository
 
     def _require(
         self,
@@ -274,6 +278,24 @@ class AuthorizedDraftWorkProductService:
             self._documents,
             draft_version_id=version.draft_version_id,
         )
+
+        if (
+            target_status is DraftReviewStatus.APPROVED
+            and self._fact_reviews is not None
+        ):
+            rejected = [
+                review.fact_id
+                for review in self._fact_reviews.list_review_refs(
+                    version.source_snapshot_id
+                )
+                if review.decision is FactReviewDecision.REJECTED
+            ]
+            if rejected:
+                raise ValueError(
+                    "draft approval is blocked because the source analysis "
+                    "contains professionally rejected extracted facts"
+                )
+
         return transition_draft_review_status(
             self._drafts,
             version=version,
