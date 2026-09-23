@@ -385,6 +385,13 @@ def build_authorized_professional_workbench_service(
         LocalSQLiteEvidenceReviewRepository(db_path),
         document_store,
     )
+    fact_review_service = AuthorizedFactReviewService(
+        case_service,
+        snapshot_service,
+        access_repository,
+        LocalSQLiteFactReviewRepository(db_path),
+        document_store,
+    )
     return AuthorizedProfessionalWorkbenchService(
         case_service,
         snapshot_service,
@@ -392,4 +399,5 @@ def build_authorized_professional_workbench_service(
         draft_service,
         filing_service,
         evidence_review_service,
+        fact_review_service,
     )
