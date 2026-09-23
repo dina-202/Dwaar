@@ -1733,6 +1733,8 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
         self.assertIn("Rule 99 of the CGST Rules", text)
         self.assertIn("Annexures referenced in the notice", text)
         self.assertIn("Annexure A", text)
+        self.assertIn("Legal research status", headers(fake))
+        self.assertNotIn("Verified legal sources", headers(fake))
         self.assertIn(
             "No approved form-specific verified legal research pack",
             text,
