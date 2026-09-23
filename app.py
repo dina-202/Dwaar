@@ -242,6 +242,157 @@ def _proceeding_label(proceeding_type):
     return labels.get(proceeding_type.value, _friendly_enum(proceeding_type))
 
 
+def _matching_source_facts(extraction, *, fact_type=None, fact_role=None):
+    """Return source-grounded facts for one presentation selector."""
+    return [
+        fact
+        for fact in extraction.facts
+        if (fact_type is None or fact.fact_type.value == fact_type)
+        and (fact_role is None or fact.fact_role.value == fact_role)
+        and bool(fact.source_text)
+    ]
+
+
+def _triage_rows(facts, label):
+    """Build CA-facing rows without exposing model-authored claims."""
+    return [
+        {
+            "Item": label,
+            "Notice evidence": fact.source_text,
+            "Page": _display(fact.source_page),
+            "Verification": _friendly_enum(fact.source_verification),
+        }
+        for fact in facts
+    ]
+
+
+def _render_triage_working_summary(result):
+    """Render useful triage facts without promoting workflow support."""
+    classification = result.classification
+    if (
+        classification.support_level.value != "triage_only"
+        or _classification_failed_for_display(result)
+    ):
+        return
+
+    extraction = result.extraction_result
+    preflight = result.preflight_result
+    deadline = result.deadline_result
+
+    st.header("Triage working summary")
+    st.caption(
+        "Source-grounded intake view only. Dwaar has not promoted this "
+        "notice to a specialist workflow."
+    )
+
+    detail_specs = (
+        ("Notice reference", "notice_reference"),
+        ("Notice date", "notice_date"),
+        ("Taxpayer", "taxpayer_name"),
+        ("GSTIN", "gstin"),
+        ("Tax period", "tax_period"),
+    )
+    detail_rows = []
+    for label, fact_type in detail_specs:
+        detail_rows.extend(
+            _triage_rows(
+                _matching_source_facts(
+                    extraction,
+                    fact_type=fact_type,
+                ),
+                label,
+            )
+        )
+    if detail_rows:
+        st.subheader("Key notice details")
+        st.dataframe(detail_rows, hide_index=True)
+
+    response_period_facts = _matching_source_facts(
+        extraction,
+        fact_type="document_detail",
+        fact_role="response_period",
+    )
+    if response_period_facts:
+        st.subheader("Response period stated in the notice")
+        for fact in response_period_facts:
+            st.write(fact.source_text)
+            st.caption(
+                f"Page {_display(fact.source_page)} · "
+                f"{_friendly_enum(fact.source_verification)}"
+            )
+        if deadline.response_deadline is None:
+            st.warning(
+                "The notice states a response period, but Dwaar does not "
+                "have enough verified date inputs to calculate a reliable "
+                "calendar deadline."
+            )
+
+    allegation_facts = _matching_source_facts(
+        extraction,
+        fact_type="department_allegation",
+    )
+    if allegation_facts:
+        st.subheader("Department allegations")
+        st.caption(
+            "These are statements attributed to the department, not "
+            "confirmed taxpayer facts."
+        )
+        st.dataframe(
+            _triage_rows(allegation_facts, "Department allegation"),
+            hide_index=True,
+        )
+
+    requested_document_facts = _matching_source_facts(
+        extraction,
+        fact_type="requested_document",
+    )
+    if requested_document_facts:
+        st.subheader("Documents requested in the notice")
+        st.dataframe(
+            _triage_rows(requested_document_facts, "Requested record"),
+            hide_index=True,
+        )
+
+    if extraction.status.value == "partial":
+        st.warning(
+            "Fact extraction was partial. The items shown above are usable "
+            "positive findings, but the list may be incomplete; review the "
+            "original notice before treating any item as absent."
+        )
+
+    review_steps = []
+    if preflight.portal_verification_required:
+        review_steps.append(
+            "Verify the notice/communication on the GST portal before "
+            "relying on identifiers or filing status."
+        )
+    if preflight.authority_verification_required:
+        review_steps.append(
+            "Verify the issuing authority and jurisdiction before relying "
+            "on authority details."
+        )
+    if response_period_facts and deadline.response_deadline is None:
+        review_steps.append(
+            "Confirm the actual service/receipt date before calculating or "
+            "relying on the final response deadline."
+        )
+    if requested_document_facts:
+        review_steps.append(
+            "Match the client's available records against the documents "
+            "explicitly requested in the notice."
+        )
+    if extraction.status.value == "partial":
+        review_steps.append(
+            "Review rejected/missed extraction areas against the original "
+            "notice before concluding that information is missing."
+        )
+
+    if review_steps:
+        st.subheader("Next review steps")
+        for index, step in enumerate(review_steps, start=1):
+            st.write(f"{index}. {step}")
+
+
 def _render_phase2_result(result):
     classification = result.classification
     extraction = result.extraction_result
@@ -286,6 +437,9 @@ def _render_phase2_result(result):
                 "classification_reasons": classification.classification_reasons,
             }
         )
+
+
+    _render_triage_working_summary(result)
 
     st.header("Fact extraction")
     if extraction.status.value == "success":
