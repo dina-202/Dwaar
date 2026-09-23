@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Dict
+from typing import Dict, Iterable
 
 
 FACT_REVIEW_SCHEMA_VERSION = 1
@@ -38,3 +38,29 @@ class LoadedFactReview:
 
     metadata: FactReviewRef
     payload: Dict[str, object]
+
+
+
+def latest_fact_reviews(
+    reviews: Iterable[FactReviewRef],
+) -> Dict[str, FactReviewRef]:
+    """Return the latest immutable professional decision for each fact.
+
+    History remains append-only. Operational state is selected by
+    (reviewed_at, review_id) so equal timestamps still resolve
+    deterministically.
+    """
+    latest: Dict[str, FactReviewRef] = {}
+    for review in reviews:
+        if not isinstance(review, FactReviewRef):
+            raise TypeError("reviews must contain only FactReviewRef values")
+        current = latest.get(review.fact_id)
+        if current is None or (
+            review.reviewed_at,
+            review.review_id,
+        ) > (
+            current.reviewed_at,
+            current.review_id,
+        ):
+            latest[review.fact_id] = review
+    return latest
