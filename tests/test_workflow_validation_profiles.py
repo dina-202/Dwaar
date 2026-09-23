@@ -7,9 +7,9 @@ Fully offline and deterministic. No LLM calls, no network, no fixtures.
 Verifies:
 
   - get_validation_profile exists, returns the authoritative profile for
-    each of the five deep ProceedingTypes, and None for UNKNOWN with no
+    each of the six deep ProceedingTypes, and None for UNKNOWN with no
     fallback;
-  - exactly five profiles exist, one per deep proceeding, none for
+  - exactly six profiles exist, one per deep proceeding, none for
     UNKNOWN;
   - the exact 29 §19.16 requirement mappings: IDs, kinds, fact types,
     fact roles, calculation types, accepted_fact_statuses and
@@ -56,6 +56,7 @@ from workflows.gst.validation_profiles import (
 )
 
 DEEP_TYPES = (
+    ProceedingType.GST_SEC61_SCRUTINY,
     ProceedingType.GST_SEC73_ITC,
     ProceedingType.GST_SEC73_GENERAL,
     ProceedingType.GST_SEC73_RCM,
@@ -69,6 +70,35 @@ DEEP_TYPES = (
 # compared against the workflow required_facts strings in the tests, not
 # duplicated here.
 EXPECTED_SPECS = {
+    ProceedingType.GST_SEC61_SCRUTINY: [
+        (
+            "sec61_scrutiny.r1",
+            RequirementKind.FACT,
+            FactType.DEPARTMENT_ALLEGATION,
+            FactRole.NONE,
+            None,
+            (FactStatus.ALLEGED,),
+            RequirementStatus.MISSING,
+        ),
+        (
+            "sec61_scrutiny.r2",
+            RequirementKind.FACT,
+            FactType.TAX_PERIOD,
+            FactRole.NONE,
+            None,
+            (FactStatus.CONFIRMED,),
+            RequirementStatus.REQUIRES_VERIFICATION,
+        ),
+        (
+            "sec61_scrutiny.r3",
+            RequirementKind.FACT,
+            FactType.DOCUMENT_DETAIL,
+            FactRole.RESPONSE_PERIOD,
+            None,
+            (FactStatus.CONFIRMED,),
+            RequirementStatus.REQUIRES_VERIFICATION,
+        ),
+    ],
     ProceedingType.GST_SEC73_ITC: [
         ("sec73_itc.r1", RequirementKind.FACT, FactType.STATED_AMOUNT,
          FactRole.GSTR3B_ITC_CLAIMED_AMOUNT, None,
@@ -172,6 +202,16 @@ EXPECTED_SPECS = {
 # Exact §19.35–§19.39 special-rule handling tuples and §19.35–§19.39
 # ReviewLevel mappings, keyed by zero-based workflow special_rules index.
 EXPECTED_HANDLING = {
+    ProceedingType.GST_SEC61_SCRUTINY: {
+        0: (SpecialRuleHandling.UPSTREAM_INVARIANT,),
+        1: (SpecialRuleHandling.REVIEW_GATE,),
+        2: (
+            SpecialRuleHandling.UPSTREAM_INVARIANT,
+            SpecialRuleHandling.REVIEW_GATE,
+        ),
+        3: (SpecialRuleHandling.REVIEW_GATE,),
+        4: (SpecialRuleHandling.REVIEW_GATE,),
+    },
     ProceedingType.GST_SEC73_ITC: {
         0: (SpecialRuleHandling.REVIEW_GATE,),
         1: (SpecialRuleHandling.DETERMINISTIC_CHECK,),
@@ -215,6 +255,12 @@ EXPECTED_HANDLING = {
 }
 
 EXPECTED_REVIEW_RULES = {
+    ProceedingType.GST_SEC61_SCRUTINY: {
+        1: ReviewLevel.CA_REVIEW,
+        2: ReviewLevel.CA_REVIEW,
+        3: ReviewLevel.CA_REVIEW,
+        4: ReviewLevel.CA_REVIEW,
+    },
     ProceedingType.GST_SEC73_ITC: {
         0: ReviewLevel.CA_REVIEW,
         2: ReviewLevel.CA_REVIEW,
@@ -250,7 +296,7 @@ class RegistryAndApiTests(unittest.TestCase):
     def test_get_validation_profile_exists(self):
         self.assertTrue(callable(get_validation_profile))
 
-    def test_registry_contains_exactly_five_profiles(self):
+    def test_registry_contains_exactly_six_profiles(self):
         self.assertEqual(
             set(VALIDATION_PROFILE_REGISTRY.keys()), set(DEEP_TYPES)
         )
@@ -281,9 +327,10 @@ class RegistryAndApiTests(unittest.TestCase):
 
 
 class RequirementCountTests(unittest.TestCase):
-    """Counts 5/5/5/5/9, total 29, IDs globally unique and exact."""
+    """Counts 5/5/5/5/9, total 32, IDs globally unique and exact."""
 
     EXPECTED_COUNTS = {
+        ProceedingType.GST_SEC61_SCRUTINY: 3,
         ProceedingType.GST_SEC73_ITC: 5,
         ProceedingType.GST_SEC73_GENERAL: 5,
         ProceedingType.GST_SEC73_RCM: 5,
@@ -299,12 +346,12 @@ class RequirementCountTests(unittest.TestCase):
                 ptype.name,
             )
 
-    def test_total_requirement_specs_is_29(self):
+    def test_total_requirement_specs_is_32(self):
         total = sum(
             len(profile.requirement_specs)
             for profile in VALIDATION_PROFILE_REGISTRY.values()
         )
-        self.assertEqual(total, 29)
+        self.assertEqual(total, 32)
 
     def test_all_requirement_ids_globally_unique(self):
         ids = [
@@ -496,12 +543,12 @@ class SpecialRuleMappingTests(unittest.TestCase):
                 ptype.name,
             )
 
-    def test_total_mapped_indices_is_24(self):
+    def test_total_mapped_indices_is_29(self):
         total = sum(
             len(profile.special_rule_handling)
             for profile in VALIDATION_PROFILE_REGISTRY.values()
         )
-        self.assertEqual(total, 24)
+        self.assertEqual(total, 29)
 
     def test_no_out_of_range_index(self):
         for ptype in DEEP_TYPES:
