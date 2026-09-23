@@ -1,5 +1,16 @@
 # Phase 3Q.1 — Pilot Truthfulness & CA-facing Analysis Presentation
 
+> **Historical status note — superseded for ASMT-10 support scope on 2026-09-23.**
+> This document accurately records the Q1 pilot state, when ASMT-10 was
+> intentionally TRIAGE_ONLY. Later hands-on work earned the dedicated
+> `GST_SEC61_SCRUTINY` specialist workflow after its classification,
+> extraction, deadline, validation, drafting, verified legal-research and
+> synthetic-PDF rehearsal contracts were implemented and tested. Statements
+> below such as "do not promote ASMT-10" and "future ASMT-10 legal pack" are
+> Q1 historical constraints, not the current architecture. The current
+> contracts are authoritative in `ARCHITECTURE_SPEC_v1_1.md` and
+> `PHASE3Q3_SECTION61_ASMT10_SPECIALIST.md`.
+
 ## Purpose
 
 Phase 3Q.1 is the first correction slice derived from hands-on product use after
