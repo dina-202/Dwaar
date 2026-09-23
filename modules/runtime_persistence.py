@@ -15,6 +15,9 @@ from modules.authorized_draft_work_product_service import (
 )
 from modules.authorized_filing_service import AuthorizedFilingService
 from modules.authorized_legal_brief_service import AuthorizedLegalBriefService
+from modules.authorized_professional_workbench_service import (
+    AuthorizedProfessionalWorkbenchService,
+)
 from modules.authorized_evidence_review_service import (
     AuthorizedEvidenceReviewService,
 )
@@ -292,4 +295,56 @@ def build_authorized_legal_brief_service(
         access_repository,
         brief_repository,
         document_store,
+    )
+
+
+def build_authorized_professional_workbench_service(
+    environment: Optional[Mapping[str, str]] = None,
+) -> AuthorizedProfessionalWorkbenchService:
+    """Build tenant-safe read-only professional case cockpit."""
+    (
+        db_path,
+        case_repository,
+        access_repository,
+        document_store,
+    ) = _build_runtime_components(environment)
+    case_service = AuthorizedCaseService(
+        case_repository,
+        access_repository,
+        document_store,
+    )
+    snapshot_repository = LocalSQLiteAnalysisSnapshotRepository(db_path)
+    snapshot_service = AuthorizedAnalysisSnapshotService(
+        case_service,
+        access_repository,
+        snapshot_repository,
+        document_store,
+    )
+    legal_service = AuthorizedLegalBriefService(
+        case_service,
+        snapshot_service,
+        access_repository,
+        LocalSQLiteLegalBriefRepository(db_path),
+        document_store,
+    )
+    draft_service = AuthorizedDraftWorkProductService(
+        case_service,
+        snapshot_service,
+        access_repository,
+        LocalSQLiteDraftVersionRepository(db_path),
+        document_store,
+    )
+    filing_service = AuthorizedFilingService(
+        case_service,
+        access_repository,
+        LocalSQLiteFilingRepository(db_path),
+        LocalSQLiteDraftVersionRepository(db_path),
+        document_store,
+    )
+    return AuthorizedProfessionalWorkbenchService(
+        case_service,
+        snapshot_service,
+        legal_service,
+        draft_service,
+        filing_service,
     )
