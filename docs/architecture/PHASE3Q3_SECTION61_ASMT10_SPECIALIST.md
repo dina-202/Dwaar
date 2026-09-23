@@ -195,7 +195,51 @@ Related regressions:
 - `tests/test_gst_legal_research.py`
 - `tests/test_legal_questions.py`
 
-## 7. Non-goals
+## 7. Saved evidence continuity and case attention
+
+Deep promotion must not make the notice's operational evidence requests less
+specific than they were in triage.
+
+For a saved `GST_SEC61_SCRUTINY` snapshot, the authorized evidence-review
+workspace therefore exposes both:
+
+- the four static specialist evidence categories; and
+- one source-grounded review target for every confirmed
+  `REQUESTED_DOCUMENT` and `REFERENCED_ANNEXURE` selected by preflight.
+
+The itemized IDs use the closed namespace:
+
+```text
+sec61_scrutiny.notice.requested_document.<fact_id>
+sec61_scrutiny.notice.referenced_annexure.<fact_id>
+```
+
+Their display text is built only from the saved confirmed fact's exact
+`source_text`. A missing, ambiguous, wrong-type or ungrounded selected fact
+fails closed.
+
+These operational targets do not mutate the Step-8 specialist evidence
+checklist and do not declare evidence sufficient, responsive or complete.
+Human review decisions remain snapshot-bound.
+
+The professional case queue adds
+`NOTICE_EVIDENCE_REVIEW_PENDING` only while one or more of these itemized
+Section 61 notice targets lacks a `CONFIRMED` evidence review. Static
+specialist checklist items do not by themselves keep that specific notice
+alert open. The alert routes to the Evidence workspace and is an operational
+follow-up signal, never a merits conclusion.
+
+Authoritative implementation:
+
+- `modules/authorized_evidence_review_service.py`
+- `modules/authorized_professional_workbench_service.py`
+- `modules/professional_workbench.py`
+- `domain/professional_workbench_models.py`
+- `tests/test_authorized_evidence_review_service.py`
+- `tests/test_authorized_professional_workbench_service.py`
+- `tests/test_professional_workbench.py`
+
+## 8. Non-goals
 
 This phase does not:
 
@@ -207,12 +251,11 @@ This phase does not:
 - remove CA review;
 - promote other Taxonomy-v1 forms without their own earned workflow contract.
 
-Fine-grained tracking of multiple individually requested records may be added
-later if real evidence-review use demonstrates that the current checklist
-granularity is insufficient. Do not invent a new evidence-completeness model
-preemptively.
+The itemized notice-evidence targets added in this phase are review targets,
+not a new evidence-completeness model. Do not infer that confirmation of one
+target satisfies another target or the broader specialist evidence category.
 
-## 8. Historical relationship
+## 9. Historical relationship
 
 `PHASE3Q1_PILOT_TRUTHFULNESS_UX.md` remains an accurate record of the earlier
 pilot state in which ASMT-10 was triage-only. Its non-promotion statements are
