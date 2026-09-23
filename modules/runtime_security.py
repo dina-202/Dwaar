@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import re
 from datetime import datetime, timezone
 from typing import Mapping, Optional
 
@@ -24,6 +25,11 @@ class AuthenticationNotYetValidError(PermissionError):
 
 class RuntimeSecurityConfigurationError(RuntimeError):
     """Required runtime security configuration is missing or malformed."""
+
+
+_DOCUMENT_KEY_ID_PATTERN = re.compile(
+    r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+)
 
 
 def _timestamp_claim(
@@ -147,3 +153,16 @@ def decode_document_master_key(secret_value: str) -> bytes:
             "document master key must decode to exactly 32 bytes"
         )
     return raw
+
+
+
+def validate_document_key_id(value: str) -> str:
+    """Validate one non-secret opaque document-key generation identifier."""
+    if (
+        not isinstance(value, str)
+        or _DOCUMENT_KEY_ID_PATTERN.fullmatch(value.strip()) is None
+    ):
+        raise RuntimeSecurityConfigurationError(
+            "document key ID must be a safe opaque identifier"
+        )
+    return value.strip()
