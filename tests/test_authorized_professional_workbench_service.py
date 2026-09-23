@@ -14,7 +14,11 @@ from domain.legal_evidence_models import (
     LegalEvidenceReadiness,
     LegalEvidenceReadinessStatus,
 )
-from domain.models import NoticeForm, ProceedingType
+from domain.models import (
+    EvidenceReviewStatus,
+    NoticeForm,
+    ProceedingType,
+)
 from domain.professional_workbench_models import CaseAttentionCode
 from modules.authorized_professional_workbench_service import (
     AuthorizedProfessionalWorkbenchService,
@@ -167,6 +171,71 @@ class AuthorizedProfessionalWorkbenchTests(unittest.TestCase):
         legal.load.assert_not_called()
         drafts.list_versions.assert_called_once()
         filings.list_filings.assert_called_once()
+
+    def test_triage_pending_evidence_requires_confirmed_review(self):
+        cases = mock.Mock()
+        snapshots = mock.Mock()
+        legal = mock.Mock()
+        drafts = mock.Mock()
+        filings = mock.Mock()
+        evidence = mock.Mock()
+        cases.get_case.return_value = case()
+        snapshots.list_snapshot_history.return_value = [snapshot()]
+        snapshots.load_snapshot.return_value = mock.Mock(
+            payload={
+                "classification": {
+                    "support_level": "triage_only",
+                }
+            }
+        )
+        drafts.list_versions.return_value = []
+        filings.list_filings.return_value = []
+
+        first = mock.Mock(evidence_id="triage.requested_document.F-1")
+        second = mock.Mock(evidence_id="triage.referenced_annexure.F-2")
+        evidence.snapshot_evidence_checklist.return_value = [first, second]
+        evidence.list_reviews.return_value = [
+            mock.Mock(
+                evidence_id=first.evidence_id,
+                decision=EvidenceReviewStatus.CONFIRMED,
+            ),
+            mock.Mock(
+                evidence_id=second.evidence_id,
+                decision=EvidenceReviewStatus.REJECTED,
+            ),
+        ]
+
+        service = AuthorizedProfessionalWorkbenchService(
+            cases, snapshots, legal, drafts, filings, evidence
+        )
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        self.assertEqual(
+            tuple(item.code for item in result.items),
+            (CaseAttentionCode.TRIAGE_EVIDENCE_REVIEW_PENDING,),
+        )
+        legal.list_for_snapshot.assert_not_called()
+        evidence.legal_evidence_readiness.assert_not_called()
+
+        evidence.list_reviews.return_value = [
+            mock.Mock(
+                evidence_id=first.evidence_id,
+                decision=EvidenceReviewStatus.CONFIRMED,
+            ),
+            mock.Mock(
+                evidence_id=second.evidence_id,
+                decision=EvidenceReviewStatus.CONFIRMED,
+            ),
+        ]
+        resolved = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        self.assertEqual(resolved.items, ())
 
     def test_missing_case_stops_before_artifact_reads(self):
         service, cases, snapshots, legal, drafts, filings = self.build()
