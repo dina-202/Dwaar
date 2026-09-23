@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 from modules.runtime_backup import (
     RuntimeBackupError,
     create_runtime_backup,
+    restore_runtime_backup,
     verify_runtime_backup,
 )
 from modules.runtime_security import (
@@ -64,6 +65,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = sub.add_parser("verify")
     verify.add_argument("backup_dir")
+
+    restore = sub.add_parser("restore")
+    restore.add_argument("backup_dir")
+    restore.add_argument(
+        "--target-db",
+        required=True,
+        help="Clean target database path.",
+    )
+    restore.add_argument(
+        "--target-objects",
+        required=True,
+        help="Clean target encrypted-object directory.",
+    )
     return parser
 
 
@@ -116,19 +130,42 @@ def main(argv=None) -> int:
         )
         return 0
 
+    if args.command == "verify":
+        try:
+            manifest = verify_runtime_backup(
+                args.backup_dir,
+                document_key=key,
+            )
+        except (RuntimeBackupError, ValueError, OSError):
+            _emit({"ok": False, "error": "verification_failed"})
+            return 1
+
+        _emit(
+            {
+                "ok": True,
+                "operation": "verify",
+                "backup_id": manifest.backup_id,
+                "source_schema_version": manifest.source_schema_version,
+                "object_count": manifest.object_count,
+            }
+        )
+        return 0
+
     try:
-        manifest = verify_runtime_backup(
+        manifest = restore_runtime_backup(
             args.backup_dir,
+            target_db_path=args.target_db,
+            target_object_root=args.target_objects,
             document_key=key,
         )
     except (RuntimeBackupError, ValueError, OSError):
-        _emit({"ok": False, "error": "verification_failed"})
+        _emit({"ok": False, "error": "restore_failed"})
         return 1
 
     _emit(
         {
             "ok": True,
-            "operation": "verify",
+            "operation": "restore",
             "backup_id": manifest.backup_id,
             "source_schema_version": manifest.source_schema_version,
             "object_count": manifest.object_count,
