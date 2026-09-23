@@ -17,6 +17,7 @@ class CaseWorkspace(Enum):
 
 class CaseAttentionCode(Enum):
     ANALYSIS_NOT_SAVED = "analysis_not_saved"
+    FACT_REVIEW_REJECTED = "fact_review_rejected"
     LEGAL_BRIEF_NOT_SAVED = "legal_brief_not_saved"
     LEGAL_RESEARCH_UNRESOLVED = "legal_research_unresolved"
     LEGAL_EVIDENCE_INCOMPLETE = "legal_evidence_incomplete"
@@ -36,6 +37,7 @@ class CaseAttentionCode(Enum):
 
 _ATTENTION_WORKSPACE = {
     CaseAttentionCode.ANALYSIS_NOT_SAVED: CaseWorkspace.ANALYSIS_HISTORY,
+    CaseAttentionCode.FACT_REVIEW_REJECTED: CaseWorkspace.ANALYSIS_HISTORY,
     CaseAttentionCode.LEGAL_BRIEF_NOT_SAVED: CaseWorkspace.LEGAL_RESEARCH,
     CaseAttentionCode.LEGAL_RESEARCH_UNRESOLVED: CaseWorkspace.LEGAL_RESEARCH,
     CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE: CaseWorkspace.EVIDENCE,
