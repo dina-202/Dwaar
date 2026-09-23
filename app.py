@@ -68,12 +68,12 @@ def _display(value):
     return enum_value if enum_value is not None else str(value)
 
 
-def _render_checks(checks):
+def _render_checks(checks, *, technical=False):
     if not checks:
         st.write("None.")
         return
-    st.dataframe(
-        [
+    if technical:
+        rows = [
             {
                 "check_id": item.check_id,
                 "status": item.status.value,
@@ -85,9 +85,16 @@ def _render_checks(checks):
                 ],
             }
             for item in checks
-        ],
-        hide_index=True,
-    )
+        ]
+    else:
+        rows = [
+            {
+                "Status": _friendly_enum(item.status),
+                "What Dwaar checked": item.message,
+            }
+            for item in checks
+        ]
+    st.dataframe(rows, hide_index=True)
 
 
 def _render_legal_brief(classification, extraction):
@@ -441,6 +448,7 @@ def _render_phase2_result(result):
                 "draft_eligibility": validation.draft_eligibility.value,
             }
         )
+        _render_checks(validation.checks, technical=True)
 
     st.header("Unresolved requirements")
     if draft.unresolved_requirements:
@@ -580,7 +588,7 @@ def _render_phase2_result(result):
                         )
                     }
                 )
-                _render_checks(draft.post_validation.checks)
+                _render_checks(draft.post_validation.checks, technical=True)
 
 
 _NOTICE_KEY = "_dwaar_notice_analysis_key"
