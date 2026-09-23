@@ -898,9 +898,19 @@ def _render_phase2_result(result):
         if not triage_only:
             st.header("Triage summary")
             if _classification_failed_for_display(result):
-                st.error(triage.message)
+                st.error(
+                    triage.message.replace(
+                        "Phase-2 analysis",
+                        "notice analysis",
+                    )
+                )
             else:
-                st.write(triage.message)
+                st.write(
+                    triage.message.replace(
+                        "Phase-2 analysis",
+                        "notice analysis",
+                    )
+                )
         if _engineering_diagnostics_enabled():
             with st.expander("Technical details — triage"):
                 st.write(
@@ -1156,11 +1166,10 @@ def _render_historical_snapshot(snapshot):
     st.warning(
         "Historical record only. This snapshot is not the current live "
         "analysis and must not be used as a substitute for recomputation "
-        "with the current engine."
+        "with the current analysis rules."
     )
     st.write(
-        f"Saved {metadata.created_at.isoformat(timespec='minutes')} · "
-        f"Engine {metadata.engine_version}"
+        f"Saved {metadata.created_at.isoformat(timespec='minutes')}"
     )
 
     classification = payload["classification"]
@@ -1291,10 +1300,14 @@ def _render_snapshot_history(
                 st.error("The analysis snapshot could not be saved.")
             else:
                 st.write("Current analysis snapshot saved.")
-                st.caption(f"Engine {saved.engine_version}")
                 if _engineering_diagnostics_enabled():
                     with st.expander("Technical details — saved snapshot"):
-                        st.write({"saved_snapshot_id": saved.snapshot_id})
+                        st.write(
+                            {
+                                "saved_snapshot_id": saved.snapshot_id,
+                                "engine_version": saved.engine_version,
+                            }
+                        )
                 try:
                     history = snapshot_service.list_snapshot_history(
                         principal,
@@ -1316,7 +1329,6 @@ def _render_snapshot_history(
         [
             {
                 "Saved at": item.created_at.isoformat(timespec="minutes"),
-                "Engine": item.engine_version,
             }
             for item in history
         ],
@@ -1330,6 +1342,7 @@ def _render_snapshot_history(
                         "snapshot_id": item.snapshot_id,
                         "schema_version": item.schema_version,
                         "source_document_id": item.source_document_id,
+                        "engine_version": item.engine_version,
                     }
                     for item in history
                 ],
@@ -1338,10 +1351,10 @@ def _render_snapshot_history(
 
     labels = {
         (
-            f"{item.created_at.isoformat()} — "
-            f"{item.engine_version} — {item.snapshot_id}"
+            f"{item.created_at.isoformat(timespec='minutes')} — "
+            f"Saved analysis {index}"
         ): item
-        for item in history
+        for index, item in enumerate(history, start=1)
     }
     selected_label = st.selectbox(
         "Historical snapshot",
@@ -1685,10 +1698,13 @@ def _render_draft_work_product_workspace(
         if snapshots:
             snapshot_labels = {
                 (
-                    f"{item.created_at.isoformat()} — "
-                    f"{item.engine_version} — {item.snapshot_id}"
+                    f"{item.created_at.isoformat(timespec='minutes')} — "
+                    f"Saved analysis {index}"
                 ): item
-                for item in reversed(snapshots)
+                for index, item in enumerate(
+                    reversed(snapshots),
+                    start=1,
+                )
             }
             selected_snapshot_label = st.selectbox(
                 "Draft baseline analysis snapshot",
@@ -2449,10 +2465,13 @@ def _render_persisted_evidence_workspace(
 
     snapshot_labels = {
         (
-            f"{item.created_at.isoformat()} — "
-            f"{item.engine_version} — {item.snapshot_id}"
+            f"{item.created_at.isoformat(timespec='minutes')} — "
+            f"Saved analysis {index}"
         ): item
-        for item in reversed(snapshot_history)
+        for index, item in enumerate(
+            reversed(snapshot_history),
+            start=1,
+        )
     }
     snapshot_label = st.selectbox(
         "Evidence review snapshot",
@@ -2486,7 +2505,7 @@ def _render_persisted_evidence_workspace(
 
     st.caption(
         f"Reviewing against {len(snapshot_checklist)} checklist item(s) "
-        f"from engine {selected_snapshot.engine_version}."
+        "from the selected saved analysis."
     )
     if _engineering_diagnostics_enabled():
         with st.expander("Technical details — evidence review context"):
@@ -3589,11 +3608,11 @@ def _render_saved_cases_workspace(principal, active_firm):
         return
 
     if st.button(
-        "Re-run with current engine",
+        "Re-run current analysis",
         key=f"rerun_saved_case_{selected_case.case_id}",
     ):
         try:
-            with st.spinner("Re-running saved notice with current engine..."):
+            with st.spinner("Re-running saved notice with current analysis rules..."):
                 reopened = reopen_case_analysis(
                     service,
                     principal,
@@ -3639,7 +3658,7 @@ def _render_saved_cases_workspace(principal, active_firm):
             )
     st.caption(
         "The persisted notice was decrypted and integrity-checked, then "
-        "the current analysis engine recomputed this live result. Saved "
+        "the current analysis rules recomputed this live result. Saved "
         "historical snapshots, when present, are shown separately below."
     )
 
@@ -4213,7 +4232,7 @@ if AccessPermission.CASE_CREATE in _active_firm.permissions:
         except RuntimeError as error:
             st.error(str(error))
         except Exception:
-            st.error("Phase-2 analysis could not be completed.")
+            st.error("Notice analysis could not be completed.")
         else:
             ocr_pages = [
                 page.page_number
