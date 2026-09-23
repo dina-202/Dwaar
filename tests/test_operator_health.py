@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from domain.operator_health_models import (
     OperatorHealthCode,
@@ -31,6 +32,12 @@ def environment(root: Path, key=KEY, key_id=KEY_ID):
 
 class OperatorHealthTests(unittest.TestCase):
     def setUp(self):
+        self.ocr_patcher = patch(
+            "modules.runtime_readiness._ocr_runtime_available",
+            return_value=True,
+        )
+        self.ocr_patcher.start()
+        self.addCleanup(self.ocr_patcher.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.env = environment(self.root)
