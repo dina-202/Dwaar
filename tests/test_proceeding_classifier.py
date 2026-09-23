@@ -177,11 +177,11 @@ class SafeLLMInterfaceTests(unittest.TestCase):
                 confidence="LOW",
             ),
         )
-        self.assertFalse(proceeding_classifier.classifier_failed(result))
+        self.assertFalse(proceeding_classifier._classifier_failed(result))
 
     def test_malformed_output_is_classifier_failure(self):
         result, _ = run_classifier("some notice text", "not json")
-        self.assertTrue(proceeding_classifier.classifier_failed(result))
+        self.assertTrue(proceeding_classifier._classifier_failed(result))
 
     def test_llm_supplied_support_level_is_ignored(self):
         # A malicious LLM JSON claiming DEEP_WORKFLOW cannot grant it.
