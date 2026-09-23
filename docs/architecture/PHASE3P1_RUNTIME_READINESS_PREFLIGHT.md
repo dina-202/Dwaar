@@ -17,11 +17,29 @@ The closed preflight emits exactly these checks:
 1. database configuration;
 2. object-store configuration;
 3. document encryption-key configuration;
-4. database open/schema initialization;
-5. SQLite integrity;
-6. encrypted object-store round trip.
+4. document key identity configuration;
+5. scanned-PDF OCR runtime;
+6. database open/schema initialization;
+7. SQLite integrity;
+8. encrypted object-store round trip.
 
 A report is ready only when every check passes.
+
+## OCR runtime probe
+
+The preflight creates a tiny in-memory PDF page containing fixed probe text and
+executes the same PyMuPDF/Tesseract OCR path used for scanned notice pages.
+
+The probe:
+
+- uses no taxpayer or uploaded document data;
+- requires English OCR support because Dwaar's current scanned-notice path uses
+  the `eng` language pack;
+- emits only a fixed pass/blocked message;
+- discards underlying OCR/Tesseract exception details.
+
+A deployment with a working database and encrypted object store is still not
+ready for professional traffic when the scanned-PDF OCR runtime cannot execute.
 
 ## Database probe
 
