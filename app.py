@@ -31,6 +31,7 @@ from modules.evidence_workspace import (
 )
 from modules.pdf_reader import extract_document_pages
 from modules.runtime_persistence import (
+    FilingSourceFactReviewBlockedError,
     RuntimePersistenceConfigurationError,
     build_authorized_analysis_snapshot_service,
     build_authorized_case_service,
@@ -2608,8 +2609,30 @@ def _render_filing_workspace(
                                 filed_at=filed_at,
                                 recorded_at=recorded_at,
                             )
+                        except FilingSourceFactReviewBlockedError as error:
+                            _render_internal_failure(
+                                "Filing cannot be recorded because the "
+                                "approved draft's source analysis contains "
+                                "a fact whose latest professional review is "
+                                "Rejected. Return to Analysis history, "
+                                "re-review that source fact, and approve an "
+                                "appropriate draft state before filing.",
+                                error,
+                                technical_label=(
+                                    "Technical details — filing fact-review "
+                                    "safety gate"
+                                ),
+                            )
                         except (ValueError, TypeError) as error:
-                            st.error(str(error))
+                            _render_internal_failure(
+                                "The filing details could not be accepted. "
+                                "Review the filing inputs and try again.",
+                                error,
+                                technical_label=(
+                                    "Technical details — filing validation "
+                                    "failure"
+                                ),
+                            )
                         except PermissionError:
                             st.error(
                                 "Your account is no longer authorized to "
