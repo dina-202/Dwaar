@@ -121,6 +121,9 @@ class CaseAttentionWorkspaceRoutingTests(unittest.TestCase):
                 CaseAttentionCode.ANALYSIS_NOT_SAVED: (
                     CaseWorkspace.ANALYSIS_HISTORY
                 ),
+                CaseAttentionCode.FACT_REVIEW_REJECTED: (
+                    CaseWorkspace.ANALYSIS_HISTORY
+                ),
                 CaseAttentionCode.LEGAL_BRIEF_NOT_SAVED: (
                     CaseWorkspace.LEGAL_RESEARCH
                 ),
@@ -184,6 +187,30 @@ class ProfessionalCaseAttentionTests(unittest.TestCase):
                 CaseAttentionCode.DRAFT_NOT_STARTED,
             ),
         )
+
+    def test_rejected_fact_routes_to_analysis_history_without_merits_claim(self):
+        result = build_professional_case_attention(
+            case(),
+            snapshots=[snapshot()],
+            legal_briefs=[brief()],
+            draft_versions=[draft(DraftReviewStatus.APPROVED)],
+            filings=[filing("DOC-ACK")],
+            fact_review_rejected=True,
+        )
+        self.assertEqual(
+            codes(result),
+            (CaseAttentionCode.FACT_REVIEW_REJECTED,),
+        )
+        item = result.items[0]
+        self.assertIs(
+            item.code.workspace,
+            CaseWorkspace.ANALYSIS_HISTORY,
+        )
+        self.assertEqual(item.related_id, "SNAP-1")
+        self.assertIn("latest professional review is Rejected", item.message)
+        self.assertNotIn("liable", item.message.lower())
+        self.assertNotIn("incorrect", item.message.lower())
+        self.assertNotIn("false", item.message.lower())
 
     def test_triage_analysis_does_not_emit_impossible_specialist_tasks(self):
         result = build_professional_case_attention(
