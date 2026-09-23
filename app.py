@@ -2408,6 +2408,48 @@ def _render_draft_work_product_workspace(
             )
 
 
+def _render_verified_case_pdf_download(
+    case_service,
+    principal,
+    active_firm,
+    *,
+    case_id,
+    document_id,
+    prepare_label,
+    download_label,
+    key_prefix,
+    failure_message,
+):
+    """Expose one stored case PDF only after authorized integrity-checked read."""
+    if not st.button(
+        prepare_label,
+        key=f"{key_prefix}_prepare_{document_id}",
+    ):
+        return
+
+    try:
+        verified_ref, verified_payload = case_service.read_document(
+            principal,
+            active_firm.firm_id,
+            case_id=case_id,
+            document_id=document_id,
+        )
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to read this document."
+        )
+    except Exception:
+        st.error(failure_message)
+    else:
+        st.download_button(
+            download_label,
+            data=verified_payload,
+            file_name=verified_ref.original_filename,
+            mime=verified_ref.media_type,
+            key=f"{key_prefix}_download_{verified_ref.document_id}",
+        )
+
+
 def _render_filing_workspace(
     principal,
     active_firm,
@@ -2481,6 +2523,54 @@ def _render_filing_workspace(
                     ],
                     hide_index=True,
                 )
+
+        filing_source_labels = _numbered_labels(
+            reversed(filings),
+            lambda item: (
+                f"{item.filing_reference} · "
+                f"{item.filed_at.isoformat(timespec='minutes')}"
+            ),
+        )
+        selected_filing_source_label = st.selectbox(
+            "Filed submission",
+            list(filing_source_labels),
+            key=f"filing_source_{reopened.case.case_id}",
+        )
+        selected_filing_source = filing_source_labels[
+            selected_filing_source_label
+        ]
+        case_document_service = build_authorized_case_service()
+        _render_verified_case_pdf_download(
+            case_document_service,
+            principal,
+            active_firm,
+            case_id=reopened.case.case_id,
+            document_id=(
+                selected_filing_source.filed_response_document_id
+            ),
+            prepare_label="Prepare filed response PDF for download",
+            download_label="Download filed response PDF",
+            key_prefix="filed_response",
+            failure_message=(
+                "The filed response PDF could not be opened safely."
+            ),
+        )
+        if selected_filing_source.acknowledgement_document_id is not None:
+            _render_verified_case_pdf_download(
+                case_document_service,
+                principal,
+                active_firm,
+                case_id=reopened.case.case_id,
+                document_id=(
+                    selected_filing_source.acknowledgement_document_id
+                ),
+                prepare_label="Prepare acknowledgement PDF for download",
+                download_label="Download acknowledgement PDF",
+                key_prefix="filing_ack",
+                failure_message=(
+                    "The acknowledgement PDF could not be opened safely."
+                ),
+            )
     else:
         st.write("No filing records yet.")
 
@@ -2806,38 +2896,19 @@ def _render_persisted_evidence_workspace(
             key=f"evidence_file_download_{reopened.case.case_id}",
         )
         selected_evidence = evidence_file_labels[selected_evidence_label]
-        if st.button(
-            "Prepare evidence PDF for download",
-            key=(
-                f"prepare_evidence_download_"
-                f"{selected_evidence.document_id}"
+        _render_verified_case_pdf_download(
+            case_service,
+            principal,
+            active_firm,
+            case_id=reopened.case.case_id,
+            document_id=selected_evidence.document_id,
+            prepare_label="Prepare evidence PDF for download",
+            download_label="Download selected evidence PDF",
+            key_prefix="evidence",
+            failure_message=(
+                "The selected supporting evidence could not be opened safely."
             ),
-        ):
-            try:
-                verified_ref, verified_payload = case_service.read_document(
-                    principal,
-                    active_firm.firm_id,
-                    case_id=reopened.case.case_id,
-                    document_id=selected_evidence.document_id,
-                )
-            except PermissionError:
-                st.error(
-                    "Your account is no longer authorized to read this "
-                    "supporting evidence."
-                )
-            except Exception:
-                st.error(
-                    "The selected supporting evidence could not be opened "
-                    "safely."
-                )
-            else:
-                st.download_button(
-                    "Download selected evidence PDF",
-                    data=verified_payload,
-                    file_name=verified_ref.original_filename,
-                    mime=verified_ref.media_type,
-                    key=f"download_evidence_{verified_ref.document_id}",
-                )
+        )
     else:
         st.write("No supporting evidence attached yet.")
 
