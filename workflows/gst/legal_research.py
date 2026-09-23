@@ -11,8 +11,12 @@ from typing import Dict, Tuple
 
 from domain.legal_date_engine import build_legal_date_context
 from domain.legal_date_models import LegalDateBasis, LegalDateContext
-from domain.legal_knowledge import resolve_legal_knowledge
+from domain.legal_knowledge import (
+    resolve_legal_knowledge,
+    resolve_legal_knowledge_interval,
+)
 from domain.legal_knowledge_models import (
+    LegalKnowledgeIntervalQuery,
     LegalKnowledgeQuery,
     LegalKnowledgeResult,
     LegalTopic,
@@ -187,16 +191,33 @@ def resolve_gst_legal_brief_from_context(
         if anchor is None:
             unresolved.append(requirement.topic)
             continue
-        resolved = resolve_legal_knowledge(
-            LegalKnowledgeQuery(
-                as_of_date=anchor.effective_date,
-                proceeding_type=proceeding_type,
-                topics=(requirement.topic,),
-            ),
-            catalog_version=GST_LEGAL_CATALOG_VERSION,
-            sources=GST_LEGAL_SOURCES,
-            rules=GST_LEGAL_RULES,
-        )
+        if (
+            requirement.date_basis is LegalDateBasis.TAX_PERIOD_END
+            and anchor.period_start is not None
+            and anchor.period_end is not None
+        ):
+            resolved = resolve_legal_knowledge_interval(
+                LegalKnowledgeIntervalQuery(
+                    period_start=anchor.period_start,
+                    period_end=anchor.period_end,
+                    proceeding_type=proceeding_type,
+                    topics=(requirement.topic,),
+                ),
+                catalog_version=GST_LEGAL_CATALOG_VERSION,
+                sources=GST_LEGAL_SOURCES,
+                rules=GST_LEGAL_RULES,
+            )
+        else:
+            resolved = resolve_legal_knowledge(
+                LegalKnowledgeQuery(
+                    as_of_date=anchor.effective_date,
+                    proceeding_type=proceeding_type,
+                    topics=(requirement.topic,),
+                ),
+                catalog_version=GST_LEGAL_CATALOG_VERSION,
+                sources=GST_LEGAL_SOURCES,
+                rules=GST_LEGAL_RULES,
+            )
         if not resolved.catalog_valid:
             catalog_valid = False
             unresolved.append(requirement.topic)
