@@ -692,6 +692,8 @@ def _render_phase2_result(result):
 
     if triage_only:
         st.header("Triage readiness")
+        if result.triage_summary is not None:
+            st.write(result.triage_summary.message)
         st.write(
             "Source-grounded intake review is available. Specialist "
             "workflow validation and drafting remain intentionally blocked "
