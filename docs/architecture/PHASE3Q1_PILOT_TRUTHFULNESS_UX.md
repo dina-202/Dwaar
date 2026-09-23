@@ -78,7 +78,28 @@ state remain available in collapsed **Technical details** sections.
 Model-authored fact claims are not promoted into the primary facts table.
 Primary fact display remains grounded in accepted source text/provenance.
 
-### 4. Safety gates do not weaken
+### 4. ASMT-10 deadline truthfulness
+
+ASMT-10 triage must not inject a generic form-level reply period or calendar
+deadline from memory, an unversioned web page, or a workflow default.
+
+The professional view may surface:
+
+- the response-period wording explicitly extracted from the notice;
+- the deterministic number of days parsed from that wording, when available;
+- a calculated calendar deadline only when the required structured
+  service/receipt date is verified;
+- a separately maintained operational deadline after professional/portal
+  verification.
+
+A notice-stated due date remains separate from a calculated deadline. If both
+exist and disagree, the conflict is shown rather than silently resolved.
+
+A future ASMT-10 verified legal pack must reconcile authoritative Section 61 /
+Rule 99 materials and their effective-date applicability before Dwaar uses
+external law to supply any form-level timing proposition.
+
+### 5. Safety gates do not weaken
 
 This phase does not:
 
