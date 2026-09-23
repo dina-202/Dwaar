@@ -35,6 +35,11 @@ The report contains exactly three high-level checks:
 
 ### Runtime preflight
 
+
+The runtime-preflight component is authoritative and therefore also includes
+the current scanned-PDF OCR and AI-analysis configuration gates. Operator
+health does not duplicate or bypass those checks.
+
 Reuses Phase 3P.1.
 
 The runtime must pass:
