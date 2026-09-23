@@ -90,37 +90,58 @@ class AuthorizedProfessionalWorkbenchService:
         )
         loaded_briefs = []
         latest_snapshot = None
+        specialist_workflow_available = True
         if snapshots:
             latest_snapshot = max(
                 snapshots,
                 key=lambda item: (item.created_at, item.snapshot_id),
             )
-            refs = self._legal.list_for_snapshot(
+            loaded_snapshot = self._snapshots.load_snapshot(
                 principal,
                 firm_id,
                 case_id=case.case_id,
                 snapshot_id=latest_snapshot.snapshot_id,
             )
-            if refs:
-                latest_ref = max(
-                    refs,
-                    key=lambda item: (
-                        item.created_at,
-                        item.legal_brief_id,
-                    ),
+            classification = loaded_snapshot.payload.get("classification")
+            support_level = (
+                classification.get("support_level")
+                if isinstance(classification, dict)
+                else None
+            )
+            if support_level in {"triage_only", "unknown"}:
+                specialist_workflow_available = False
+
+            if specialist_workflow_available:
+                refs = self._legal.list_for_snapshot(
+                    principal,
+                    firm_id,
+                    case_id=case.case_id,
+                    snapshot_id=latest_snapshot.snapshot_id,
                 )
-                loaded_briefs.append(
-                    self._legal.load(
-                        principal,
-                        firm_id,
-                        case_id=case.case_id,
-                        legal_brief_id=latest_ref.legal_brief_id,
+                if refs:
+                    latest_ref = max(
+                        refs,
+                        key=lambda item: (
+                            item.created_at,
+                            item.legal_brief_id,
+                        ),
                     )
-                )
+                    loaded_briefs.append(
+                        self._legal.load(
+                            principal,
+                            firm_id,
+                            case_id=case.case_id,
+                            legal_brief_id=latest_ref.legal_brief_id,
+                        )
+                    )
 
         evidence_readiness = []
         evidence_contract_drift = False
-        if latest_snapshot is not None and self._evidence is not None:
+        if (
+            specialist_workflow_available
+            and latest_snapshot is not None
+            and self._evidence is not None
+        ):
             try:
                 evidence_readiness = (
                     self._evidence.legal_evidence_readiness(
@@ -156,4 +177,5 @@ class AuthorizedProfessionalWorkbenchService:
             filings=filings,
             legal_evidence_readiness=evidence_readiness,
             legal_evidence_contract_drift=evidence_contract_drift,
+            specialist_workflow_available=specialist_workflow_available,
         )
