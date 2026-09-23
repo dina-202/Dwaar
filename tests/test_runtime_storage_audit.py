@@ -86,7 +86,7 @@ class RuntimeStorageAuditTests(unittest.TestCase):
     def test_clean_runtime_is_consistent(self):
         report = self.audit()
         self.assertTrue(report.consistent)
-        self.assertEqual(report.storage_table_count, 5)
+        self.assertEqual(report.storage_table_count, 6)
         self.assertEqual(report.referenced_object_count, 1)
         self.assertEqual(report.object_file_count, 1)
         self.assertEqual(report.missing_object_count, 0)
@@ -104,6 +104,7 @@ class RuntimeStorageAuditTests(unittest.TestCase):
                     "case_documents",
                     "draft_versions",
                     "evidence_reviews",
+                    "fact_reviews",
                     "legal_briefs",
                 ),
             )
@@ -173,7 +174,7 @@ class RuntimeStorageAuditTests(unittest.TestCase):
         report = self.audit()
         self.assertFalse(report.consistent)
         self.assertEqual(report.invalid_reference_count, 1)
-        self.assertEqual(report.storage_table_count, 6)
+        self.assertEqual(report.storage_table_count, 7)
 
     def test_new_storage_table_is_audited_and_backed_up_automatically(self):
         self.store.put(EXTRA_KEY, b"future artifact")
@@ -196,7 +197,7 @@ class RuntimeStorageAuditTests(unittest.TestCase):
 
         report = self.audit()
         self.assertTrue(report.consistent)
-        self.assertEqual(report.storage_table_count, 6)
+        self.assertEqual(report.storage_table_count, 7)
         self.assertEqual(report.referenced_object_count, 2)
 
         manifest = create_runtime_backup(
