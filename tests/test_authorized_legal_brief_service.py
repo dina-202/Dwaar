@@ -163,6 +163,19 @@ class AuthorizedLegalBriefServiceTests(unittest.TestCase):
         )
         self.assertEqual(kwargs["snapshot"], snapshot())
         self.assertEqual(kwargs["actor_id"], PRINCIPAL.user_id)
+        question_plan = kwargs["question_plan"]
+        self.assertIs(
+            question_plan.proceeding_type,
+            ProceedingType.GST_SEC73_ITC,
+        )
+        self.assertEqual(
+            [item.status.value for item in question_plan.questions],
+            [
+                "source_verified_research_ready",
+                "source_verified_research_ready",
+                "missing_facts",
+            ],
+        )
         snapshot_service.load_snapshot.assert_called_once()
 
     @mock.patch(

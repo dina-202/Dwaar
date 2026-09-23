@@ -7,7 +7,8 @@ from typing import Dict
 from domain.models import ProceedingType
 
 
-LEGAL_BRIEF_SCHEMA_VERSION = 1
+LEGAL_BRIEF_SCHEMA_VERSION = 2
+SUPPORTED_LEGAL_BRIEF_SCHEMA_VERSIONS = (1, 2)
 
 
 @dataclass(frozen=True)

@@ -881,6 +881,30 @@ def _render_snapshot_history(
                         "audit/history; it does not update with the current "
                         "catalog."
                     )
+                    historical_questions = loaded_brief.payload.get(
+                        "questions"
+                    )
+                    if historical_questions is not None:
+                        st.subheader(
+                            "Historical legal research questions"
+                        )
+                        if historical_questions:
+                            st.dataframe(
+                                historical_questions,
+                                hide_index=True,
+                            )
+                        else:
+                            st.write(
+                                "No legal-question state was preserved in "
+                                "this v2 brief."
+                            )
+                    else:
+                        st.caption(
+                            "This v1 legal brief predates preserved legal-"
+                            "question state. Its original law/source payload "
+                            "is shown without reconstructing missing history."
+                        )
+
                     if loaded_brief.payload["matches"]:
                         st.dataframe(
                             loaded_brief.payload["matches"],

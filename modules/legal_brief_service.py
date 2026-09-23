@@ -11,10 +11,12 @@ from domain.analysis_snapshot_models import AnalysisSnapshotRef
 from domain.case_models import CaseEvent, CaseEventType
 from domain.legal_brief_models import (
     LEGAL_BRIEF_SCHEMA_VERSION,
+    SUPPORTED_LEGAL_BRIEF_SCHEMA_VERSIONS,
     LegalBriefRef,
     LoadedLegalBrief,
 )
 from domain.legal_knowledge_models import LegalKnowledgeResult
+from domain.legal_question_models import LegalQuestionPlan
 from domain.models import ProceedingType
 from domain.persistence_ports import DocumentStore, LegalBriefRepository
 from modules.encrypted_document_store import generate_storage_key
@@ -52,6 +54,7 @@ def persist_legal_brief(
     proceeding_type: ProceedingType,
     actor_id: str,
     created_at: datetime,
+    question_plan: LegalQuestionPlan | None = None,
 ) -> LegalBriefRef:
     if not isinstance(case_id, str) or not case_id:
         raise ValueError("case_id must be non-empty")
@@ -69,6 +72,7 @@ def persist_legal_brief(
         snapshot_id=snapshot.snapshot_id,
         as_of_date=as_of_date,
         proceeding_type=proceeding_type,
+        question_plan=question_plan,
     )
     encoded = encode_legal_brief_payload(payload)
     payload_hash = hashlib.sha256(encoded).hexdigest()
@@ -143,7 +147,7 @@ def load_legal_brief(
         raise LegalBriefIntegrityError(
             "legal brief snapshot binding is inconsistent"
         )
-    if brief.schema_version != LEGAL_BRIEF_SCHEMA_VERSION:
+    if brief.schema_version not in SUPPORTED_LEGAL_BRIEF_SCHEMA_VERSIONS:
         raise LegalBriefIntegrityError(
             "legal brief schema version is unsupported"
         )
@@ -164,6 +168,10 @@ def load_legal_brief(
             "legal brief JSON payload is invalid"
         ) from error
 
+    if payload["schema_version"] != brief.schema_version:
+        raise LegalBriefIntegrityError(
+            "legal brief payload schema version is inconsistent"
+        )
     if payload["snapshot_id"] != brief.snapshot_id:
         raise LegalBriefIntegrityError(
             "legal brief payload snapshot is inconsistent"
