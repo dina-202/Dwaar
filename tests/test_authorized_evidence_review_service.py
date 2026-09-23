@@ -164,6 +164,49 @@ def triage_snapshot():
     )
 
 
+
+def section61_snapshot():
+    loaded = snapshot(
+        evidence_ids=[
+            "sec61_scrutiny.e1",
+            "sec61_scrutiny.e2",
+            "sec61_scrutiny.e3",
+            "sec61_scrutiny.e4",
+        ]
+    )
+    loaded.payload["classification"] = {
+        "support_level": "deep_workflow",
+        "proceeding_type": "gst_sec61_scrutiny",
+    }
+    loaded.payload["preflight"] = {
+        "requested_document_fact_ids": ["F-REQ-1", "F-REQ-2"],
+        "referenced_annexure_fact_ids": ["F-ANN"],
+    }
+    loaded.payload["extraction"] = {
+        "facts": [
+            {
+                "fact_id": "F-ANN",
+                "fact_type": "referenced_annexure",
+                "status": "confirmed",
+                "source_text": "Annexure A - discrepancy computation",
+            },
+            {
+                "fact_id": "F-REQ-1",
+                "fact_type": "requested_document",
+                "status": "confirmed",
+                "source_text": "1. Purchase register for FY 2025-26",
+            },
+            {
+                "fact_id": "F-REQ-2",
+                "fact_type": "requested_document",
+                "status": "confirmed",
+                "source_text": "2. Sales register for FY 2025-26",
+            },
+        ]
+    }
+    return loaded
+
+
 class AuthorizedEvidenceReviewTests(unittest.TestCase):
     def build(self, permissions=None):
         case_service = mock.Mock()
@@ -238,6 +281,68 @@ class AuthorizedEvidenceReviewTests(unittest.TestCase):
         self.assertTrue(
             all(item.status.value == "unknown" for item in checklist)
         )
+
+    def test_section61_snapshot_keeps_specialist_and_itemized_notice_targets(self):
+        service, _, snapshot_service, *_ = self.build()
+        snapshot_service.load_snapshot.return_value = section61_snapshot()
+
+        checklist = service.snapshot_evidence_checklist(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+
+        self.assertEqual(
+            [item.evidence_id for item in checklist],
+            [
+                "sec61_scrutiny.e1",
+                "sec61_scrutiny.e2",
+                "sec61_scrutiny.e3",
+                "sec61_scrutiny.e4",
+                "sec61_scrutiny.notice.referenced_annexure.F-ANN",
+                "sec61_scrutiny.notice.requested_document.F-REQ-1",
+                "sec61_scrutiny.notice.requested_document.F-REQ-2",
+            ],
+        )
+        self.assertEqual(
+            [item.requirement_text for item in checklist[-3:]],
+            [
+                (
+                    "Notice-referenced annexure: "
+                    "Annexure A - discrepancy computation"
+                ),
+                (
+                    "Department-requested record: "
+                    "1. Purchase register for FY 2025-26"
+                ),
+                (
+                    "Department-requested record: "
+                    "2. Sales register for FY 2025-26"
+                ),
+            ],
+        )
+        self.assertTrue(
+            all(item.status.value == "unknown" for item in checklist)
+        )
+
+    def test_section61_snapshot_fails_closed_on_unresolved_notice_target(self):
+        service, _, snapshot_service, *_ = self.build()
+        loaded = section61_snapshot()
+        loaded.payload["extraction"]["facts"] = [
+            item
+            for item in loaded.payload["extraction"]["facts"]
+            if item["fact_id"] != "F-REQ-2"
+        ]
+        snapshot_service.load_snapshot.return_value = loaded
+
+        with self.assertRaisesRegex(ValueError, "unresolved"):
+            service.snapshot_evidence_checklist(
+                PRINCIPAL,
+                "F-1",
+                case_id="CASE-1",
+                snapshot_id="SNAP-1",
+            )
 
     def test_triage_snapshot_fails_closed_on_unresolved_selected_fact(self):
         service, _, snapshot_service, *_ = self.build()
@@ -376,6 +481,56 @@ class AuthorizedEvidenceReviewTests(unittest.TestCase):
         self.assertEqual(
             persist.call_args.kwargs["candidate"].evidence_id,
             "triage.requested_document.F-REQ",
+        )
+
+    @mock.patch(
+        "modules.authorized_evidence_review_service.persist_evidence_review"
+    )
+    @mock.patch(
+        "modules.authorized_evidence_review_service.extract_document_pages"
+    )
+    def test_section61_itemized_notice_target_can_be_human_reviewed(
+        self,
+        parse,
+        persist,
+    ):
+        from domain.models import DocumentPageText
+
+        parse.return_value = [
+            DocumentPageText(
+                page_number=2,
+                text="Header\nPurchase register FY 2025-26\nFooter",
+                origin=SourceTextOrigin.EMBEDDED,
+                verification=SourceVerificationStatus.VERIFIED,
+            )
+        ]
+        expected = mock.Mock()
+        persist.return_value = expected
+        service, _, snapshot_service, *_ = self.build()
+        snapshot_service.load_snapshot.return_value = section61_snapshot()
+
+        itemized_candidate = candidate(
+            evidence_id=(
+                "sec61_scrutiny.notice.requested_document.F-REQ-1"
+            ),
+            source_text="Purchase register FY 2025-26",
+        )
+        result = service.save_review(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            candidate=itemized_candidate,
+            decision=EvidenceReviewStatus.CONFIRMED,
+            reviewer_note="Matched the specifically requested register",
+            reviewed_at=NOW,
+        )
+
+        self.assertIs(result, expected)
+        persist.assert_called_once()
+        self.assertEqual(
+            persist.call_args.kwargs["candidate"].evidence_id,
+            "sec61_scrutiny.notice.requested_document.F-REQ-1",
         )
 
     @mock.patch(
