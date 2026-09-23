@@ -24,6 +24,7 @@ from domain.case_models import (
     Firm,
 )
 from domain.draft_work_product_models import DraftReviewStatus
+from domain.legal_date_models import LegalDateBasis
 from domain.legal_knowledge_models import LegalTopic
 from domain.legal_question_models import LegalQuestionStatus
 from domain.models import (
@@ -418,7 +419,7 @@ def run_product_rehearsal(root_dir: str) -> ProductRehearsalReport:
         date_context,
     )
     legal_repo = LocalSQLiteLegalBriefRepository(str(db_path))
-    notice_anchor = date_context.get(__import__("domain.legal_date_models", fromlist=["LegalDateBasis"]).LegalDateBasis.NOTICE_DATE)
+    notice_anchor = date_context.get(LegalDateBasis.NOTICE_DATE)
     if notice_anchor is None:
         raise RuntimeError("tour rehearsal notice-date anchor is missing")
     legal = persist_legal_brief(
@@ -447,7 +448,12 @@ def run_product_rehearsal(root_dir: str) -> ProductRehearsalReport:
         raise RuntimeError("tour eligibility uncertainty boundary regressed")
     if LegalTopic.ITC_ELIGIBILITY not in legal_result.unresolved_topics:
         raise RuntimeError("tour final ITC eligibility must remain unresolved")
-    checks.append(ProductRehearsalCheck("verified_legal_research", True, "Verified mismatch law preserved; final eligibility remains unresolved."))
+    checks.append(ProductRehearsalCheck("verified_legal_research", True, "Verified mismatch law preserved."))
+    checks.append(ProductRehearsalCheck(
+        "legal_uncertainty_preserved",
+        True,
+        "Final ITC eligibility remains explicitly unresolved for professional judgment.",
+    ))
 
     support = persist_pdf_document(
         repo,
@@ -497,6 +503,38 @@ def run_product_rehearsal(root_dir: str) -> ProductRehearsalReport:
         actor_id=ACTOR,
         created_at=opened + timedelta(hours=5),
     )
+    current_case = repo.get_case(case.case_id)
+    preapproval_case = replace(
+        current_case,
+        status=CaseStatus.DRAFT_REVIEW,
+    )
+    try:
+        persist_filing(
+            LocalSQLiteFilingRepository(str(db_path)),
+            draft_repo,
+            store,
+            case=preapproval_case,
+            approved_draft_version_id=working.draft_version_id,
+            filing_reference="ARN-UNSAFE-SHOULD-NOT-PERSIST",
+            filed_response_filename="unsafe.pdf",
+            filed_response_payload=_pdf("Unsafe filing should be blocked."),
+            acknowledgement_filename=None,
+            acknowledgement_payload=None,
+            filed_at=opened + timedelta(hours=5, minutes=10),
+            recorded_at=opened + timedelta(hours=5, minutes=11),
+            actor_id=ACTOR,
+        )
+    except ValueError as error:
+        if "approved" not in str(error).lower():
+            raise
+    else:
+        raise RuntimeError("tour unsafe filing was not blocked")
+    checks.append(ProductRehearsalCheck(
+        "unapproved_filing_blocked",
+        True,
+        "Filing gate rejected a non-approved draft.",
+    ))
+
     reviewed = transition_draft_review_status(
         draft_repo,
         version=working,
@@ -576,6 +614,18 @@ def run_product_rehearsal(root_dir: str) -> ProductRehearsalReport:
     if not audit.consistent:
         raise RuntimeError("tour live storage is inconsistent")
     checks.append(ProductRehearsalCheck("live_storage", True, f"{audit.referenced_object_count} encrypted objects are consistent."))
+    wrong_key_audit = audit_runtime_storage(
+        db_path=str(db_path),
+        object_root=str(object_root),
+        document_key=KEY_B,
+    )
+    if wrong_key_audit.consistent:
+        raise RuntimeError("tour wrong key unexpectedly authenticated live runtime")
+    checks.append(ProductRehearsalCheck(
+        "wrong_key_blocked",
+        True,
+        "Wrong document key cannot authenticate the live encrypted object set.",
+    ))
 
     manifest = create_runtime_backup(
         db_path=str(db_path),
