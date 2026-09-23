@@ -4303,15 +4303,16 @@ legal research
 semantic matching
 ```
 
-### 19.80 Contract counts preserved
+### 19.80 Current contract counts
 
-Step 8B changes no mapping content:
+The 2026-09-23 Section 61 promotion extends the mapping registries while
+leaving the FactRole vocabulary unchanged:
 
 ```text
 FactRole members = 22
-workflow requirement mappings = 29
-workflow special-rule mappings = 24
-validation profiles = 5
+workflow requirement mappings = 32
+workflow special-rule mappings = 29
+validation profiles = 6
 ```
 
 ### 19.81 Step-8.2 derived-rule deferral (SEC73 ITC / GENERAL)
