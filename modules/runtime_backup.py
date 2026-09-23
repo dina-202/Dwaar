@@ -8,24 +8,35 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import sqlite3
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Tuple
+
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from domain.runtime_backup_models import (
     RUNTIME_BACKUP_MANIFEST_VERSION,
     RuntimeBackupManifest,
     RuntimeBackupObject,
 )
+from modules.encrypted_document_store import EncryptedLocalDocumentStore
 
 
 _BACKUP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _STORAGE_KEY = re.compile(r"^objects/([0-9a-f]{32})$")
 _SUPPORTED_SCHEMA_VERSION = 6
+_DB_BACKUP_MAGIC = b"DWAARBKP1\x00"
+_NONCE_BYTES = 12
+_BACKUP_KEY_INFO = b"DWAAR-RUNTIME-BACKUP-DB-V1"
 _STORAGE_TABLES = (
     "case_documents",
     "analysis_snapshots",
@@ -51,6 +62,79 @@ _OBJECT_KEYS = frozenset(
 
 class RuntimeBackupError(RuntimeError):
     pass
+
+
+def _validate_document_key(document_key: bytes) -> None:
+    if not isinstance(document_key, bytes) or len(document_key) != 32:
+        raise ValueError("document_key must be exactly 32 bytes")
+
+
+def _backup_database_key(document_key: bytes) -> bytes:
+    _validate_document_key(document_key)
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=_BACKUP_KEY_INFO,
+    ).derive(document_key)
+
+
+def _database_aad(backup_id: str) -> bytes:
+    return _BACKUP_KEY_INFO + b"\x00" + backup_id.encode("utf-8")
+
+
+def _encrypt_database_backup(
+    plaintext_path: Path,
+    encrypted_path: Path,
+    *,
+    document_key: bytes,
+    backup_id: str,
+) -> None:
+    plaintext = plaintext_path.read_bytes()
+    nonce = os.urandom(_NONCE_BYTES)
+    ciphertext = AESGCM(
+        _backup_database_key(document_key)
+    ).encrypt(
+        nonce,
+        plaintext,
+        _database_aad(backup_id),
+    )
+    encrypted_path.write_bytes(
+        _DB_BACKUP_MAGIC + nonce + ciphertext
+    )
+    try:
+        os.chmod(encrypted_path, 0o600)
+    except OSError:
+        pass
+
+
+def _decrypt_database_backup(
+    encrypted_path: Path,
+    *,
+    document_key: bytes,
+    backup_id: str,
+) -> bytes:
+    encoded = encrypted_path.read_bytes()
+    minimum = len(_DB_BACKUP_MAGIC) + _NONCE_BYTES + 16
+    if len(encoded) < minimum or not encoded.startswith(_DB_BACKUP_MAGIC):
+        raise RuntimeBackupError(
+            "encrypted backup database envelope is invalid"
+        )
+    start = len(_DB_BACKUP_MAGIC)
+    nonce = encoded[start:start + _NONCE_BYTES]
+    ciphertext = encoded[start + _NONCE_BYTES:]
+    try:
+        return AESGCM(
+            _backup_database_key(document_key)
+        ).decrypt(
+            nonce,
+            ciphertext,
+            _database_aad(backup_id),
+        )
+    except InvalidTag as error:
+        raise RuntimeBackupError(
+            "encrypted backup database authentication failed"
+        ) from error
 
 
 def _sha256(path: Path) -> str:
@@ -259,6 +343,7 @@ def create_runtime_backup(
     backup_root: str,
     backup_id: str,
     created_at: datetime,
+    document_key: bytes,
 ) -> RuntimeBackupManifest:
     """Create and atomically publish a verified runtime backup."""
     if not isinstance(db_path, str) or not db_path.strip():
@@ -271,6 +356,7 @@ def create_runtime_backup(
         raise ValueError("backup_id contains unsupported characters")
     if not isinstance(created_at, datetime) or created_at.tzinfo is None:
         raise ValueError("created_at must be timezone-aware")
+    _validate_document_key(document_key)
 
     source_db = Path(db_path).expanduser().resolve()
     source_objects = Path(object_root).expanduser().resolve()
@@ -290,7 +376,8 @@ def create_runtime_backup(
         raise RuntimeBackupError("backup ID already exists")
     temp_dir = destination_root / f".tmp-{backup_id}-{uuid.uuid4().hex}"
     temp_objects = temp_dir / "objects"
-    backup_db = temp_dir / "dwaar.sqlite3"
+    plaintext_db = temp_dir / ".dwaar.sqlite3.tmp"
+    backup_db = temp_dir / "dwaar.sqlite3.enc"
     manifest_path = temp_dir / "manifest.json"
 
     try:
@@ -306,14 +393,22 @@ def create_runtime_backup(
 
         try:
             _validate_database(source_connection)
-            with sqlite3.connect(str(backup_db), timeout=10) as target:
+            with sqlite3.connect(str(plaintext_db), timeout=10) as target:
                 source_connection.backup(target)
         finally:
             source_connection.close()
 
-        with sqlite3.connect(str(backup_db), timeout=10) as snapshot:
+        with sqlite3.connect(str(plaintext_db), timeout=10) as snapshot:
             source_schema_version = _validate_database(snapshot)
             storage_keys = _referenced_storage_keys(snapshot)
+
+        _encrypt_database_backup(
+            plaintext_db,
+            backup_db,
+            document_key=document_key,
+            backup_id=backup_id,
+        )
+        plaintext_db.unlink()
 
         object_entries = []
         for storage_key in storage_keys:
@@ -344,7 +439,11 @@ def create_runtime_backup(
             objects=tuple(object_entries),
         )
         _write_manifest(manifest_path, manifest)
-        verify_runtime_backup(str(temp_dir), expected_backup_id=backup_id)
+        verify_runtime_backup(
+            str(temp_dir),
+            expected_backup_id=backup_id,
+            document_key=document_key,
+        )
         temp_dir.rename(final_dir)
         return manifest
     except Exception:
@@ -355,11 +454,13 @@ def create_runtime_backup(
 def verify_runtime_backup(
     backup_dir: str,
     *,
+    document_key: bytes,
     expected_backup_id: str | None = None,
 ) -> RuntimeBackupManifest:
     """Verify a published or temporary backup without decrypting objects."""
     if not isinstance(backup_dir, str) or not backup_dir.strip():
         raise ValueError("backup_dir must be non-empty")
+    _validate_document_key(document_key)
     root = Path(backup_dir).expanduser().resolve()
     if not root.is_dir():
         raise RuntimeBackupError("backup directory does not exist")
@@ -377,7 +478,7 @@ def verify_runtime_backup(
             "backup directory name does not match manifest ID"
         )
 
-    database = root / "dwaar.sqlite3"
+    database = root / "dwaar.sqlite3.enc"
     if (
         not database.is_file()
         or database.stat().st_size != manifest.database_byte_size
@@ -385,9 +486,36 @@ def verify_runtime_backup(
     ):
         raise RuntimeBackupError("backup database hash or size mismatch")
 
-    with sqlite3.connect(str(database), timeout=10) as connection:
-        schema_version = _validate_database(connection)
-        storage_keys = _referenced_storage_keys(connection)
+    plaintext = _decrypt_database_backup(
+        database,
+        document_key=document_key,
+        backup_id=manifest.backup_id,
+    )
+    temp_database = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=".dwaar-backup-verify-",
+            suffix=".sqlite3",
+            delete=False,
+        ) as handle:
+            temp_database = Path(handle.name)
+            try:
+                os.chmod(temp_database, 0o600)
+            except OSError:
+                pass
+            handle.write(plaintext)
+            handle.flush()
+            os.fsync(handle.fileno())
+        with sqlite3.connect(str(temp_database), timeout=10) as connection:
+            schema_version = _validate_database(connection)
+            storage_keys = _referenced_storage_keys(connection)
+    finally:
+        if temp_database is not None:
+            try:
+                temp_database.unlink(missing_ok=True)
+            except OSError:
+                pass
     if schema_version != manifest.source_schema_version:
         raise RuntimeBackupError("backup database schema binding mismatch")
 
@@ -400,6 +528,10 @@ def verify_runtime_backup(
     objects_root = root / "objects"
     if not objects_root.is_dir():
         raise RuntimeBackupError("backup object directory is missing")
+    authenticated_store = EncryptedLocalDocumentStore(
+        str(objects_root),
+        document_key,
+    )
     expected_files = set()
     for item in manifest.objects:
         object_path = _object_path(objects_root, item.storage_key)
@@ -412,6 +544,12 @@ def verify_runtime_backup(
             raise RuntimeBackupError(
                 "backup encrypted object hash or size mismatch"
             )
+        try:
+            authenticated_store.get(item.storage_key)
+        except Exception as error:
+            raise RuntimeBackupError(
+                "backup encrypted object authentication failed"
+            ) from error
 
     actual_files = {
         path.name
