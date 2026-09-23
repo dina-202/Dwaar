@@ -72,6 +72,14 @@ class LegalKnowledgeQuery:
 
 
 @dataclass(frozen=True)
+class LegalKnowledgeIntervalQuery:
+    period_start: date
+    period_end: date
+    proceeding_type: ProceedingType
+    topics: Tuple[LegalTopic, ...]
+
+
+@dataclass(frozen=True)
 class LegalRuleMatch:
     rule: LegalRule
     source: LegalSourceRef
