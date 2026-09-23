@@ -95,6 +95,8 @@ def make_result(*, support=SupportLevel.TRIAGE_ONLY, facts=None, requested_ids=N
         evidence_checklist=[],
         review_requirements=[],
         post_validation=None,
+        failure_code=None,
+        error_message=None,
     )
     triage = None
     if support is SupportLevel.TRIAGE_ONLY:
