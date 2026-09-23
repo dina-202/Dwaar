@@ -2514,6 +2514,35 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
             text,
         )
 
+    def test_customer_historical_snapshot_hides_raw_fact_payload(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+        snapshot_service.load_snapshot.return_value = self._loaded_snapshot()
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm()],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(
+                {"view_snapshot_SNAP-1": True}
+            ),
+        )
+
+        text = log_text(fake)
+        self.assertIn("Historical source-grounded facts", text)
+        self.assertIn("Source provenance text", text)
+        self.assertNotIn(CLAIM_SENTINEL, text)
+        self.assertNotIn("F-001", text)
+        self.assertNotIn("fact_role", text)
+        self.assertNotIn("allowed_in_draft", text)
+
     def test_snapshot_load_failure_does_not_leak_backend_detail(self):
         case_service = Mock()
         case_service.list_cases.return_value = [self._case()]
