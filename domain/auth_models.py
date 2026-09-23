@@ -12,6 +12,7 @@ class AccessPermission(Enum):
     DOCUMENT_READ = "document_read"
     DOCUMENT_ADD = "document_add"
     EVIDENCE_REVIEW = "evidence_review"
+    FACT_REVIEW = "fact_review"
     DRAFT_REVIEW = "draft_review"
     FILING_RECORD = "filing_record"
     FIRM_ADMIN = "firm_admin"
