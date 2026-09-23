@@ -94,6 +94,11 @@ GST_LEGAL_RESEARCH_PROFILES: Dict[
                 "cgst.s75.7.demand_scope",
             ),
             _r(
+                LegalTopic.ITC_MISMATCH_VERIFICATION,
+                LegalDateBasis.TAX_PERIOD_END,
+                "cbic.itc_mismatch_verification",
+            ),
+            _r(
                 LegalTopic.ITC_ELIGIBILITY,
                 LegalDateBasis.TAX_PERIOD_END,
             ),
