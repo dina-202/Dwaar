@@ -1,6 +1,7 @@
 """Thin Streamlit shell for the structured Phase-2 notice analysis."""
 
 from datetime import date, datetime, timezone
+import os
 
 import streamlit as st
 
@@ -68,6 +69,14 @@ def _display(value):
         return "unavailable"
     enum_value = getattr(value, "value", None)
     return enum_value if enum_value is not None else str(value)
+
+
+def _engineering_diagnostics_enabled():
+    """Engineering-only machine state; disabled by default for CA users."""
+    return os.getenv(
+        "DWAAR_ENGINEERING_DIAGNOSTICS",
+        "",
+    ).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _render_checks(checks, *, technical=False):
@@ -556,16 +565,17 @@ def _render_phase2_result(result):
                 "workflow."
             )
 
-    with st.expander("Technical details — classification"):
-        st.write(
-            {
-                "proceeding_type": classification.proceeding_type.value,
-                "support_level": classification.support_level.value,
-                "notice_form": classification.notice_form.value,
-                "confidence": classification.confidence.value,
-                "classification_reasons": classification.classification_reasons,
-            }
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — classification"):
+            st.write(
+                {
+                    "proceeding_type": classification.proceeding_type.value,
+                    "support_level": classification.support_level.value,
+                    "notice_form": classification.notice_form.value,
+                    "confidence": classification.confidence.value,
+                    "classification_reasons": classification.classification_reasons,
+                }
+            )
 
 
     _render_triage_working_summary(result)
@@ -605,24 +615,25 @@ def _render_phase2_result(result):
                 ],
                 hide_index=True,
             )
-        with st.expander("Technical details — extracted facts"):
-            st.dataframe(
-                [
-                    {
-                        "fact_id": fact.fact_id,
-                        "fact_type": fact.fact_type.value,
-                        "fact_role": fact.fact_role.value,
-                        "status": fact.status.value,
-                        "source_text": _display(fact.source_text),
-                        "source_page": _display(fact.source_page),
-                        "source_origin": fact.source_origin.value,
-                        "source_verification": fact.source_verification.value,
-                        "allowed_in_draft": fact.allowed_in_draft.value,
-                    }
-                    for fact in extraction.facts
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — extracted facts"):
+                st.dataframe(
+                    [
+                        {
+                            "fact_id": fact.fact_id,
+                            "fact_type": fact.fact_type.value,
+                            "fact_role": fact.fact_role.value,
+                            "status": fact.status.value,
+                            "source_text": _display(fact.source_text),
+                            "source_page": _display(fact.source_page),
+                            "source_origin": fact.source_origin.value,
+                            "source_verification": fact.source_verification.value,
+                            "allowed_in_draft": fact.allowed_in_draft.value,
+                        }
+                        for fact in extraction.facts
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("No structured facts were extracted.")
 
@@ -689,27 +700,28 @@ def _render_phase2_result(result):
 
     _render_deadline_basis(extraction, preflight, deadline)
 
-    with st.expander("Technical details — preflight and deadline"):
-        st.write(
-            {
-                "communication_identifier_status": (
-                    preflight.communication_identifier_status.value
-                ),
-                "authority_details_status": preflight.authority_details_status.value,
-                "portal_verification_required": (
-                    preflight.portal_verification_required
-                ),
-                "authority_verification_required": (
-                    preflight.authority_verification_required
-                ),
-                "deadline_status": deadline.deadline_status.value,
-                "response_deadline": _display(deadline.response_deadline),
-                "days_remaining": _display(deadline.days_remaining),
-                "hearing_status": deadline.hearing_status.value,
-                "hearing_date": _display(deadline.hearing_date),
-                "deadline_conflict_status": preflight.deadline_conflict_status.value,
-            }
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — preflight and deadline"):
+            st.write(
+                {
+                    "communication_identifier_status": (
+                        preflight.communication_identifier_status.value
+                    ),
+                    "authority_details_status": preflight.authority_details_status.value,
+                    "portal_verification_required": (
+                        preflight.portal_verification_required
+                    ),
+                    "authority_verification_required": (
+                        preflight.authority_verification_required
+                    ),
+                    "deadline_status": deadline.deadline_status.value,
+                    "response_deadline": _display(deadline.response_deadline),
+                    "days_remaining": _display(deadline.days_remaining),
+                    "hearing_status": deadline.hearing_status.value,
+                    "hearing_date": _display(deadline.hearing_date),
+                    "deadline_conflict_status": preflight.deadline_conflict_status.value,
+                }
+            )
 
     _render_legal_brief(classification, extraction)
 
@@ -729,24 +741,25 @@ def _render_phase2_result(result):
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — arithmetic"):
-            st.dataframe(
-                [
-                    {
-                        "calculation_type": item.calculation_type.value,
-                        "formula": item.formula,
-                        "status": item.status.value,
-                        "operand_values": [
-                            str(value) for value in item.operand_values
-                        ],
-                        "result": _display(item.result),
-                        "currency": item.currency,
-                        "source_fact_ids": item.source_fact_ids,
-                    }
-                    for item in result.arithmetic_results
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — arithmetic"):
+                st.dataframe(
+                    [
+                        {
+                            "calculation_type": item.calculation_type.value,
+                            "formula": item.formula,
+                            "status": item.status.value,
+                            "operand_values": [
+                                str(value) for value in item.operand_values
+                            ],
+                            "result": _display(item.result),
+                            "currency": item.currency,
+                            "source_fact_ids": item.source_fact_ids,
+                        }
+                        for item in result.arithmetic_results
+                    ],
+                    hide_index=True,
+                )
 
     if triage_only:
         st.header("Triage readiness")
@@ -779,14 +792,15 @@ def _render_phase2_result(result):
             "Drafting: " + _friendly_enum(validation.draft_eligibility)
         )
         _render_checks(validation.checks)
-    with st.expander("Technical details — validation"):
-        st.write(
-            {
-                "overall_status": validation.overall_status.value,
-                "draft_eligibility": validation.draft_eligibility.value,
-            }
-        )
-        _render_checks(validation.checks, technical=True)
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — validation"):
+            st.write(
+                {
+                    "overall_status": validation.overall_status.value,
+                    "draft_eligibility": validation.draft_eligibility.value,
+                }
+            )
+            _render_checks(validation.checks, technical=True)
 
     if not triage_only or draft.unresolved_requirements:
         st.header("Unresolved requirements")
@@ -801,20 +815,21 @@ def _render_phase2_result(result):
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — unresolved requirements"):
-            st.dataframe(
-                [
-                    {
-                        "requirement_id": item.requirement_id,
-                        "requirement_text": item.requirement_text,
-                        "status": item.status.value,
-                        "related_fact_ids": item.related_fact_ids,
-                        "calculation_type": _display(item.calculation_type),
-                    }
-                    for item in draft.unresolved_requirements
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — unresolved requirements"):
+                st.dataframe(
+                    [
+                        {
+                            "requirement_id": item.requirement_id,
+                            "requirement_text": item.requirement_text,
+                            "status": item.status.value,
+                            "related_fact_ids": item.related_fact_ids,
+                            "calculation_type": _display(item.calculation_type),
+                        }
+                        for item in draft.unresolved_requirements
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("None.")
 
@@ -831,18 +846,19 @@ def _render_phase2_result(result):
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — evidence checklist"):
-            st.dataframe(
-                [
-                    {
-                        "evidence_id": item.evidence_id,
-                        "requirement_text": item.requirement_text,
-                        "status": item.status.value,
-                    }
-                    for item in draft.evidence_checklist
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — evidence checklist"):
+                st.dataframe(
+                    [
+                        {
+                            "evidence_id": item.evidence_id,
+                            "requirement_text": item.requirement_text,
+                            "status": item.status.value,
+                        }
+                        for item in draft.evidence_checklist
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("None.")
 
@@ -860,19 +876,20 @@ def _render_phase2_result(result):
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — review requirements"):
-            st.dataframe(
-                [
-                    {
-                        "review_id": item.review_id,
-                        "level": item.level.value,
-                        "reason": item.reason,
-                        "mandatory": item.mandatory,
-                    }
-                    for item in draft.review_requirements
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — review requirements"):
+                st.dataframe(
+                    [
+                        {
+                            "review_id": item.review_id,
+                            "level": item.level.value,
+                            "reason": item.reason,
+                            "mandatory": item.mandatory,
+                        }
+                        for item in draft.review_requirements
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("None.")
 
@@ -884,38 +901,39 @@ def _render_phase2_result(result):
                 st.error(triage.message)
             else:
                 st.write(triage.message)
-        with st.expander("Technical details — triage"):
-            st.write(
-                {
-                    "proceeding_type": triage.proceeding_type.value,
-                    "notice_form": triage.notice_form.value,
-                    "support_level": triage.support_level.value,
-                    "classification_confidence": (
-                        triage.classification_confidence.value
-                    ),
-                    "extraction_status": triage.extraction_status.value,
-                    "portal_verification_required": (
-                        triage.portal_verification_required
-                    ),
-                    "authority_verification_required": (
-                        triage.authority_verification_required
-                    ),
-                    "communication_identifier_status": (
-                        triage.communication_identifier_status.value
-                    ),
-                    "authority_details_status": (
-                        triage.authority_details_status.value
-                    ),
-                    "deadline_status": triage.deadline_status.value,
-                    "hearing_status": triage.hearing_status.value,
-                    "requested_document_fact_ids": (
-                        triage.requested_document_fact_ids
-                    ),
-                    "referenced_annexure_fact_ids": (
-                        triage.referenced_annexure_fact_ids
-                    ),
-                }
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — triage"):
+                st.write(
+                    {
+                        "proceeding_type": triage.proceeding_type.value,
+                        "notice_form": triage.notice_form.value,
+                        "support_level": triage.support_level.value,
+                        "classification_confidence": (
+                            triage.classification_confidence.value
+                        ),
+                        "extraction_status": triage.extraction_status.value,
+                        "portal_verification_required": (
+                            triage.portal_verification_required
+                        ),
+                        "authority_verification_required": (
+                            triage.authority_verification_required
+                        ),
+                        "communication_identifier_status": (
+                            triage.communication_identifier_status.value
+                        ),
+                        "authority_details_status": (
+                            triage.authority_details_status.value
+                        ),
+                        "deadline_status": triage.deadline_status.value,
+                        "hearing_status": triage.hearing_status.value,
+                        "requested_document_fact_ids": (
+                            triage.requested_document_fact_ids
+                        ),
+                        "referenced_annexure_fact_ids": (
+                            triage.referenced_annexure_fact_ids
+                        ),
+                    }
+                )
 
     draft_is_displayable = (
         draft.status is DraftGenerationStatus.SUCCESS
@@ -949,25 +967,26 @@ def _render_phase2_result(result):
                 "Specialist drafting is blocked by the current validation "
                 "or workflow state."
             )
-        with st.expander("Technical details — drafting"):
-            st.write(
-                {
-                    "status": draft.status.value,
-                    "failure_code": _display(draft.failure_code),
-                    "error_message": _display(draft.error_message),
-                    "draft_eligibility": draft.draft_eligibility.value,
-                }
-            )
-            if draft.post_validation is not None:
-                st.subheader("Post-validation diagnostics")
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — drafting"):
                 st.write(
                     {
-                        "overall_status": (
-                            draft.post_validation.overall_status.value
-                        )
+                        "status": draft.status.value,
+                        "failure_code": _display(draft.failure_code),
+                        "error_message": _display(draft.error_message),
+                        "draft_eligibility": draft.draft_eligibility.value,
                     }
                 )
-                _render_checks(draft.post_validation.checks, technical=True)
+                if draft.post_validation is not None:
+                    st.subheader("Post-validation diagnostics")
+                    st.write(
+                        {
+                            "overall_status": (
+                                draft.post_validation.overall_status.value
+                            )
+                        }
+                    )
+                    _render_checks(draft.post_validation.checks, technical=True)
 
 
 _NOTICE_KEY = "_dwaar_notice_analysis_key"
@@ -1157,16 +1176,17 @@ def _render_historical_snapshot(snapshot):
         + " · Confidence: "
         + classification["confidence"].replace("_", " ").title()
     )
-    with st.expander("Technical details — historical snapshot"):
-        st.write(
-            {
-                "snapshot_id": metadata.snapshot_id,
-                "schema_version": metadata.schema_version,
-                "engine_version": metadata.engine_version,
-                "source_document_id": metadata.source_document_id,
-                "source_document_sha256": metadata.source_document_sha256,
-            }
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — historical snapshot"):
+            st.write(
+                {
+                    "snapshot_id": metadata.snapshot_id,
+                    "schema_version": metadata.schema_version,
+                    "engine_version": metadata.engine_version,
+                    "source_document_id": metadata.source_document_id,
+                    "source_document_sha256": metadata.source_document_sha256,
+                }
+            )
 
     extraction = payload["extraction"]
     historical_facts = extraction["facts"]
@@ -1198,15 +1218,16 @@ def _render_historical_snapshot(snapshot):
         + " · **Drafting:** "
         + str(draft["draft_eligibility"]).replace("_", " ").title()
     )
-    with st.expander("Technical details — historical decision state"):
-        st.write(
-            {
-                "deadline": deadline,
-                "validation_status": validation["overall_status"],
-                "draft_eligibility": validation["draft_eligibility"],
-                "draft_status": draft["status"],
-            }
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — historical decision state"):
+            st.write(
+                {
+                    "deadline": deadline,
+                    "validation_status": validation["overall_status"],
+                    "draft_eligibility": validation["draft_eligibility"],
+                    "draft_status": draft["status"],
+                }
+            )
     if draft["sections"]:
         st.caption(
             "Historical draft text below is preserved for audit/history "
@@ -1271,8 +1292,9 @@ def _render_snapshot_history(
             else:
                 st.write("Current analysis snapshot saved.")
                 st.caption(f"Engine {saved.engine_version}")
-                with st.expander("Technical details — saved snapshot"):
-                    st.write({"saved_snapshot_id": saved.snapshot_id})
+                if _engineering_diagnostics_enabled():
+                    with st.expander("Technical details — saved snapshot"):
+                        st.write({"saved_snapshot_id": saved.snapshot_id})
                 try:
                     history = snapshot_service.list_snapshot_history(
                         principal,
@@ -1300,18 +1322,19 @@ def _render_snapshot_history(
         ],
         hide_index=True,
     )
-    with st.expander("Technical details — analysis history"):
-        st.dataframe(
-            [
-                {
-                    "snapshot_id": item.snapshot_id,
-                    "schema_version": item.schema_version,
-                    "source_document_id": item.source_document_id,
-                }
-                for item in history
-            ],
-            hide_index=True,
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — analysis history"):
+            st.dataframe(
+                [
+                    {
+                        "snapshot_id": item.snapshot_id,
+                        "schema_version": item.schema_version,
+                        "source_document_id": item.source_document_id,
+                    }
+                    for item in history
+                ],
+                hide_index=True,
+            )
 
     labels = {
         (
@@ -1381,16 +1404,17 @@ def _render_snapshot_history(
                         f"Catalog {saved_brief.catalog_version} · "
                         f"Legal as of {saved_brief.as_of_date.isoformat()}"
                     )
-                    with st.expander(
-                        "Technical details — saved legal brief"
-                    ):
-                        st.write(
-                            {
-                                "saved_legal_brief_id": (
-                                    saved_brief.legal_brief_id
-                                )
-                            }
-                        )
+                    if _engineering_diagnostics_enabled():
+                        with st.expander(
+                            "Technical details — saved legal brief"
+                        ):
+                            st.write(
+                                {
+                                    "saved_legal_brief_id": (
+                                        saved_brief.legal_brief_id
+                                    )
+                                }
+                            )
                     try:
                         legal_briefs = legal_brief_service.list_for_snapshot(
                             principal,
@@ -1418,17 +1442,18 @@ def _render_snapshot_history(
                 ],
                 hide_index=True,
             )
-            with st.expander("Technical details — legal research history"):
-                st.dataframe(
-                    [
-                        {
-                            "legal_brief_id": item.legal_brief_id,
-                            "proceeding_type": item.proceeding_type.value,
-                        }
-                        for item in legal_briefs
-                    ],
-                    hide_index=True,
-                )
+            if _engineering_diagnostics_enabled():
+                with st.expander("Technical details — legal research history"):
+                    st.dataframe(
+                        [
+                            {
+                                "legal_brief_id": item.legal_brief_id,
+                                "proceeding_type": item.proceeding_type.value,
+                            }
+                            for item in legal_briefs
+                        ],
+                        hide_index=True,
+                    )
             brief_labels = {
                 (
                     f"{item.created_at.isoformat()} — "
@@ -1610,23 +1635,24 @@ def _render_draft_work_product_workspace(
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — draft history"):
-            st.dataframe(
-                [
-                    {
-                        "draft_version_id": item.draft_version_id,
-                        "source_snapshot_id": item.source_snapshot_id,
-                        "parent_draft_version_id": _display(
-                            item.parent_draft_version_id
-                        ),
-                        "review_status": item.review_status.value,
-                        "reviewed_by": _display(item.reviewed_by),
-                        "approved_by": _display(item.approved_by),
-                    }
-                    for item in versions
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — draft history"):
+                st.dataframe(
+                    [
+                        {
+                            "draft_version_id": item.draft_version_id,
+                            "source_snapshot_id": item.source_snapshot_id,
+                            "parent_draft_version_id": _display(
+                                item.parent_draft_version_id
+                            ),
+                            "review_status": item.review_status.value,
+                            "reviewed_by": _display(item.reviewed_by),
+                            "approved_by": _display(item.approved_by),
+                        }
+                        for item in versions
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("No durable draft work-product versions yet.")
 
@@ -1724,19 +1750,20 @@ def _render_draft_work_product_workspace(
                         f"Generated draft baseline saved as version "
                         f"**{created.version_number}**."
                     )
-                    with st.expander(
-                        "Technical details — generated draft baseline"
-                    ):
-                        st.write(
-                            {
-                                "created_draft_version_id": (
-                                    created.draft_version_id
-                                ),
-                                "source_snapshot_id": (
-                                    created.source_snapshot_id
-                                ),
-                            }
-                        )
+                    if _engineering_diagnostics_enabled():
+                        with st.expander(
+                            "Technical details — generated draft baseline"
+                        ):
+                            st.write(
+                                {
+                                    "created_draft_version_id": (
+                                        created.draft_version_id
+                                    ),
+                                    "source_snapshot_id": (
+                                        created.source_snapshot_id
+                                    ),
+                                }
+                            )
         else:
             st.warning(
                 "Save an analysis snapshot before creating a durable "
@@ -1784,15 +1811,16 @@ def _render_draft_work_product_workspace(
         f"**Version {selected.version_number}** · "
         f"{_friendly_enum(selected.review_status)}"
     )
-    with st.expander("Technical details — selected draft"):
-        st.write(
-            {
-                "draft_version_id": selected.draft_version_id,
-                "source_snapshot_id": selected.source_snapshot_id,
-                "review_status": selected.review_status.value,
-                "content_sha256": selected.content_sha256,
-            }
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — selected draft"):
+            st.write(
+                {
+                    "draft_version_id": selected.draft_version_id,
+                    "source_snapshot_id": selected.source_snapshot_id,
+                    "review_status": selected.review_status.value,
+                    "content_sha256": selected.content_sha256,
+                }
+            )
 
     latest = versions[-1]
     is_latest = latest.draft_version_id == selected.draft_version_id
@@ -1832,20 +1860,21 @@ def _render_draft_work_product_workspace(
                     f"Professional edit saved as version "
                     f"**{created.version_number}**."
                 )
-                with st.expander(
-                    "Technical details — saved draft version"
-                ):
-                    st.write(
-                        {
-                            "created_draft_version_id": (
-                                created.draft_version_id
-                            ),
-                            "parent_draft_version_id": (
-                                created.parent_draft_version_id
-                            ),
-                            "review_status": created.review_status.value,
-                        }
-                    )
+                if _engineering_diagnostics_enabled():
+                    with st.expander(
+                        "Technical details — saved draft version"
+                    ):
+                        st.write(
+                            {
+                                "created_draft_version_id": (
+                                    created.draft_version_id
+                                ),
+                                "parent_draft_version_id": (
+                                    created.parent_draft_version_id
+                                ),
+                                "review_status": created.review_status.value,
+                            }
+                        )
     else:
         st.text_area(
             "Professional draft text",
@@ -1901,17 +1930,18 @@ def _render_draft_work_product_workspace(
                     "Draft review status updated to "
                     f"**{_friendly_enum(updated.review_status)}**."
                 )
-                with st.expander(
-                    "Technical details — draft review transition"
-                ):
-                    st.write(
-                        {
-                            "reviewed_draft_version_id": (
-                                updated.draft_version_id
-                            ),
-                            "review_status": updated.review_status.value,
-                        }
-                    )
+                if _engineering_diagnostics_enabled():
+                    with st.expander(
+                        "Technical details — draft review transition"
+                    ):
+                        st.write(
+                            {
+                                "reviewed_draft_version_id": (
+                                    updated.draft_version_id
+                                ),
+                                "review_status": updated.review_status.value,
+                            }
+                        )
 
     if selected.review_status in {
         DraftReviewStatus.REVIEWED,
@@ -1998,26 +2028,27 @@ def _render_filing_workspace(
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — filing history"):
-            st.dataframe(
-                [
-                    {
-                        "filing_id": item.filing_id,
-                        "approved_draft_version_id": (
-                            item.approved_draft_version_id
-                        ),
-                        "filed_response_document_id": (
-                            item.filed_response_document_id
-                        ),
-                        "acknowledgement_document_id": _display(
-                            item.acknowledgement_document_id
-                        ),
-                        "recorded_at": item.recorded_at.isoformat(),
-                    }
-                    for item in filings
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — filing history"):
+                st.dataframe(
+                    [
+                        {
+                            "filing_id": item.filing_id,
+                            "approved_draft_version_id": (
+                                item.approved_draft_version_id
+                            ),
+                            "filed_response_document_id": (
+                                item.filed_response_document_id
+                            ),
+                            "acknowledgement_document_id": _display(
+                                item.acknowledgement_document_id
+                            ),
+                            "recorded_at": item.recorded_at.isoformat(),
+                        }
+                        for item in filings
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("No filing records yet.")
 
@@ -2173,20 +2204,21 @@ def _render_filing_workspace(
                                 "Filing recorded successfully. Reference: "
                                 f"**{saved.filing_reference}**"
                             )
-                            with st.expander(
-                                "Technical details — recorded filing"
-                            ):
-                                st.write(
-                                    {
-                                        "recorded_filing_id": saved.filing_id,
-                                        "filed_response_document_id": (
-                                            saved.filed_response_document_id
-                                        ),
-                                        "acknowledgement_document_id": (
-                                            saved.acknowledgement_document_id
-                                        ),
-                                    }
-                                )
+                            if _engineering_diagnostics_enabled():
+                                with st.expander(
+                                    "Technical details — recorded filing"
+                                ):
+                                    st.write(
+                                        {
+                                            "recorded_filing_id": saved.filing_id,
+                                            "filed_response_document_id": (
+                                                saved.filed_response_document_id
+                                            ),
+                                            "acknowledgement_document_id": (
+                                                saved.acknowledgement_document_id
+                                            ),
+                                        }
+                                    )
 
     missing_ack = [
         item
@@ -2243,17 +2275,18 @@ def _render_filing_workspace(
             st.error("The acknowledgement could not be attached.")
         else:
             st.write("Acknowledgement attached successfully.")
-            with st.expander(
-                "Technical details — acknowledgement attachment"
-            ):
-                st.write(
-                    {
-                        "updated_filing_id": updated.filing_id,
-                        "acknowledgement_document_id": (
-                            updated.acknowledgement_document_id
-                        ),
-                    }
-                )
+            if _engineering_diagnostics_enabled():
+                with st.expander(
+                    "Technical details — acknowledgement attachment"
+                ):
+                    st.write(
+                        {
+                            "updated_filing_id": updated.filing_id,
+                            "acknowledgement_document_id": (
+                                updated.acknowledgement_document_id
+                            ),
+                        }
+                    )
 
 
 def _render_persisted_evidence_workspace(
@@ -2303,17 +2336,18 @@ def _render_persisted_evidence_workspace(
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — supporting documents"):
-            st.dataframe(
-                [
-                    {
-                        "document_id": item.document_id,
-                        "sha256": item.sha256_hex,
-                    }
-                    for item in attached
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — supporting documents"):
+                st.dataframe(
+                    [
+                        {
+                            "document_id": item.document_id,
+                            "sha256": item.sha256_hex,
+                        }
+                        for item in attached
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("No supporting evidence attached yet.")
 
@@ -2351,16 +2385,17 @@ def _render_persisted_evidence_workspace(
                 st.write(
                     f"{len(successes)} supporting evidence file(s) attached."
                 )
-                with st.expander(
-                    "Technical details — attached supporting evidence"
-                ):
-                    st.write(
-                        {
-                            "attached_document_ids": [
-                                item.document_id for item in successes
-                            ]
-                        }
-                    )
+                if _engineering_diagnostics_enabled():
+                    with st.expander(
+                        "Technical details — attached supporting evidence"
+                    ):
+                        st.write(
+                            {
+                                "attached_document_ids": [
+                                    item.document_id for item in successes
+                                ]
+                            }
+                        )
             if failures:
                 st.error(
                     "Some supporting evidence files could not be attached: "
@@ -2453,14 +2488,15 @@ def _render_persisted_evidence_workspace(
         f"Reviewing against {len(snapshot_checklist)} checklist item(s) "
         f"from engine {selected_snapshot.engine_version}."
     )
-    with st.expander("Technical details — evidence review context"):
-        st.write(
-            {
-                "review_snapshot_id": selected_snapshot.snapshot_id,
-                "review_engine_version": selected_snapshot.engine_version,
-                "review_checklist_items": len(snapshot_checklist),
-            }
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — evidence review context"):
+            st.write(
+                {
+                    "review_snapshot_id": selected_snapshot.snapshot_id,
+                    "review_engine_version": selected_snapshot.engine_version,
+                    "review_checklist_items": len(snapshot_checklist),
+                }
+            )
 
     context_prefix = (
         f"persisted:{reopened.case.case_id}:"
@@ -2552,29 +2588,30 @@ def _render_persisted_evidence_workspace(
                 ],
                 hide_index=True,
             )
-            with st.expander(
-                "Technical details — persisted evidence candidates"
-            ):
-                st.write(
-                    {
-                        "evidence_intake_status": intake_result.status.value,
-                        "rejected_candidate_count": (
-                            intake_result.rejected_candidate_count
-                        ),
-                    }
-                )
-                st.dataframe(
-                    [
+            if _engineering_diagnostics_enabled():
+                with st.expander(
+                    "Technical details — persisted evidence candidates"
+                ):
+                    st.write(
                         {
-                            "candidate_id": candidate.candidate_id,
-                            "evidence_id": candidate.evidence_id,
-                            "document_id": candidate.document_id,
-                            "source_origin": candidate.source_origin.value,
+                            "evidence_intake_status": intake_result.status.value,
+                            "rejected_candidate_count": (
+                                intake_result.rejected_candidate_count
+                            ),
                         }
-                        for candidate in intake_result.candidates
-                    ],
-                    hide_index=True,
-                )
+                    )
+                    st.dataframe(
+                        [
+                            {
+                                "candidate_id": candidate.candidate_id,
+                                "evidence_id": candidate.evidence_id,
+                                "document_id": candidate.document_id,
+                                "source_origin": candidate.source_origin.value,
+                            }
+                            for candidate in intake_result.candidates
+                        ],
+                        hide_index=True,
+                    )
         else:
             st.write(
                 "No source-grounded evidence candidates were proposed."
@@ -2591,18 +2628,19 @@ def _render_persisted_evidence_workspace(
                 f"Page {candidate.source_page} · "
                 f"{_friendly_enum(candidate.source_verification)}"
             )
-            with st.expander(
-                "Technical details — persisted evidence candidate "
-                + candidate.candidate_id
-            ):
-                st.write(
-                    {
-                        "candidate_id": candidate.candidate_id,
-                        "evidence_id": candidate.evidence_id,
-                        "document_id": candidate.document_id,
-                        "source_origin": candidate.source_origin.value,
-                    }
-                )
+            if _engineering_diagnostics_enabled():
+                with st.expander(
+                    "Technical details — persisted evidence candidate "
+                    + candidate.candidate_id
+                ):
+                    st.write(
+                        {
+                            "candidate_id": candidate.candidate_id,
+                            "evidence_id": candidate.evidence_id,
+                            "document_id": candidate.document_id,
+                            "source_origin": candidate.source_origin.value,
+                        }
+                    )
             note = st.text_input(
                 "Reviewer note (optional)",
                 key=(
@@ -2661,17 +2699,18 @@ def _render_persisted_evidence_workspace(
                         "Evidence review saved: "
                         f"**{_friendly_enum(saved_review.decision)}**."
                     )
-                    with st.expander(
-                        "Technical details — saved evidence review"
-                    ):
-                        st.write(
-                            {
-                                "saved_evidence_review_id": (
-                                    saved_review.review_id
-                                ),
-                                "snapshot_id": saved_review.snapshot_id,
-                            }
-                        )
+                    if _engineering_diagnostics_enabled():
+                        with st.expander(
+                            "Technical details — saved evidence review"
+                        ):
+                            st.write(
+                                {
+                                    "saved_evidence_review_id": (
+                                        saved_review.review_id
+                                    ),
+                                    "snapshot_id": saved_review.snapshot_id,
+                                }
+                            )
                     durable_reviews = review_service.list_reviews(
                         principal,
                         active_firm.firm_id,
@@ -2716,31 +2755,32 @@ def _render_persisted_evidence_workspace(
                 ],
                 hide_index=True,
             )
-            with st.expander(
-                "Technical details — legal evidence readiness"
-            ):
-                st.dataframe(
-                    [
-                        {
-                            "question_id": item.question_id,
-                            "status": item.status.value,
-                            "required_evidence_ids": list(
-                                item.required_evidence_ids
-                            ),
-                            "confirmed_evidence_ids": list(
-                                item.confirmed_evidence_ids
-                            ),
-                            "missing_evidence_ids": list(
-                                item.missing_evidence_ids
-                            ),
-                            "confirmed_review_ids": list(
-                                item.confirmed_review_ids
-                            ),
-                        }
-                        for item in legal_evidence
-                    ],
-                    hide_index=True,
-                )
+            if _engineering_diagnostics_enabled():
+                with st.expander(
+                    "Technical details — legal evidence readiness"
+                ):
+                    st.dataframe(
+                        [
+                            {
+                                "question_id": item.question_id,
+                                "status": item.status.value,
+                                "required_evidence_ids": list(
+                                    item.required_evidence_ids
+                                ),
+                                "confirmed_evidence_ids": list(
+                                    item.confirmed_evidence_ids
+                                ),
+                                "missing_evidence_ids": list(
+                                    item.missing_evidence_ids
+                                ),
+                                "confirmed_review_ids": list(
+                                    item.confirmed_review_ids
+                                ),
+                            }
+                            for item in legal_evidence
+                        ],
+                        hide_index=True,
+                    )
         else:
             st.write(
                 "No closed legal-evidence readiness plan exists for this "
@@ -2766,18 +2806,19 @@ def _render_persisted_evidence_workspace(
         ],
         hide_index=True,
     )
-    with st.expander("Technical details — durable evidence reviews"):
-        st.dataframe(
-            [
-                {
-                    "review_id": item.review_id,
-                    "evidence_id": item.evidence_id,
-                    "document_id": item.document_id,
-                }
-                for item in durable_reviews
-            ],
-            hide_index=True,
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — durable evidence reviews"):
+            st.dataframe(
+                [
+                    {
+                        "review_id": item.review_id,
+                        "evidence_id": item.evidence_id,
+                        "document_id": item.document_id,
+                    }
+                    for item in durable_reviews
+                ],
+                hide_index=True,
+            )
 
     review_labels = {
         (
@@ -2828,25 +2869,26 @@ def _render_persisted_evidence_workspace(
             reviewer_note = loaded_review.payload["reviewer_note"]
             if reviewer_note:
                 st.write("**Reviewer note:** " + str(reviewer_note))
-            with st.expander(
-                "Technical details — encrypted evidence review"
-            ):
-                st.write(
-                    {
-                        "review_id": loaded_review.metadata.review_id,
-                        "snapshot_id": loaded_review.metadata.snapshot_id,
-                        "evidence_id": loaded_review.metadata.evidence_id,
-                        "document_id": loaded_review.metadata.document_id,
-                        "source_origin": (
-                            loaded_review.payload["candidate"]["source_origin"]
-                        ),
-                        "source_verification": (
-                            loaded_review.payload["candidate"][
-                                "source_verification"
-                            ]
-                        ),
-                    }
-                )
+            if _engineering_diagnostics_enabled():
+                with st.expander(
+                    "Technical details — encrypted evidence review"
+                ):
+                    st.write(
+                        {
+                            "review_id": loaded_review.metadata.review_id,
+                            "snapshot_id": loaded_review.metadata.snapshot_id,
+                            "evidence_id": loaded_review.metadata.evidence_id,
+                            "document_id": loaded_review.metadata.document_id,
+                            "source_origin": (
+                                loaded_review.payload["candidate"]["source_origin"]
+                            ),
+                            "source_verification": (
+                                loaded_review.payload["candidate"][
+                                    "source_verification"
+                                ]
+                            ),
+                        }
+                    )
 
 
 def _render_case_work_queue(principal, active_firm):
@@ -2905,25 +2947,26 @@ def _render_case_work_queue(principal, active_firm):
         ],
         hide_index=True,
     )
-    with st.expander("Technical details — work queue"):
-        st.dataframe(
-            [
-                {
-                    "case_id": row.work_item.case_id,
-                    "status": row.work_item.status.value,
-                    "deadline_status": row.work_item.deadline_status.value,
-                    "attention_codes": [
-                        code.value for code in row.attention_codes
-                    ],
-                    "attention_workspaces": [
-                        workspace.value
-                        for workspace in row.attention_workspaces
-                    ],
-                }
-                for row in professional_queue
-            ],
-            hide_index=True,
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — work queue"):
+            st.dataframe(
+                [
+                    {
+                        "case_id": row.work_item.case_id,
+                        "status": row.work_item.status.value,
+                        "deadline_status": row.work_item.deadline_status.value,
+                        "attention_codes": [
+                            code.value for code in row.attention_codes
+                        ],
+                        "attention_workspaces": [
+                            workspace.value
+                            for workspace in row.attention_workspaces
+                        ],
+                    }
+                    for row in professional_queue
+                ],
+                hide_index=True,
+            )
 
     labels = {
         (
@@ -2968,8 +3011,9 @@ def _render_case_work_queue(principal, active_firm):
     ):
         st.session_state[_FOCUSED_CASE_ID] = selected.case_id
         st.write("Case selected. Use **Open saved case** below.")
-        with st.expander("Technical details — selected queue case"):
-            st.write({"focused_case_id": selected.case_id})
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — selected queue case"):
+                st.write({"focused_case_id": selected.case_id})
 
     if AccessPermission.CASE_UPDATE not in active_firm.permissions:
         st.caption(
@@ -3116,8 +3160,9 @@ def _render_case_work_queue(principal, active_firm):
         + " · Reviewer: "
         + _display(updated.reviewer_id)
     )
-    with st.expander("Technical details — case operations"):
-        st.write({"updated_case_id": updated.case_id})
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — case operations"):
+            st.write({"updated_case_id": updated.case_id})
 
 
 def _render_client_workspace(principal, active_firm):
@@ -3185,8 +3230,9 @@ def _render_client_workspace(principal, active_firm):
         f"{len(workspace.registrations)} tax registration(s) · "
         f"{len(workspace.cases)} saved matter(s)"
     )
-    with st.expander("Technical details — client"):
-        st.write({"client_id": workspace.client.client_id})
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — client"):
+            st.write({"client_id": workspace.client.client_id})
 
     st.subheader("Tax registrations")
     if workspace.registrations:
@@ -3201,17 +3247,18 @@ def _render_client_workspace(principal, active_firm):
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — tax registrations"):
-            st.dataframe(
-                [
-                    {
-                        "registration_id": item.registration_id,
-                        "identifier_value": item.identifier_value,
-                    }
-                    for item in workspace.registrations
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — tax registrations"):
+                st.dataframe(
+                    [
+                        {
+                            "registration_id": item.registration_id,
+                            "identifier_value": item.identifier_value,
+                        }
+                        for item in workspace.registrations
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("No tax registrations saved for this client.")
 
@@ -3234,18 +3281,19 @@ def _render_client_workspace(principal, active_firm):
         ],
         hide_index=True,
     )
-    with st.expander("Technical details — client case history"):
-        st.dataframe(
-            [
-                {
-                    "case_id": case.case_id,
-                    "registration_id": _display(case.registration_id),
-                    "proceeding_type": case.proceeding_type.value,
-                }
-                for case in workspace.cases
-            ],
-            hide_index=True,
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — client case history"):
+            st.dataframe(
+                [
+                    {
+                        "case_id": case.case_id,
+                        "registration_id": _display(case.registration_id),
+                        "proceeding_type": case.proceeding_type.value,
+                    }
+                    for case in workspace.cases
+                ],
+                hide_index=True,
+            )
 
     case_labels = {
         f"{case.title} — {case.case_id}": case
@@ -3264,8 +3312,9 @@ def _render_client_workspace(principal, active_firm):
     ):
         st.session_state[_FOCUSED_CASE_ID] = selected_case.case_id
         st.write("Case selected. Use **Open saved case** below.")
-        with st.expander("Technical details — selected client case"):
-            st.write({"focused_case_id": selected_case.case_id})
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — selected client case"):
+                st.write({"focused_case_id": selected_case.case_id})
 
 
 def _render_professional_case_attention(
@@ -3315,35 +3364,36 @@ def _render_professional_case_attention(
             "the deterministic workbench projection."
         )
 
-    with st.expander("Technical details — case attention"):
-        st.write(
-            {
-                "latest_snapshot_id": _display(
-                    attention.latest_snapshot_id
-                ),
-                "latest_legal_brief_id": _display(
-                    attention.latest_legal_brief_id
-                ),
-                "latest_draft_version_id": _display(
-                    attention.latest_draft_version_id
-                ),
-                "latest_filing_id": _display(
-                    attention.latest_filing_id
-                ),
-            }
-        )
-        if attention.items:
-            st.dataframe(
-                [
-                    {
-                        "attention_code": item.code.value,
-                        "workspace": item.code.workspace.value,
-                        "related_id": _display(item.related_id),
-                    }
-                    for item in attention.items
-                ],
-                hide_index=True,
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — case attention"):
+            st.write(
+                {
+                    "latest_snapshot_id": _display(
+                        attention.latest_snapshot_id
+                    ),
+                    "latest_legal_brief_id": _display(
+                        attention.latest_legal_brief_id
+                    ),
+                    "latest_draft_version_id": _display(
+                        attention.latest_draft_version_id
+                    ),
+                    "latest_filing_id": _display(
+                        attention.latest_filing_id
+                    ),
+                }
             )
+            if attention.items:
+                st.dataframe(
+                    [
+                        {
+                            "attention_code": item.code.value,
+                            "workspace": item.code.workspace.value,
+                            "related_id": _display(item.related_id),
+                        }
+                        for item in attention.items
+                    ],
+                    hide_index=True,
+                )
 
 
 def _render_case_timeline(
@@ -3387,18 +3437,19 @@ def _render_case_timeline(
         ],
         hide_index=True,
     )
-    with st.expander("Technical details — case timeline"):
-        st.dataframe(
-            [
-                {
-                    "event_id": item.event_id,
-                    "event_type": item.event_type.value,
-                    "actor_id": _display(item.actor_id),
-                }
-                for item in items
-            ],
-            hide_index=True,
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — case timeline"):
+            st.dataframe(
+                [
+                    {
+                        "event_id": item.event_id,
+                        "event_type": item.event_type.value,
+                        "actor_id": _display(item.actor_id),
+                    }
+                    for item in items
+                ],
+                hide_index=True,
+            )
 
 
 def _render_saved_cases_workspace(principal, active_firm):
@@ -3456,19 +3507,20 @@ def _render_saved_cases_workspace(principal, active_firm):
         ],
         hide_index=True,
     )
-    with st.expander("Technical details — saved cases"):
-        st.dataframe(
-            [
-                {
-                    "case_id": case.case_id,
-                    "status": case.status.value,
-                    "notice_form": case.notice_form.value,
-                    "proceeding_type": case.proceeding_type.value,
-                }
-                for case in cases
-            ],
-            hide_index=True,
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — saved cases"):
+            st.dataframe(
+                [
+                    {
+                        "case_id": case.case_id,
+                        "status": case.status.value,
+                        "notice_form": case.notice_form.value,
+                        "proceeding_type": case.proceeding_type.value,
+                    }
+                    for case in cases
+                ],
+                hide_index=True,
+            )
 
     labels = {
         f"{case.title} — {case.case_id}": case
@@ -3577,13 +3629,14 @@ def _render_saved_cases_workspace(principal, active_firm):
         f"{_friendly_enum(reopened.case.status)} · "
         f"{reopened.notice_document.original_filename}"
     )
-    with st.expander("Technical details — opened case"):
-        st.write(
-            {
-                "case_id": reopened.case.case_id,
-                "analysis_source": "recomputed_from_encrypted_notice",
-            }
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — opened case"):
+            st.write(
+                {
+                    "case_id": reopened.case.case_id,
+                    "analysis_source": "recomputed_from_encrypted_notice",
+                }
+            )
     st.caption(
         "The persisted notice was decrypted and integrity-checked, then "
         "the current analysis engine recomputed this live result. Saved "
@@ -3682,13 +3735,14 @@ def _render_save_intake_workspace(
     existing_case_id = saved_intakes.get(save_key)
     if existing_case_id:
         st.write("This notice is already saved as an intake case.")
-        with st.expander("Technical details — saved intake"):
-            st.write(
-                {
-                    "saved_case_id": existing_case_id,
-                    "status": "intake",
-                }
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — saved intake"):
+                st.write(
+                    {
+                        "saved_case_id": existing_case_id,
+                        "status": "intake",
+                    }
+                )
         return
 
     service = None
@@ -3778,17 +3832,18 @@ def _render_save_intake_workspace(
         st.caption(
             "Using existing client: " + selected_client.display_name
         )
-        with st.expander("Technical details — selected client"):
-            st.write(
-                {
-                    "selected_client_id": selected_client.client_id,
-                    "selected_registration_id": (
-                        None
-                        if selected_registration is None
-                        else selected_registration.registration_id
-                    ),
-                }
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — selected client"):
+                st.write(
+                    {
+                        "selected_client_id": selected_client.client_id,
+                        "selected_registration_id": (
+                            None
+                            if selected_registration is None
+                            else selected_registration.registration_id
+                        ),
+                    }
+                )
     else:
         client_name = st.text_input(
             "Client name",
@@ -3895,15 +3950,16 @@ def _render_save_intake_workspace(
     st.write(
         "Intake case saved successfully. It is now available in Saved cases."
     )
-    with st.expander("Technical details — saved intake"):
-        st.write(
-            {
-                "saved_case_id": saved_case.case_id,
-                "status": saved_case.status.value,
-                "client_id": saved_case.client_id,
-                "registration_id": saved_case.registration_id,
-            }
-        )
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — saved intake"):
+            st.write(
+                {
+                    "saved_case_id": saved_case.case_id,
+                    "status": saved_case.status.value,
+                    "client_id": saved_case.client_id,
+                    "registration_id": saved_case.registration_id,
+                }
+            )
 
 
 def _render_evidence_workspace(notice_pdf_bytes, result):
@@ -4003,27 +4059,28 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — evidence candidates"):
-            st.write(
-                {
-                    "evidence_intake_status": intake_result.status.value,
-                    "rejected_candidate_count": (
-                        intake_result.rejected_candidate_count
-                    ),
-                }
-            )
-            st.dataframe(
-                [
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — evidence candidates"):
+                st.write(
                     {
-                        "candidate_id": candidate.candidate_id,
-                        "evidence_id": candidate.evidence_id,
-                        "document_id": candidate.document_id,
-                        "source_origin": candidate.source_origin.value,
+                        "evidence_intake_status": intake_result.status.value,
+                        "rejected_candidate_count": (
+                            intake_result.rejected_candidate_count
+                        ),
                     }
-                    for candidate in intake_result.candidates
-                ],
-                hide_index=True,
-            )
+                )
+                st.dataframe(
+                    [
+                        {
+                            "candidate_id": candidate.candidate_id,
+                            "evidence_id": candidate.evidence_id,
+                            "document_id": candidate.document_id,
+                            "source_origin": candidate.source_origin.value,
+                        }
+                        for candidate in intake_result.candidates
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("No source-grounded evidence candidates were proposed.")
 
@@ -4038,17 +4095,18 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
             f"Page {candidate.source_page} · "
             f"{_friendly_enum(candidate.source_verification)}"
         )
-        with st.expander(
-            f"Technical details — evidence candidate {candidate.candidate_id}"
-        ):
-            st.write(
-                {
-                    "candidate_id": candidate.candidate_id,
-                    "evidence_id": candidate.evidence_id,
-                    "document_id": candidate.document_id,
-                    "source_origin": candidate.source_origin.value,
-                }
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander(
+                f"Technical details — evidence candidate {candidate.candidate_id}"
+            ):
+                st.write(
+                    {
+                        "candidate_id": candidate.candidate_id,
+                        "evidence_id": candidate.evidence_id,
+                        "document_id": candidate.document_id,
+                        "source_origin": candidate.source_origin.value,
+                    }
+                )
         note = st.text_input(
             "Reviewer note (optional)",
             key=f"evidence_note_{workspace_key}_{candidate.candidate_id}",
@@ -4097,23 +4155,24 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
             ],
             hide_index=True,
         )
-        with st.expander("Technical details — evidence review records"):
-            st.dataframe(
-                [
-                    {
-                        "review_id": review.review_id,
-                        "candidate_id": review.candidate_id,
-                        "evidence_id": review.evidence_id,
-                        "document_id": review.document_id,
-                        "source_origin": review.source_origin.value,
-                        "source_verification": (
-                            review.source_verification.value
-                        ),
-                    }
-                    for review in reviews
-                ],
-                hide_index=True,
-            )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — evidence review records"):
+                st.dataframe(
+                    [
+                        {
+                            "review_id": review.review_id,
+                            "candidate_id": review.candidate_id,
+                            "evidence_id": review.evidence_id,
+                            "document_id": review.document_id,
+                            "source_origin": review.source_origin.value,
+                            "source_verification": (
+                                review.source_verification.value
+                            ),
+                        }
+                        for review in reviews
+                    ],
+                    hide_index=True,
+                )
 
 
 st.set_page_config(
@@ -4126,6 +4185,11 @@ _principal, _active_firm = _require_app_access()
 
 st.title("📋 Dwaar")
 st.caption("GST notice workspace for professional review.")
+if _engineering_diagnostics_enabled():
+    st.warning(
+        "Engineering diagnostics are enabled for this deployment. "
+        "Machine identifiers and internal state may be visible."
+    )
 
 _render_case_work_queue(_principal, _active_firm)
 _render_client_workspace(_principal, _active_firm)
