@@ -13,7 +13,10 @@ from modules.authorized_case_service import AuthorizedCaseService
 from modules.authorized_draft_work_product_service import (
     AuthorizedDraftWorkProductService,
 )
-from modules.authorized_filing_service import AuthorizedFilingService
+from modules.authorized_filing_service import (
+    AuthorizedFilingService,
+    FilingSourceFactReviewBlockedError,
+)
 from modules.authorized_fact_review_service import AuthorizedFactReviewService
 from modules.authorized_legal_brief_service import AuthorizedLegalBriefService
 from modules.authorized_professional_workbench_service import (
