@@ -121,6 +121,49 @@ def snapshot(evidence_id="evidence.one", evidence_ids=None):
     )
 
 
+def triage_snapshot():
+    metadata = AnalysisSnapshotRef(
+        snapshot_id="SNAP-TRIAGE",
+        case_id="CASE-1",
+        source_document_id="DOC-NOTICE",
+        source_document_sha256="a" * 64,
+        schema_version=1,
+        engine_version="phase2-contract-2026.09.22.1",
+        byte_size=10,
+        sha256_hex="c" * 64,
+        storage_key="objects/" + "c" * 32,
+        created_at=NOW,
+        created_by=PRINCIPAL.user_id,
+    )
+    return LoadedAnalysisSnapshot(
+        metadata=metadata,
+        payload={
+            "classification": {"support_level": "triage_only"},
+            "draft": {"evidence_checklist": []},
+            "triage_summary": {
+                "requested_document_fact_ids": ["F-REQ"],
+                "referenced_annexure_fact_ids": ["F-ANN"],
+            },
+            "extraction": {
+                "facts": [
+                    {
+                        "fact_id": "F-ANN",
+                        "fact_type": "referenced_annexure",
+                        "status": "confirmed",
+                        "source_text": "Annexure A",
+                    },
+                    {
+                        "fact_id": "F-REQ",
+                        "fact_type": "requested_document",
+                        "status": "confirmed",
+                        "source_text": "1. Purchase register",
+                    },
+                ]
+            },
+        },
+    )
+
+
 class AuthorizedEvidenceReviewTests(unittest.TestCase):
     def build(self, permissions=None):
         case_service = mock.Mock()
@@ -166,6 +209,53 @@ class AuthorizedEvidenceReviewTests(unittest.TestCase):
         self.assertEqual(checklist[0].evidence_id, "evidence.one")
         self.assertEqual(checklist[0].requirement_text, "GSTR-2B")
         self.assertEqual(checklist[0].status.value, "unknown")
+
+    def test_triage_snapshot_reconstructs_notice_grounded_evidence_targets(self):
+        service, _, snapshot_service, *_ = self.build()
+        snapshot_service.load_snapshot.return_value = triage_snapshot()
+
+        checklist = service.snapshot_evidence_checklist(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-TRIAGE",
+        )
+
+        self.assertEqual(
+            [item.evidence_id for item in checklist],
+            [
+                "triage.referenced_annexure.F-ANN",
+                "triage.requested_document.F-REQ",
+            ],
+        )
+        self.assertEqual(
+            [item.requirement_text for item in checklist],
+            [
+                "Notice-referenced annexure: Annexure A",
+                "Department-requested record: 1. Purchase register",
+            ],
+        )
+        self.assertTrue(
+            all(item.status.value == "unknown" for item in checklist)
+        )
+
+    def test_triage_snapshot_fails_closed_on_unresolved_selected_fact(self):
+        service, _, snapshot_service, *_ = self.build()
+        loaded = triage_snapshot()
+        loaded.payload["extraction"]["facts"] = [
+            item
+            for item in loaded.payload["extraction"]["facts"]
+            if item["fact_id"] != "F-REQ"
+        ]
+        snapshot_service.load_snapshot.return_value = loaded
+
+        with self.assertRaisesRegex(ValueError, "unresolved"):
+            service.snapshot_evidence_checklist(
+                PRINCIPAL,
+                "F-1",
+                case_id="CASE-1",
+                snapshot_id="SNAP-TRIAGE",
+            )
 
     def test_snapshot_evidence_checklist_fails_closed_on_duplicate_ids(self):
         service, _, snapshot_service, *_ = self.build()
@@ -240,6 +330,53 @@ class AuthorizedEvidenceReviewTests(unittest.TestCase):
         self.assertEqual(kwargs["snapshot_id"], "SNAP-1")
         self.assertEqual(kwargs["actor_id"], PRINCIPAL.user_id)
         self.assertEqual(kwargs["reviewer_note"], "Checked")
+
+    @mock.patch(
+        "modules.authorized_evidence_review_service.persist_evidence_review"
+    )
+    @mock.patch(
+        "modules.authorized_evidence_review_service.extract_document_pages"
+    )
+    def test_triage_derived_evidence_id_can_be_human_reviewed(
+        self,
+        parse,
+        persist,
+    ):
+        from domain.models import DocumentPageText
+
+        parse.return_value = [
+            DocumentPageText(
+                page_number=2,
+                text="Header\nGSTR-2B April 2026 Total ITC 125000\nFooter",
+                origin=SourceTextOrigin.EMBEDDED,
+                verification=SourceVerificationStatus.VERIFIED,
+            )
+        ]
+        expected = mock.Mock()
+        persist.return_value = expected
+        service, _, snapshot_service, *_ = self.build()
+        snapshot_service.load_snapshot.return_value = triage_snapshot()
+
+        triage_candidate = candidate(
+            evidence_id="triage.requested_document.F-REQ",
+        )
+        result = service.save_review(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-TRIAGE",
+            candidate=triage_candidate,
+            decision=EvidenceReviewStatus.CONFIRMED,
+            reviewer_note="Matched requested record",
+            reviewed_at=NOW,
+        )
+
+        self.assertIs(result, expected)
+        persist.assert_called_once()
+        self.assertEqual(
+            persist.call_args.kwargs["candidate"].evidence_id,
+            "triage.requested_document.F-REQ",
+        )
 
     @mock.patch(
         "modules.authorized_evidence_review_service.persist_evidence_review"
