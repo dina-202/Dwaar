@@ -2489,31 +2489,42 @@ def _render_persisted_evidence_workspace(
             st.error("The evidence review details could not be loaded.")
         else:
             st.write(
-                {
-                    "review_id": loaded_review.metadata.review_id,
-                    "snapshot_id": loaded_review.metadata.snapshot_id,
-                    "evidence_id": loaded_review.metadata.evidence_id,
-                    "document_id": loaded_review.metadata.document_id,
-                    "source_page": loaded_review.metadata.source_page,
-                    "decision": loaded_review.metadata.decision.value,
-                    "source_text": (
-                        loaded_review.payload["candidate"]["source_text"]
-                    ),
-                    "source_origin": (
-                        loaded_review.payload["candidate"]["source_origin"]
-                    ),
-                    "source_verification": (
-                        loaded_review.payload["candidate"][
-                            "source_verification"
-                        ]
-                    ),
-                    "reviewer_note": _display(
-                        loaded_review.payload["reviewer_note"]
-                    ),
-                    "reviewed_at": loaded_review.payload["reviewed_at"],
-                    "reviewed_by": loaded_review.payload["reviewed_by"],
-                }
+                "**Decision:** "
+                + str(loaded_review.metadata.decision.value)
+                    .replace("_", " ")
+                    .title()
             )
+            st.write(loaded_review.payload["candidate"]["source_text"])
+            st.caption(
+                "Page "
+                + str(loaded_review.metadata.source_page)
+                + " · Reviewed "
+                + str(loaded_review.payload["reviewed_at"])
+                + " by "
+                + str(loaded_review.payload["reviewed_by"])
+            )
+            reviewer_note = loaded_review.payload["reviewer_note"]
+            if reviewer_note:
+                st.write("**Reviewer note:** " + str(reviewer_note))
+            with st.expander(
+                "Technical details — encrypted evidence review"
+            ):
+                st.write(
+                    {
+                        "review_id": loaded_review.metadata.review_id,
+                        "snapshot_id": loaded_review.metadata.snapshot_id,
+                        "evidence_id": loaded_review.metadata.evidence_id,
+                        "document_id": loaded_review.metadata.document_id,
+                        "source_origin": (
+                            loaded_review.payload["candidate"]["source_origin"]
+                        ),
+                        "source_verification": (
+                            loaded_review.payload["candidate"][
+                                "source_verification"
+                            ]
+                        ),
+                    }
+                )
 
 
 def _render_case_work_queue(principal, active_firm):
