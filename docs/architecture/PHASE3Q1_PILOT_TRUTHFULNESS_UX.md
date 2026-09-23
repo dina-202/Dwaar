@@ -99,7 +99,43 @@ A future ASMT-10 verified legal pack must reconcile authoritative Section 61 /
 Rule 99 materials and their effective-date applicability before Dwaar uses
 external law to supply any form-level timing proposition.
 
-### 5. Safety gates do not weaken
+### 5. Triage evidence continuity
+
+A TRIAGE_ONLY notice may still contain source-grounded operational evidence
+work even though specialist validation/drafting is unavailable.
+
+Two notice relationships may create review-only evidence targets:
+
+- records the department explicitly asks the taxpayer to furnish; and
+- annexures or supporting documents the notice explicitly references.
+
+The target text is built only from the exact accepted notice `source_text`.
+Model-authored claims are never used as evidence requirements. Every target
+starts as `EvidenceStatus.UNKNOWN`; its existence does not prove possession,
+receipt, completeness, sufficiency, responsiveness, enclosure, or submission.
+
+For a live intake session, the triage workspace may build these targets from
+the deterministic preflight/triage-selected fact IDs.
+
+For a saved case, the same targets must remain available after save/reopen.
+The historical snapshot schema is not amended merely to duplicate a second
+checklist. Instead, when the specialist draft evidence checklist is empty,
+the authorized evidence-review service deterministically reconstructs the
+triage targets from the saved:
+
+- `classification.support_level`;
+- `triage_summary.requested_document_fact_ids`;
+- `triage_summary.referenced_annexure_fact_ids`; and
+- source-grounded `extraction.facts`.
+
+Historical reconstruction fails closed if a selected fact is absent,
+ambiguous, wrong-type, non-confirmed, or lacks usable source text.
+
+A human evidence review remains snapshot-bound. Only a `CONFIRMED` review
+counts as a human-confirmed match for operational attention. A rejected
+candidate does not silently satisfy the requested/referenced record.
+
+### 6. Safety gates do not weaken
 
 This phase does not:
 
