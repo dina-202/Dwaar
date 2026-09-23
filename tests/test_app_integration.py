@@ -1207,6 +1207,10 @@ class EngineeringDiagnosticsUiTests(unittest.TestCase):
         text = log_text(fake)
         self.assertNotIn("check.pass", text)
         self.assertNotIn('"fact_id"', text)
+        self.assertNotIn("question_id", text)
+        self.assertNotIn("verified_rule_ids", text)
+        self.assertNotIn("source_fact_id", text)
+        self.assertNotIn("rule_id", text)
         self.assertNotIn("Engineering diagnostics are enabled", text)
         self.assertNotIn("Phase-2", text)
         self.assertIn(
