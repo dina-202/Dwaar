@@ -7,9 +7,9 @@ Fully offline and deterministic. No LLM calls, no network, no fixtures.
 Verifies:
 
   - get_drafting_profile exists, returns the authoritative profile for
-    each of the five deep ProceedingTypes, and None for UNKNOWN with no
+    each of the six deep ProceedingTypes, and None for UNKNOWN with no
     fallback;
-  - exactly five profiles exist, one per deep proceeding, none for
+  - exactly six profiles exist, one per deep proceeding, none for
     UNKNOWN and no triage / Section-74A / Section-130 profile;
   - the exact closed §20.22 prompt keys, all unique, with no filenames or
     paths stored in the profile;
@@ -52,6 +52,7 @@ from workflows.gst.drafting_profiles import (
 )
 
 DEEP_TYPES = (
+    ProceedingType.GST_SEC61_SCRUTINY,
     ProceedingType.GST_SEC73_ITC,
     ProceedingType.GST_SEC73_GENERAL,
     ProceedingType.GST_SEC73_RCM,
@@ -61,6 +62,7 @@ DEEP_TYPES = (
 
 # Exact closed §20.22 prompt keys.
 EXPECTED_PROMPT_KEYS = {
+    ProceedingType.GST_SEC61_SCRUTINY: "sec61_scrutiny",
     ProceedingType.GST_SEC73_ITC: "sec73_itc",
     ProceedingType.GST_SEC73_GENERAL: "sec73_general",
     ProceedingType.GST_SEC73_RCM: "sec73_rcm",
@@ -70,6 +72,7 @@ EXPECTED_PROMPT_KEYS = {
 
 # Exact §20.21 section-ID machine prefixes.
 EXPECTED_ID_PREFIXES = {
+    ProceedingType.GST_SEC61_SCRUTINY: "sec61_scrutiny",
     ProceedingType.GST_SEC73_ITC: "sec73_itc",
     ProceedingType.GST_SEC73_GENERAL: "sec73_general",
     ProceedingType.GST_SEC73_RCM: "sec73_rcm",
@@ -79,13 +82,13 @@ EXPECTED_ID_PREFIXES = {
 
 
 class RegistryAndApiTests(unittest.TestCase):
-    """Exactly five profiles; UNKNOWN → None; no fallback."""
+    """Exactly six profiles; UNKNOWN → None; no fallback."""
 
     def test_get_drafting_profile_exists(self):
         self.assertTrue(callable(get_drafting_profile))
 
-    def test_registry_contains_exactly_five_profiles(self):
-        self.assertEqual(len(DRAFTING_PROFILE_REGISTRY), 5)
+    def test_registry_contains_exactly_six_profiles(self):
+        self.assertEqual(len(DRAFTING_PROFILE_REGISTRY), 6)
         self.assertEqual(
             set(DRAFTING_PROFILE_REGISTRY.keys()), set(DEEP_TYPES)
         )
@@ -123,7 +126,7 @@ class RegistryAndApiTests(unittest.TestCase):
             )
 
     def test_profile_registry_has_no_fallback(self):
-        # The lookup is a closed registry read: identity for the five deep
+        # The lookup is a closed registry read: identity for the six deep
         # types, None for UNKNOWN — never a substitute profile.
         self.assertIsNone(get_drafting_profile(ProceedingType.UNKNOWN))
         for ptype in DEEP_TYPES:
@@ -156,6 +159,14 @@ class ProfileKeyTests(unittest.TestCase):
 
 class PromptKeyTests(unittest.TestCase):
     """Exact closed §20.22 prompt keys; no filenames or paths."""
+
+    def test_prompt_key_sec61_scrutiny_exact(self):
+        self.assertEqual(
+            DRAFTING_PROFILE_REGISTRY[
+                ProceedingType.GST_SEC61_SCRUTINY
+            ].prompt_key,
+            "sec61_scrutiny",
+        )
 
     def test_prompt_key_itc_exact(self):
         self.assertEqual(
@@ -384,7 +395,7 @@ class TupleAndOrderTests(unittest.TestCase):
 
 
 class CoverageTests(unittest.TestCase):
-    """All five deep workflows covered exactly once."""
+    """All six deep workflows covered exactly once."""
 
     def test_all_five_deep_workflows_covered_exactly_once(self):
         self.assertEqual(len(DRAFTING_PROFILE_REGISTRY), len(DEEP_TYPES))
