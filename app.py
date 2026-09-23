@@ -52,7 +52,8 @@ from modules.runtime_security import (
     AuthenticationRequiredError,
     principal_from_streamlit_user,
 )
-from workflows.gst.legal_research import resolve_gst_legal_brief
+from domain.legal_date_engine import build_legal_date_context
+from workflows.gst.legal_research import resolve_gst_legal_brief_from_context
 
 
 def _display(value):
@@ -84,25 +85,40 @@ def _render_checks(checks):
     )
 
 
-def _render_legal_brief(classification, deadline):
+def _render_legal_brief(classification, extraction):
     st.header("Verified legal sources")
-    as_of_date = deadline.notice_date
-    if as_of_date is None:
-        st.info(
-            "No notice date is available, so Dwaar is not selecting a "
-            "date-versioned legal position automatically."
-        )
-        return
-
-    brief = resolve_gst_legal_brief(
+    date_context = build_legal_date_context(extraction.facts)
+    brief = resolve_gst_legal_brief_from_context(
         classification.proceeding_type,
-        as_of_date,
+        date_context,
     )
     st.caption(
-        "Source-verified propositions for the notice-date legal position "
-        f"({as_of_date.isoformat()}). This is research support, not a "
-        "case-specific legal conclusion."
+        "Source-verified propositions selected only when the required "
+        "legal applicability date has verified fact provenance. This is "
+        "research support, not a case-specific legal conclusion."
     )
+
+    if date_context.anchors:
+        st.dataframe(
+            [
+                {
+                    "date_basis": anchor.basis.value,
+                    "effective_date": anchor.effective_date,
+                    "period_start": _display(anchor.period_start),
+                    "period_end": _display(anchor.period_end),
+                    "source_fact_id": anchor.source_fact_id,
+                    "source_page": _display(anchor.source_page),
+                    "source_text": anchor.source_text,
+                }
+                for anchor in date_context.anchors
+            ],
+            hide_index=True,
+        )
+    else:
+        st.info(
+            "No provenance-bearing legal applicability date could be "
+            "derived from confirmed, verified facts."
+        )
 
     if not brief.catalog_valid:
         st.error(
@@ -202,7 +218,7 @@ def _render_phase2_result(result):
         }
     )
 
-    _render_legal_brief(classification, deadline)
+    _render_legal_brief(classification, extraction)
 
     if result.arithmetic_results:
         st.header("Arithmetic results")
