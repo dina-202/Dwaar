@@ -6,7 +6,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 from typing import Mapping, Optional
 
 from domain.runtime_readiness_models import (
