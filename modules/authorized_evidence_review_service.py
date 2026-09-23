@@ -77,41 +77,10 @@ class AuthorizedEvidenceReviewService:
         )
 
     @staticmethod
-    def _snapshot_evidence_ids(payload: dict) -> set[str]:
-        draft = payload.get("draft")
-        if not isinstance(draft, dict):
-            return set()
-        checklist = draft.get("evidence_checklist")
-        if not isinstance(checklist, list):
-            return set()
-        return {
-            item.get("evidence_id")
-            for item in checklist
-            if isinstance(item, dict)
-            and isinstance(item.get("evidence_id"), str)
-            and item.get("evidence_id")
-        }
-
-    def snapshot_evidence_checklist(
-        self,
-        principal: AuthenticatedPrincipal,
-        firm_id: str,
-        *,
-        case_id: str,
-        snapshot_id: str,
+    def _specialist_snapshot_evidence_checklist(
+        payload: dict,
     ) -> List[EvidenceChecklistItem]:
-        """Return the selected historical snapshot's closed evidence list."""
-        self._require_review(principal, firm_id)
-        case = self._cases.get_case(principal, firm_id, case_id)
-        if case is None:
-            raise LookupError("case does not exist")
-        snapshot = self._snapshots.load_snapshot(
-            principal,
-            firm_id,
-            case_id=case.case_id,
-            snapshot_id=snapshot_id,
-        )
-        draft = snapshot.payload.get("draft")
+        draft = payload.get("draft")
         if not isinstance(draft, dict):
             raise ValueError("snapshot draft section is invalid")
         raw_checklist = draft.get("evidence_checklist")
@@ -156,6 +125,128 @@ class AuthorizedEvidenceReviewService:
                 )
             )
         return checklist
+
+    @staticmethod
+    def _triage_snapshot_evidence_checklist(
+        payload: dict,
+    ) -> List[EvidenceChecklistItem]:
+        classification = payload.get("classification")
+        if (
+            not isinstance(classification, dict)
+            or classification.get("support_level") != "triage_only"
+        ):
+            return []
+
+        triage = payload.get("triage_summary")
+        extraction = payload.get("extraction")
+        if not isinstance(triage, dict) or not isinstance(extraction, dict):
+            raise ValueError("triage snapshot evidence context is invalid")
+
+        requested_ids = triage.get("requested_document_fact_ids")
+        annexure_ids = triage.get("referenced_annexure_fact_ids")
+        facts = extraction.get("facts")
+        if (
+            not isinstance(requested_ids, list)
+            or not isinstance(annexure_ids, list)
+            or not isinstance(facts, list)
+        ):
+            raise ValueError("triage snapshot evidence context is invalid")
+        if (
+            any(not isinstance(value, str) or not value for value in requested_ids)
+            or any(not isinstance(value, str) or not value for value in annexure_ids)
+            or len(requested_ids) != len(set(requested_ids))
+            or len(annexure_ids) != len(set(annexure_ids))
+        ):
+            raise ValueError("triage snapshot evidence references are invalid")
+
+        requested = set(requested_ids)
+        annexures = set(annexure_ids)
+        target_ids = requested | annexures
+        if not target_ids:
+            return []
+
+        checklist: List[EvidenceChecklistItem] = []
+        resolved = set()
+        for fact in facts:
+            if not isinstance(fact, dict):
+                continue
+            fact_id = fact.get("fact_id")
+            if fact_id not in target_ids:
+                continue
+            if fact_id in resolved:
+                raise ValueError("triage snapshot evidence reference is ambiguous")
+
+            fact_type = fact.get("fact_type")
+            if fact_id in requested:
+                expected_type = "requested_document"
+                evidence_prefix = "triage.requested_document"
+                text_prefix = "Department-requested record: "
+            else:
+                expected_type = "referenced_annexure"
+                evidence_prefix = "triage.referenced_annexure"
+                text_prefix = "Notice-referenced annexure: "
+
+            source_text = fact.get("source_text")
+            if (
+                fact_type != expected_type
+                or fact.get("status") != "confirmed"
+                or not isinstance(source_text, str)
+                or not source_text.strip()
+            ):
+                raise ValueError("triage snapshot evidence reference is invalid")
+
+            resolved.add(fact_id)
+            checklist.append(
+                EvidenceChecklistItem(
+                    evidence_id=f"{evidence_prefix}.{fact_id}",
+                    requirement_text=text_prefix + source_text,
+                    status=EvidenceStatus.UNKNOWN,
+                )
+            )
+
+        if resolved != target_ids:
+            raise ValueError("triage snapshot evidence reference is unresolved")
+        return checklist
+
+    @classmethod
+    def _snapshot_evidence_checklist_from_payload(
+        cls,
+        payload: dict,
+    ) -> List[EvidenceChecklistItem]:
+        specialist = cls._specialist_snapshot_evidence_checklist(payload)
+        if specialist:
+            return specialist
+        return cls._triage_snapshot_evidence_checklist(payload)
+
+    @classmethod
+    def _snapshot_evidence_ids(cls, payload: dict) -> set[str]:
+        return {
+            item.evidence_id
+            for item in cls._snapshot_evidence_checklist_from_payload(payload)
+        }
+
+    def snapshot_evidence_checklist(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+        snapshot_id: str,
+    ) -> List[EvidenceChecklistItem]:
+        """Return the selected historical snapshot's closed evidence list."""
+        self._require_review(principal, firm_id)
+        case = self._cases.get_case(principal, firm_id, case_id)
+        if case is None:
+            raise LookupError("case does not exist")
+        snapshot = self._snapshots.load_snapshot(
+            principal,
+            firm_id,
+            case_id=case.case_id,
+            snapshot_id=snapshot_id,
+        )
+        return self._snapshot_evidence_checklist_from_payload(
+            snapshot.payload
+        )
 
     def save_review(
         self,
