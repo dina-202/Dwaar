@@ -16,6 +16,7 @@ SCRIPT = ROOT / "scripts" / "runtime_preflight.py"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from modules.llm_client import llm_runtime_configuration_ready
 from modules.runtime_readiness import _ocr_runtime_available
 
 
@@ -60,13 +61,15 @@ class RuntimePreflightCliTests(unittest.TestCase):
             )
         payload = self.payload(completed)
         ocr_available = _ocr_runtime_available()
+        llm_configured = llm_runtime_configuration_ready()
+        runtime_ready = ocr_available and llm_configured
         self.assertEqual(
             completed.returncode,
-            0 if ocr_available else 1,
+            0 if runtime_ready else 1,
             completed.stderr,
         )
-        self.assertIs(payload["ready"], ocr_available)
-        self.assertEqual(len(payload["checks"]), 8)
+        self.assertIs(payload["ready"], runtime_ready)
+        self.assertEqual(len(payload["checks"]), 9)
         ocr_checks = [
             item for item in payload["checks"]
             if item["code"] == "ocr_runtime"
@@ -75,6 +78,15 @@ class RuntimePreflightCliTests(unittest.TestCase):
         self.assertEqual(
             ocr_checks[0]["status"],
             "pass" if ocr_available else "blocked",
+        )
+        llm_checks = [
+            item for item in payload["checks"]
+            if item["code"] == "llm_configuration"
+        ]
+        self.assertEqual(len(llm_checks), 1)
+        self.assertEqual(
+            llm_checks[0]["status"],
+            "pass" if llm_configured else "blocked",
         )
         rendered = completed.stdout
         self.assertNotIn(str(root), rendered)
@@ -106,6 +118,7 @@ class RuntimePreflightCliTests(unittest.TestCase):
             "object_store_configuration",
             "document_key_configuration",
             "document_key_id_configuration",
+            "llm_configuration",
             "db_open_and_migration",
             "db_integrity",
             "object_store_round_trip",
