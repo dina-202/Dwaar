@@ -463,6 +463,7 @@ def _render_phase2_result(result):
     deadline = result.deadline_result
     validation = result.validation_result
     draft = result.draft_result
+    triage_only = classification.support_level.value == "triage_only"
 
     st.header("Classification and support")
     if _classification_failed_for_display(result):
@@ -522,18 +523,24 @@ def _render_phase2_result(result):
         st.warning("No usable notice text was available for fact extraction.")
 
     if extraction.facts:
-        st.dataframe(
-            [
-                {
-                    "Type": _friendly_enum(fact.fact_type),
-                    "Source evidence": _display(fact.source_text),
-                    "Source page": _display(fact.source_page),
-                    "Verification": _friendly_enum(fact.source_verification),
-                }
-                for fact in extraction.facts
-            ],
-            hide_index=True,
-        )
+        if triage_only:
+            st.caption(
+                "Key source-grounded findings are organized in the triage "
+                "working summary above."
+            )
+        else:
+            st.dataframe(
+                [
+                    {
+                        "Type": _friendly_enum(fact.fact_type),
+                        "Source evidence": _display(fact.source_text),
+                        "Source page": _display(fact.source_page),
+                        "Verification": _friendly_enum(fact.source_verification),
+                    }
+                    for fact in extraction.facts
+                ],
+                hide_index=True,
+            )
         with st.expander("Technical details — extracted facts"):
             st.dataframe(
                 [
@@ -675,22 +682,35 @@ def _render_phase2_result(result):
                 hide_index=True,
             )
 
-    st.header("Validation status")
-    if validation.overall_status is ValidationStatus.PASS:
-        st.write("Validation checks passed for the current analysis state.")
-    elif validation.overall_status is ValidationStatus.WARNING:
-        st.warning(
-            "The analysis can continue, but one or more items require "
-            "professional attention."
+    if triage_only:
+        st.header("Triage readiness")
+        st.write(
+            "Source-grounded intake review is available. Specialist "
+            "workflow validation and drafting remain intentionally blocked "
+            "for this form."
         )
+        if extraction.status.value == "partial":
+            st.warning(
+                "Review the original notice before relying on absence-based "
+                "conclusions because extraction is partial."
+            )
     else:
-        st.warning(
-            "The current analysis is not ready for specialist drafting."
+        st.header("Validation status")
+        if validation.overall_status is ValidationStatus.PASS:
+            st.write("Validation checks passed for the current analysis state.")
+        elif validation.overall_status is ValidationStatus.WARNING:
+            st.warning(
+                "The analysis can continue, but one or more items require "
+                "professional attention."
+            )
+        else:
+            st.warning(
+                "The current analysis is not ready for specialist drafting."
+            )
+        st.caption(
+            "Drafting: " + _friendly_enum(validation.draft_eligibility)
         )
-    st.caption(
-        "Drafting: " + _friendly_enum(validation.draft_eligibility)
-    )
-    _render_checks(validation.checks)
+        _render_checks(validation.checks)
     with st.expander("Technical details — validation"):
         st.write(
             {
@@ -700,7 +720,8 @@ def _render_phase2_result(result):
         )
         _render_checks(validation.checks, technical=True)
 
-    st.header("Unresolved requirements")
+    if not triage_only or draft.unresolved_requirements:
+        st.header("Unresolved requirements")
     if draft.unresolved_requirements:
         st.dataframe(
             [
@@ -729,7 +750,8 @@ def _render_phase2_result(result):
     else:
         st.write("None.")
 
-    st.header("Evidence checklist")
+    if not triage_only or draft.evidence_checklist:
+        st.header("Evidence checklist")
     if draft.evidence_checklist:
         st.dataframe(
             [
@@ -756,7 +778,8 @@ def _render_phase2_result(result):
     else:
         st.write("None.")
 
-    st.header("Review requirements")
+    if not triage_only or draft.review_requirements:
+        st.header("Review requirements")
     if draft.review_requirements:
         st.dataframe(
             [
@@ -787,11 +810,12 @@ def _render_phase2_result(result):
 
     if result.triage_summary is not None:
         triage = result.triage_summary
-        st.header("Triage summary")
-        if _classification_failed_for_display(result):
-            st.error(triage.message)
-        else:
-            st.write(triage.message)
+        if not triage_only:
+            st.header("Triage summary")
+            if _classification_failed_for_display(result):
+                st.error(triage.message)
+            else:
+                st.write(triage.message)
         with st.expander("Technical details — triage"):
             st.write(
                 {
