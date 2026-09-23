@@ -1607,41 +1607,108 @@ def _render_snapshot_history(
                     historical_questions = loaded_brief.payload.get(
                         "questions"
                     )
+                    historical_matches = loaded_brief.payload["matches"]
                     if historical_questions is not None:
                         st.subheader(
                             "Historical legal research questions"
                         )
                         if historical_questions:
                             st.dataframe(
-                                historical_questions,
+                                [
+                                    {
+                                        "Question": item["question_text"],
+                                        "Status": _friendly_enum(
+                                            item["status"]
+                                        ),
+                                        "Date basis": _friendly_enum(
+                                            item["date_basis"]
+                                        ),
+                                        "Missing case information": [
+                                            (
+                                                _friendly_enum(
+                                                    selector["fact_type"]
+                                                )
+                                                + (
+                                                    ""
+                                                    if selector[
+                                                        "fact_role"
+                                                    ] == "none"
+                                                    else " — "
+                                                    + _friendly_enum(
+                                                        selector[
+                                                            "fact_role"
+                                                        ]
+                                                    )
+                                                )
+                                            )
+                                            for selector
+                                            in item[
+                                                "missing_fact_selectors"
+                                            ]
+                                        ],
+                                        "Verified sources matched": len(
+                                            item["matched_rule_ids"]
+                                        ),
+                                    }
+                                    for item in historical_questions
+                                ],
                                 hide_index=True,
                             )
                         else:
                             st.write(
                                 "No legal-question state was preserved in "
-                                "this v2 brief."
+                                "this saved brief."
                             )
                     else:
                         st.caption(
-                            "This v1 legal brief predates preserved legal-"
-                            "question state. Its original law/source payload "
-                            "is shown without reconstructing missing history."
+                            "This older legal brief predates preserved "
+                            "legal-question state. Its verified law/source "
+                            "material is shown without reconstructing "
+                            "missing history."
                         )
 
-                    if loaded_brief.payload["matches"]:
+                    if historical_matches:
+                        st.subheader("Historical verified propositions")
                         st.dataframe(
-                            loaded_brief.payload["matches"],
+                            [
+                                {
+                                    "Topic": _friendly_enum(item["topic"]),
+                                    "Provision": item["provision"],
+                                    "Proposition": item["proposition"],
+                                    "Effective from": item["effective_from"],
+                                    "Effective to": _display(
+                                        item["effective_to"]
+                                    ),
+                                    "Official source": item["source_title"],
+                                    "Official URL": item["official_url"],
+                                    "Verified at": item["rule_verified_at"],
+                                }
+                                for item in historical_matches
+                            ],
                             hide_index=True,
                         )
                     else:
                         st.write(
                             "No verified legal proposition was preserved."
                         )
+
+                    if _engineering_diagnostics_enabled():
+                        with st.expander(
+                            "Technical details — historical legal brief"
+                        ):
+                            st.write(
+                                {
+                                    "questions": historical_questions,
+                                    "matches": historical_matches,
+                                }
+                            )
+
                     if loaded_brief.payload["unresolved_topics"]:
                         st.warning(
                             "CA legal research remained required for: "
                             + ", ".join(
-                                loaded_brief.payload[
+                                _friendly_enum(topic)
+                                for topic in loaded_brief.payload[
                                     "unresolved_topics"
                                 ]
                             )
