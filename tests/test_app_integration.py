@@ -2710,7 +2710,7 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
             text,
         )
         self.assertIn("CBIC Circular 193/05/2023-GST", text)
-        self.assertIn("Itc Eligibility", text)
+        self.assertIn("ITC Eligibility", text)
 
         for internal_value in (
             "gst_sec73_itc.machine_question",
