@@ -11,7 +11,10 @@ from domain.auth_models import (
     AuthorizationError,
 )
 from domain.authorization import require_firm_permission
-from domain.fact_review_models import FactReviewDecision
+from domain.fact_review_models import (
+    FactReviewDecision,
+    latest_fact_reviews,
+)
 from domain.draft_work_product_models import (
     DraftReviewStatus,
     DraftVersionRef,
@@ -283,11 +286,14 @@ class AuthorizedDraftWorkProductService:
             target_status is DraftReviewStatus.APPROVED
             and self._fact_reviews is not None
         ):
-            rejected = [
-                review.fact_id
-                for review in self._fact_reviews.list_review_refs(
+            latest_reviews = latest_fact_reviews(
+                self._fact_reviews.list_review_refs(
                     version.source_snapshot_id
                 )
+            )
+            rejected = [
+                fact_id
+                for fact_id, review in latest_reviews.items()
                 if review.decision is FactReviewDecision.REJECTED
             ]
             if rejected:
