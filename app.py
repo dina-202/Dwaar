@@ -2957,13 +2957,18 @@ def _render_case_work_queue(principal, active_firm):
     target_status = status_labels[status_label]
 
     deadline_text = st.text_input(
-        "Response deadline (YYYY-MM-DD, blank to clear)",
+        "Operational response deadline (YYYY-MM-DD, blank to clear)",
         value=(
             ""
             if selected.response_deadline is None
             else selected.response_deadline.isoformat()
         ),
         key=f"case_ops_deadline_{selected.case_id}",
+    )
+    st.caption(
+        "Firm-maintained operational date. Enter or change it only after "
+        "professional/portal verification. This does not rewrite the notice "
+        "facts or Dwaar's engine-calculated deadline."
     )
 
     member_labels = {"Unassigned": None}
@@ -3011,7 +3016,7 @@ def _render_case_work_queue(principal, active_firm):
         )
     except ValueError:
         st.error(
-            "Response deadline must use YYYY-MM-DD, or be left blank."
+            "Operational response deadline must use YYYY-MM-DD, or be left blank."
         )
         return
 
@@ -3046,7 +3051,7 @@ def _render_case_work_queue(principal, active_firm):
         f"Case operations saved. Status: **{_friendly_enum(updated.status)}**."
     )
     st.caption(
-        "Response deadline: "
+        "Operational response deadline: "
         + _display(updated.response_deadline)
         + " · Assignee: "
         + _display(updated.assigned_to)
