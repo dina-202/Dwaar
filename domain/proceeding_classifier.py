@@ -40,6 +40,7 @@ from modules.llm_client import call_gemini
 
 # The five approved Phase-2 deep-workflow ProceedingTypes (§4, §12).
 _DEEP_PROCEEDING_TYPES = {
+    ProceedingType.GST_SEC61_SCRUTINY,
     ProceedingType.GST_SEC73_ITC,
     ProceedingType.GST_SEC73_GENERAL,
     ProceedingType.GST_SEC73_RCM,
@@ -228,6 +229,8 @@ def _deep_markers_satisfied(
     Every rule is an AND of the exact form and the required explicit marker
     presence; alternatives within a marker set are OR:
 
+    - GST_SEC61_SCRUTINY: ASMT_10 AND ("section 61" OR "rule 99") AND
+                          an explicit discrepancy marker
     - GST_SEC73_ITC:      DRC_01 AND "section 73" AND ITC marker set
     - GST_SEC73_GENERAL:  DRC_01 AND "section 73" AND general output-tax /
                           short-payment marker set, AND NOT the ITC marker
@@ -241,6 +244,21 @@ def _deep_markers_satisfied(
 
     No other ProceedingType may ever be deep.
     """
+    if candidate == ProceedingType.GST_SEC61_SCRUTINY:
+        return (
+            notice_form == NoticeForm.ASMT_10
+            and (
+                _has_marker(raw_text, "section 61")
+                or _has_marker(raw_text, "rule 99")
+            )
+            and any(
+                _has_marker(raw_text, marker)
+                for marker in (
+                    "discrepancy",
+                    "discrepancies",
+                )
+            )
+        )
     if candidate == ProceedingType.GST_SEC73_ITC:
         return (
             notice_form == NoticeForm.DRC_01
