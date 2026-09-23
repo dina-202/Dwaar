@@ -520,6 +520,12 @@ def _render_phase2_result(result):
             "the current extraction."
         )
 
+    if deadline.response_period_days is not None:
+        st.write(
+            f"**Notice-stated response period:** "
+            f"{deadline.response_period_days} day(s)"
+        )
+
     if deadline.response_deadline is not None:
         st.write(
             f"**Response deadline:** {deadline.response_deadline} "
@@ -527,6 +533,12 @@ def _render_phase2_result(result):
         )
         if deadline.days_remaining is not None:
             st.caption(f"{deadline.days_remaining} day(s) remaining.")
+    elif deadline.response_period_days is not None:
+        st.warning(
+            "The response period is available, but the calendar deadline "
+            "cannot be calculated safely from the verified date inputs. "
+            "Dwaar will not assume a service/receipt date."
+        )
     else:
         st.warning(
             "Exact response deadline is not available from verified inputs. "
