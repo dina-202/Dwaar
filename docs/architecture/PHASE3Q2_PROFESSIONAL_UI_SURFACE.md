@@ -20,8 +20,12 @@ The default professional surface answers four questions:
 3. What needs attention or action?
 4. Where should I continue the work?
 
-Machine identifiers and implementation metadata remain available under
-collapsed **Technical details** sections for support, audit, and forensic use.
+Machine identifiers and implementation metadata remain preserved for support,
+audit, and forensic use, but they are not part of the default CA surface.
+Engineering diagnostics are enabled only when the deployment explicitly sets
+`DWAAR_ENGINEERING_DIAGNOSTICS` to a truthy value. When enabled, Dwaar shows
+a visible operator warning and exposes the existing **Technical details**
+sections. The default is off.
 
 ## Surfaces
 
@@ -88,8 +92,10 @@ Technical:
 - case/client/registration IDs
 - analysis-source marker
 
-Default case titles use professional proceeding labels. An unknown triage
-proceeding is labelled "Intake", not the raw word "unknown".
+Default case titles use professional proceeding labels. When a triage notice
+has an unknown proceeding but a known notice family, the known family is used
+as context (for example `ASMT-10 — Assessment / scrutiny`). Only a notice
+whose proceeding and family are both unknown falls back to "Intake".
 
 ### Evidence review
 
@@ -115,4 +121,5 @@ Phase 3Q.2 does not:
 - infer legal conclusions;
 - change deep-workflow eligibility.
 
-The technical surface is secondary, not removed.
+The technical surface is engineering-only by default, not removed from the
+codebase or from the underlying audit/provenance model.
