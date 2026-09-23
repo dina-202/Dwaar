@@ -18,10 +18,7 @@ from domain.models import (
     SourceTextOrigin,
     ValidationStatus,
 )
-from domain.phase2_orchestrator import (
-    classification_execution_failed,
-    run_phase2_analysis_from_document_pages,
-)
+from domain.phase2_orchestrator import run_phase2_analysis_from_document_pages
 from modules.evidence_workspace import (
     build_evidence_documents,
     evidence_workspace_key,
@@ -209,6 +206,16 @@ def _render_legal_brief(classification, extraction):
         )
 
 
+def _classification_failed_for_display(result):
+    triage = result.triage_summary
+    return (
+        triage is not None
+        and triage.message.startswith(
+            "Notice classification could not be completed"
+        )
+    )
+
+
 def _friendly_enum(value):
     raw = _display(value)
     if raw == "unavailable":
@@ -232,7 +239,7 @@ def _render_phase2_result(result):
     draft = result.draft_result
 
     st.header("Classification and support")
-    if classification_execution_failed(classification):
+    if _classification_failed_for_display(result):
         st.error(
             "AI classification could not be completed. Dwaar has not "
             "determined that this is an unknown notice; the classification "
@@ -539,7 +546,7 @@ def _render_phase2_result(result):
     if result.triage_summary is not None:
         triage = result.triage_summary
         st.header("Triage summary")
-        if classification_execution_failed(classification):
+        if _classification_failed_for_display(result):
             st.error(triage.message)
         else:
             st.write(triage.message)
@@ -588,7 +595,7 @@ def _render_phase2_result(result):
             st.markdown(section.rendered_text)
     else:
         st.header("Drafting status")
-        if classification_execution_failed(classification):
+        if _classification_failed_for_display(result):
             st.warning(
                 "Drafting is unavailable because notice classification did "
                 "not complete successfully."
