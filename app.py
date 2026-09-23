@@ -1270,25 +1270,41 @@ def _render_draft_work_product_workspace(
         st.dataframe(
             [
                 {
-                    "draft_version_id": item.draft_version_id,
-                    "version_number": item.version_number,
-                    "source_snapshot_id": item.source_snapshot_id,
-                    "parent_draft_version_id": _display(
-                        item.parent_draft_version_id
+                    "Version": item.version_number,
+                    "Type": (
+                        "Generated baseline"
+                        if item.generated_baseline
+                        else "Professional edit"
                     ),
-                    "generated_baseline": item.generated_baseline,
-                    "review_status": item.review_status.value,
-                    "created_at": item.created_at.isoformat(),
-                    "created_by": item.created_by,
-                    "reviewed_at": _display(item.reviewed_at),
-                    "reviewed_by": _display(item.reviewed_by),
-                    "approved_at": _display(item.approved_at),
-                    "approved_by": _display(item.approved_by),
+                    "Review status": _friendly_enum(item.review_status),
+                    "Created at": item.created_at.isoformat(
+                        timespec="minutes"
+                    ),
+                    "Created by": item.created_by,
+                    "Reviewed at": _display(item.reviewed_at),
+                    "Approved at": _display(item.approved_at),
                 }
                 for item in versions
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — draft history"):
+            st.dataframe(
+                [
+                    {
+                        "draft_version_id": item.draft_version_id,
+                        "source_snapshot_id": item.source_snapshot_id,
+                        "parent_draft_version_id": _display(
+                            item.parent_draft_version_id
+                        ),
+                        "review_status": item.review_status.value,
+                        "reviewed_by": _display(item.reviewed_by),
+                        "approved_by": _display(item.approved_by),
+                    }
+                    for item in versions
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No durable draft work-product versions yet.")
 
@@ -1383,16 +1399,22 @@ def _render_draft_work_product_workspace(
                         case_id=reopened.case.case_id,
                     )
                     st.write(
-                        {
-                            "created_draft_version_id": (
-                                created.draft_version_id
-                            ),
-                            "version_number": created.version_number,
-                            "source_snapshot_id": (
-                                created.source_snapshot_id
-                            ),
-                        }
+                        f"Generated draft baseline saved as version "
+                        f"**{created.version_number}**."
                     )
+                    with st.expander(
+                        "Technical details — generated draft baseline"
+                    ):
+                        st.write(
+                            {
+                                "created_draft_version_id": (
+                                    created.draft_version_id
+                                ),
+                                "source_snapshot_id": (
+                                    created.source_snapshot_id
+                                ),
+                            }
+                        )
         else:
             st.warning(
                 "Save an analysis snapshot before creating a durable "
@@ -1437,14 +1459,18 @@ def _render_draft_work_product_workspace(
         return
 
     st.write(
-        {
-            "draft_version_id": selected.draft_version_id,
-            "version_number": selected.version_number,
-            "source_snapshot_id": selected.source_snapshot_id,
-            "review_status": selected.review_status.value,
-            "content_sha256": selected.content_sha256,
-        }
+        f"**Version {selected.version_number}** · "
+        f"{_friendly_enum(selected.review_status)}"
     )
+    with st.expander("Technical details — selected draft"):
+        st.write(
+            {
+                "draft_version_id": selected.draft_version_id,
+                "source_snapshot_id": selected.source_snapshot_id,
+                "review_status": selected.review_status.value,
+                "content_sha256": selected.content_sha256,
+            }
+        )
 
     latest = versions[-1]
     is_latest = latest.draft_version_id == selected.draft_version_id
@@ -1481,17 +1507,23 @@ def _render_draft_work_product_workspace(
                 st.error("The edited draft version could not be saved.")
             else:
                 st.write(
-                    {
-                        "created_draft_version_id": (
-                            created.draft_version_id
-                        ),
-                        "version_number": created.version_number,
-                        "parent_draft_version_id": (
-                            created.parent_draft_version_id
-                        ),
-                        "review_status": created.review_status.value,
-                    }
+                    f"Professional edit saved as version "
+                    f"**{created.version_number}**."
                 )
+                with st.expander(
+                    "Technical details — saved draft version"
+                ):
+                    st.write(
+                        {
+                            "created_draft_version_id": (
+                                created.draft_version_id
+                            ),
+                            "parent_draft_version_id": (
+                                created.parent_draft_version_id
+                            ),
+                            "review_status": created.review_status.value,
+                        }
+                    )
     else:
         st.text_area(
             "Professional draft text",
@@ -1544,13 +1576,20 @@ def _render_draft_work_product_workspace(
             else:
                 selected = updated
                 st.write(
-                    {
-                        "reviewed_draft_version_id": (
-                            updated.draft_version_id
-                        ),
-                        "review_status": updated.review_status.value,
-                    }
+                    "Draft review status updated to "
+                    f"**{_friendly_enum(updated.review_status)}**."
                 )
+                with st.expander(
+                    "Technical details — draft review transition"
+                ):
+                    st.write(
+                        {
+                            "reviewed_draft_version_id": (
+                                updated.draft_version_id
+                            ),
+                            "review_status": updated.review_status.value,
+                        }
+                    )
 
     if selected.review_status in {
         DraftReviewStatus.REVIEWED,
