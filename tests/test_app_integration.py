@@ -3784,7 +3784,12 @@ class CaseWorkQueueUiTests(unittest.TestCase):
         self.assertEqual(kwargs["assigned_to"], "OIDC-ASSIGNEE")
         self.assertEqual(kwargs["reviewer_id"], "OIDC-REVIEWER")
         self.assertIsNotNone(kwargs["updated_at"].tzinfo)
-        self.assertIn("updated_case_id", log_text(fake))
+        text = log_text(fake)
+        self.assertIn("updated_case_id", text)
+        self.assertIn("Operational response deadline", text)
+        self.assertIn("Firm-maintained operational date", text)
+        self.assertIn("professional/portal verification", text)
+        self.assertIn("does not rewrite the notice facts", text)
         self.assertEqual(
             fake.session_state["_dwaar_focused_case_id"],
             item.case_id,
@@ -3810,7 +3815,7 @@ class CaseWorkQueueUiTests(unittest.TestCase):
         )
 
         self.assertIn(
-            "Response deadline must use YYYY-MM-DD",
+            "Operational response deadline must use YYYY-MM-DD",
             log_text(fake),
         )
         service.update_case_operations.assert_not_called()
