@@ -180,7 +180,9 @@ def build_professional_case_attention(
                     "The latest saved analysis contains an extracted fact "
                     "whose latest professional review is Rejected. Re-review "
                     "the source fact before relying on this analysis for "
-                    "draft approval.",
+                    "draft approval; if the extraction is wrong, re-run the "
+                    "notice and save a new analysis version rather than "
+                    "overwriting this history.",
                     latest_snapshot.snapshot_id,
                 )
             )
