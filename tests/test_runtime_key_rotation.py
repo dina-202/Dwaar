@@ -15,6 +15,10 @@ from domain.case_models import (
 )
 from domain.models import NoticeForm, ProceedingType
 from modules.encrypted_document_store import EncryptedLocalDocumentStore
+from modules.runtime_backup import (
+    create_runtime_backup,
+    verify_runtime_backup,
+)
 from modules.runtime_key_rotation import (
     RuntimeKeyRotationError,
     rehearse_document_key_rotation,
@@ -112,6 +116,27 @@ class RuntimeKeyRotationTests(unittest.TestCase):
             NEW_KEY,
         )
         self.assertEqual(target_store.get(STORAGE_KEY), PLAINTEXT)
+
+    def test_rotated_runtime_can_create_verified_new_key_backup(self):
+        self.rotate()
+        backup_root = self.root / "rotated-backups"
+        manifest = create_runtime_backup(
+            db_path=str(self.target_db),
+            object_root=str(self.target_objects),
+            backup_root=str(backup_root),
+            backup_id="after-rotation",
+            created_at=NOW,
+            document_key=NEW_KEY,
+            document_key_id=NEW_ID,
+        )
+        self.assertEqual(manifest.document_key_id, NEW_ID)
+        verified = verify_runtime_backup(
+            str(backup_root / "after-rotation"),
+            document_key=NEW_KEY,
+            expected_document_key_id=NEW_ID,
+        )
+        self.assertEqual(verified.backup_id, "after-rotation")
+        self.assertEqual(verified.object_count, 1)
 
     def test_source_runtime_remains_unchanged_and_usable(self):
         self.rotate()
