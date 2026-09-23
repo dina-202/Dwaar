@@ -1025,6 +1025,28 @@ class PromptContractTests(unittest.TestCase):
         self.assertIn("GST_SEC129_ENFORCE", prompt)
         self.assertIn("NoticeForm", prompt)
 
+    def test_prompt_teaches_section61_candidate_without_granting_support(self):
+        prompt = proceeding_classifier._build_classification_prompt(
+            "FORM GST ASMT-10 under Section 61 with discrepancy"
+        )
+        self.assertIn(
+            "ASMT_10 + explicit Section 61 or Rule 99 scrutiny marker",
+            prompt,
+        )
+        self.assertIn("GST_SEC61_SCRUTINY", prompt)
+        self.assertIn(
+            "Python validates every candidate",
+            prompt,
+        )
+        self.assertIn(
+            "Do NOT output or decide: support_level",
+            prompt,
+        )
+        self.assertIn(
+            "use UNKNOWN; do not force a nearest workflow",
+            prompt,
+        )
+
     def test_classifier_has_no_second_public_classification_api(self):
         # One public architecture: classify_notice. No registry bypass.
         public = [
