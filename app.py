@@ -52,8 +52,10 @@ from modules.runtime_security import (
     AuthenticationRequiredError,
     principal_from_streamlit_user,
 )
-from domain.legal_date_engine import build_legal_date_context
-from workflows.gst.legal_research import resolve_gst_legal_brief_from_context
+from workflows.gst.legal_research import (
+    build_gst_legal_date_context,
+    resolve_gst_legal_brief_from_context,
+)
 
 
 def _display(value):
@@ -87,7 +89,7 @@ def _render_checks(checks):
 
 def _render_legal_brief(classification, extraction):
     st.header("Verified legal sources")
-    date_context = build_legal_date_context(extraction.facts)
+    date_context = build_gst_legal_date_context(extraction.facts)
     brief = resolve_gst_legal_brief_from_context(
         classification.proceeding_type,
         date_context,
@@ -115,7 +117,7 @@ def _render_legal_brief(classification, extraction):
             hide_index=True,
         )
     else:
-        st.info(
+        st.write(
             "No provenance-bearing legal applicability date could be "
             "derived from confirmed, verified facts."
         )
