@@ -1662,6 +1662,9 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
         ]
         result.deadline_result.response_period_days = 30
         result.deadline_result.response_deadline = None
+        result.draft_result.unresolved_requirements = []
+        result.draft_result.evidence_checklist = []
+        result.draft_result.review_requirements = []
         return result
 
     def test_triage_only_notice_renders_source_grounded_working_summary(self):
@@ -1687,6 +1690,21 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
         self.assertIn("Next review steps", text)
         self.assertIn("Confirm the actual service/receipt date", text)
         self.assertNotIn("model claim must not render", text)
+
+    def test_triage_primary_workspace_avoids_empty_deep_workflow_sections(self):
+        fake, *_ = run_app(result=self._triage_result())
+        rendered = headers(fake)
+        self.assertIn("Triage working summary", rendered)
+        self.assertIn("Triage readiness", rendered)
+        self.assertNotIn("Validation status", rendered)
+        self.assertNotIn("Unresolved requirements", rendered)
+        self.assertNotIn("Evidence checklist", rendered)
+        self.assertNotIn("Review requirements", rendered)
+        self.assertNotIn("Triage summary", rendered)
+        self.assertIn(
+            "Key source-grounded findings are organized",
+            log_text(fake),
+        )
 
     def test_partial_triage_warns_that_positive_findings_may_be_incomplete(self):
         fake, *_ = run_app(
