@@ -18,6 +18,7 @@ from typing import Dict, List, Optional, Tuple, Union
 # --- 3.1 Enums ------------------------------------------------------------
 
 class ProceedingType(Enum):
+    GST_SEC61_SCRUTINY = "gst_sec61_scrutiny"
     GST_SEC73_GENERAL = "gst_sec73_general"
     GST_SEC73_ITC = "gst_sec73_itc"
     GST_SEC73_RCM = "gst_sec73_rcm"
