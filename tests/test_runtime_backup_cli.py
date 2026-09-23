@@ -28,6 +28,7 @@ SCRIPT = ROOT / "scripts" / "runtime_backup.py"
 NOW = datetime(2026, 9, 23, 8, 0, tzinfo=timezone.utc)
 KEY = b"p" * 32
 STORAGE_KEY = "objects/" + "c" * 32
+KEY_ID = "doc-key-cli-a"
 
 
 class RuntimeBackupCliTests(unittest.TestCase):
@@ -74,7 +75,7 @@ class RuntimeBackupCliTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def environment(self, key=KEY):
+    def environment(self, key=KEY, key_id=KEY_ID):
         values = dict(os.environ)
         values.update(
             {
@@ -84,6 +85,7 @@ class RuntimeBackupCliTests(unittest.TestCase):
                 "DWAAR_DOCUMENT_KEY_B64": base64.b64encode(
                     key
                 ).decode("ascii"),
+                "DWAAR_DOCUMENT_KEY_ID": key_id,
             }
         )
         return values
@@ -229,6 +231,42 @@ class RuntimeBackupCliTests(unittest.TestCase):
             {"error": "verification_failed", "ok": False},
         )
         self.assertEqual(wrong.stderr, "")
+
+    def test_create_missing_key_id_is_configuration_error(self):
+        values = self.environment()
+        values.pop("DWAAR_DOCUMENT_KEY_ID", None)
+        completed = self.run_cli(
+            "create",
+            "--backup-id",
+            "missing-key-id",
+            environment=values,
+        )
+        self.assertEqual(completed.returncode, 2)
+        self.assertEqual(
+            self.payload(completed),
+            {"error": "configuration_invalid", "ok": False},
+        )
+
+    def test_verify_with_wrong_key_id_fails_safely(self):
+        created = self.run_cli(
+            "create",
+            "--backup-id",
+            "cli-key-id",
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        wrong = self.run_cli(
+            "verify",
+            str(self.backup_root / "cli-key-id"),
+            environment=self.environment(
+                key=KEY,
+                key_id="doc-key-cli-b",
+            ),
+        )
+        self.assertEqual(wrong.returncode, 1)
+        self.assertEqual(
+            self.payload(wrong),
+            {"error": "verification_failed", "ok": False},
+        )
 
     def test_create_missing_backup_root_is_configuration_error(self):
         values = self.environment()
