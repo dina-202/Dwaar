@@ -4314,6 +4314,36 @@ class DurableIntakeUiTests(unittest.TestCase):
         )
 
 
+    def test_triage_case_title_uses_known_family_instead_of_generic_intake(self):
+        result = make_result(
+            support_level=SupportLevel.TRIAGE_ONLY,
+            proceeding_type=ProceedingType.UNKNOWN,
+            include_arithmetic=False,
+            draft_status=DraftGenerationStatus.BLOCKED,
+            draft_eligibility=DraftEligibility.BLOCKED,
+            post_status=None,
+            triage_summary=make_triage(
+                "triage",
+                support_level=SupportLevel.TRIAGE_ONLY,
+                proceeding_type=ProceedingType.UNKNOWN,
+            ),
+        )
+        result.classification.notice_form = NoticeForm.ASMT_10
+        result.classification.notice_family = NoticeFamily.ASSESSMENT_SCRUTINY
+        result.triage_summary.notice_form = NoticeForm.ASMT_10
+        fake, *_ = run_app(result=result)
+        title_calls = [
+            call
+            for call in calls_named(fake, "text_input")
+            if call[2].get("key", "").startswith("intake_title_")
+        ]
+        self.assertEqual(len(title_calls), 1)
+        self.assertEqual(
+            title_calls[0][2]["value"],
+            "ASMT-10 — Assessment / scrutiny",
+        )
+
+
 class EvidenceWorkspaceUiTests(unittest.TestCase):
     def _supporting_upload(self):
         return _UploadedFile(
