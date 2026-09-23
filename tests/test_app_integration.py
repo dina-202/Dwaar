@@ -2606,6 +2606,110 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
         self.assertNotIn("fact_role", text)
         self.assertNotIn("allowed_in_draft", text)
 
+    def test_customer_saved_legal_brief_hides_machine_ids(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+
+        brief_ref = Mock()
+        brief_ref.legal_brief_id = "LEGAL-1"
+        brief_ref.created_at = datetime(
+            2026, 8, 2, 13, 0, tzinfo=timezone.utc
+        )
+        brief_ref.catalog_version = "gst-catalog-test"
+        brief_ref.as_of_date = date(2026, 8, 1)
+        brief_ref.proceeding_type = ProceedingType.GST_SEC73_ITC
+
+        legal_service = Mock()
+        legal_service.list_for_snapshot.return_value = [brief_ref]
+        loaded_brief = Mock()
+        loaded_brief.payload = {
+            "questions": [
+                {
+                    "question_id": "gst_sec73_itc.machine_question",
+                    "question_text": (
+                        "Which source-verified mismatch regime applies?"
+                    ),
+                    "topic": "itc_mismatch_verification",
+                    "date_basis": "tax_period_end",
+                    "status": "source_verified_research_ready",
+                    "related_fact_ids": ["F-SECRET-LEGAL"],
+                    "missing_fact_selectors": [],
+                    "matched_rule_ids": ["rule.secret.1"],
+                }
+            ],
+            "matches": [
+                {
+                    "rule_id": "rule.secret.1",
+                    "rule_key": "secret.rule.key",
+                    "topic": "itc_mismatch_verification",
+                    "provision": "Circular 193/05/2023-GST",
+                    "proposition": (
+                        "Verified historical mismatch guidance applies "
+                        "for the preserved period."
+                    ),
+                    "effective_from": "2019-04-01",
+                    "effective_to": "2021-12-31",
+                    "jurisdiction": "IN-GST",
+                    "source_id": "source.secret.1",
+                    "source_title": "CBIC Circular 193/05/2023-GST",
+                    "official_url": "https://cbic-gst.gov.in/",
+                    "source_version_label": "test-version",
+                    "rule_verified_at": "2026-09-23",
+                }
+            ],
+            "unresolved_topics": ["itc_eligibility"],
+        }
+        legal_service.load.return_value = loaded_brief
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm()],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            legal_brief_service=legal_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(
+                {"view_legal_brief_LEGAL-1": True}
+            ),
+        )
+
+        legal_service.load.assert_called_once()
+        text = log_text(fake)
+        self.assertIn(
+            "Which source-verified mismatch regime applies?",
+            text,
+        )
+        self.assertIn("Circular 193/05/2023-GST", text)
+        self.assertIn(
+            "Verified historical mismatch guidance applies",
+            text,
+        )
+        self.assertIn("CBIC Circular 193/05/2023-GST", text)
+        self.assertIn("Itc Eligibility", text)
+
+        for internal_value in (
+            "gst_sec73_itc.machine_question",
+            "F-SECRET-LEGAL",
+            "rule.secret.1",
+            "secret.rule.key",
+            "source.secret.1",
+        ):
+            self.assertNotIn(internal_value, text)
+
+        technical_expanders = [
+            call
+            for call in calls_named(fake, "expander")
+            if call[1]
+            and "historical legal brief" in str(call[1][0]).lower()
+        ]
+        self.assertEqual(technical_expanders, [])
+
+
     def test_snapshot_load_failure_does_not_leak_backend_detail(self):
         case_service = Mock()
         case_service.list_cases.return_value = [self._case()]
