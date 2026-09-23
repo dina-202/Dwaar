@@ -37,6 +37,7 @@ from domain.draft_work_product_models import (
 from domain.fact_review_models import (
     FACT_REVIEW_SCHEMA_VERSION,
     FactReviewDecision,
+    FactReviewRef,
 )
 from domain.models import NoticeForm, ProceedingType
 from modules.analysis_snapshot import encode_snapshot_payload
@@ -315,25 +316,57 @@ class FactReviewIntegrationTests(unittest.TestCase):
         self.assertNotIn(SOURCE_TEXT, repr(event.payload))
         self.assertNotIn(REVIEW_NOTE, repr(event.payload))
 
-    def test_duplicate_terminal_review_is_rejected(self):
-        kwargs = dict(
-            principal=PRINCIPAL,
-            firm_id="F-1",
+    def test_later_decision_supersedes_operational_state_without_overwrite(self):
+        first = self.service.save_review(
+            PRINCIPAL,
+            "F-1",
             case_id="CASE-1",
             snapshot_id="SNAP-1",
             fact_id="F-001",
+            decision=FactReviewDecision.REJECTED,
             reviewer_note=None,
             reviewed_at=NOW,
         )
-        self.service.save_review(
+        later_at = datetime(2026, 9, 23, 17, 31, tzinfo=timezone.utc)
+        second = self.service.save_review(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            fact_id="F-001",
             decision=FactReviewDecision.CONFIRMED,
-            **kwargs,
+            reviewer_note="Rechecked against the notice source.",
+            reviewed_at=later_at,
         )
-        with self.assertRaises(Exception):
-            self.service.save_review(
-                decision=FactReviewDecision.REJECTED,
-                **kwargs,
-            )
+        history = self.service.list_reviews(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+        self.assertEqual(
+            [item.review_id for item in history],
+            [first.review_id, second.review_id],
+        )
+        latest = self.service.latest_reviews_by_fact(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+        self.assertIs(
+            latest["F-001"].decision,
+            FactReviewDecision.CONFIRMED,
+        )
+        self.assertEqual(
+            self.service.rejected_fact_ids(
+                PRINCIPAL,
+                "F-1",
+                case_id="CASE-1",
+                snapshot_id="SNAP-1",
+            ),
+            set(),
+        )
 
     def test_caller_cannot_review_fact_not_in_snapshot(self):
         with self.assertRaisesRegex(LookupError, "fact does not exist"):
@@ -407,9 +440,20 @@ class DraftApprovalFactReviewGateTests(unittest.TestCase):
         )
         drafts.get_version_ref.return_value = version
         fact_reviews = mock.Mock()
-        rejected = mock.Mock()
-        rejected.fact_id = "F-001"
-        rejected.decision = FactReviewDecision.REJECTED
+        rejected = FactReviewRef(
+            review_id="FREV-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            fact_id="F-001",
+            fact_fingerprint="c" * 64,
+            source_text_sha256="d" * 64,
+            decision=FactReviewDecision.REJECTED,
+            byte_size=10,
+            sha256_hex="e" * 64,
+            storage_key="objects/" + "4" * 32,
+            reviewed_at=NOW,
+            reviewed_by=PRINCIPAL.user_id,
+        )
         fact_reviews.list_review_refs.return_value = [rejected]
 
         service = AuthorizedDraftWorkProductService(
@@ -490,9 +534,20 @@ class DraftApprovalFactReviewGateTests(unittest.TestCase):
             reviewed_by=PRINCIPAL.user_id,
         )
         drafts.get_version_ref.return_value = version
-        confirmed = mock.Mock()
-        confirmed.fact_id = "F-001"
-        confirmed.decision = FactReviewDecision.CONFIRMED
+        confirmed = FactReviewRef(
+            review_id="FREV-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            fact_id="F-001",
+            fact_fingerprint="c" * 64,
+            source_text_sha256="d" * 64,
+            decision=FactReviewDecision.CONFIRMED,
+            byte_size=10,
+            sha256_hex="e" * 64,
+            storage_key="objects/" + "4" * 32,
+            reviewed_at=NOW,
+            reviewed_by=PRINCIPAL.user_id,
+        )
         fact_reviews = mock.Mock()
         fact_reviews.list_review_refs.return_value = [confirmed]
         transition.return_value = mock.sentinel.approved
