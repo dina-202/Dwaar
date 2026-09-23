@@ -526,6 +526,14 @@ def headers(fake):
 def calls_named(fake, name):
     return [call for call in fake.calls if call[0] == name]
 
+def download_calls_labeled(fake, label):
+    return [
+        call
+        for call in calls_named(fake, "download_button")
+        if call[1] and call[1][0] == label
+    ]
+
+
 
 def run_app(
     *,
@@ -1255,9 +1263,10 @@ class SourceBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(prohibited, lowered, prohibited)
 
-    def test_only_reviewed_draft_export_surface_exists(self):
+    def test_download_surfaces_are_source_document_or_reviewed_draft_only(self):
         lowered = SOURCE.lower()
-        self.assertEqual(lowered.count("download_button"), 1)
+        self.assertEqual(lowered.count("download_button"), 2)
+        self.assertIn("download original notice pdf", lowered)
         self.assertIn("download reviewed draft docx", lowered)
         self.assertIn("draftreviewstatus.reviewed", lowered)
         self.assertIn("draftreviewstatus.approved", lowered)
@@ -3490,7 +3499,7 @@ class DraftWorkProductUiTests(unittest.TestCase):
         )
         self.assertIn("reviewed_draft_version_id", log_text(fake))
         self.assertEqual(
-            len(calls_named(fake, "download_button")),
+            len(download_calls_labeled(fake, "Download reviewed draft DOCX")),
             1,
         )
 
@@ -3510,7 +3519,14 @@ class DraftWorkProductUiTests(unittest.TestCase):
             button_values={"open_saved_case_CASE-1": True},
         )
 
-        self.assertEqual(calls_named(fake, "download_button"), [])
+        self.assertEqual(
+            download_calls_labeled(fake, "Download reviewed draft DOCX"),
+            [],
+        )
+        self.assertEqual(
+            len(download_calls_labeled(fake, "Download original notice PDF")),
+            1,
+        )
         draft_service.export_version_docx.assert_not_called()
 
     def test_customer_draft_history_hides_audit_identity_ids(self):
