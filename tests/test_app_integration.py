@@ -1208,6 +1208,11 @@ class EngineeringDiagnosticsUiTests(unittest.TestCase):
         self.assertNotIn("check.pass", text)
         self.assertNotIn('"fact_id"', text)
         self.assertNotIn("Engineering diagnostics are enabled", text)
+        self.assertNotIn("Phase-2", text)
+        self.assertIn(
+            "structured professional review",
+            text,
+        )
 
     def test_engineering_mode_preserves_diagnostics_and_warns_operator(self):
         fake, *_ = run_app(engineering_diagnostics=True)
@@ -1261,7 +1266,7 @@ class UploadAndFailureTests(unittest.TestCase):
         self.assertEqual(events, ["getvalue:notice.pdf", "extract", "orchestrator"])
         self.assertEqual(today_calls, 2)
         text = log_text(fake)
-        self.assertIn("Phase-2 analysis could not be completed.", text)
+        self.assertIn("Notice analysis could not be completed.", text)
         self.assertNotIn("private infrastructure detail", text)
         self.assertNotIn("Specialist draft", headers(fake))
         self.assertEqual(calls_named(fake, "expander"), [])
@@ -1426,7 +1431,13 @@ class TriageBranchTests(unittest.TestCase):
             else "Triage summary"
         )
         self.assertIn(expected_header, headers(fake))
-        self.assertIn(expected_message, text)
+        self.assertIn(
+            expected_message.replace(
+                "Phase-2 analysis",
+                "notice analysis",
+            ),
+            text,
+        )
         self.assertEqual(calls_named(fake, "markdown"), [])
         self.assertNotIn(RENDERED_ONE, text)
         return fake
