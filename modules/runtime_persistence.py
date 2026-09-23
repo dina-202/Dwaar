@@ -341,10 +341,18 @@ def build_authorized_professional_workbench_service(
         LocalSQLiteDraftVersionRepository(db_path),
         document_store,
     )
+    evidence_review_service = AuthorizedEvidenceReviewService(
+        case_service,
+        snapshot_service,
+        access_repository,
+        LocalSQLiteEvidenceReviewRepository(db_path),
+        document_store,
+    )
     return AuthorizedProfessionalWorkbenchService(
         case_service,
         snapshot_service,
         legal_service,
         draft_service,
         filing_service,
+        evidence_review_service,
     )
