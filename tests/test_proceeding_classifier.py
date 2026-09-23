@@ -29,6 +29,7 @@ from unittest import mock
 from domain import proceeding_classifier
 from domain.models import (
     ClassificationConfidence,
+    ClassificationRunStatus,
     NoticeClassification,
     NoticeFamily,
     NoticeForm,
@@ -111,6 +112,7 @@ class SafeLLMInterfaceTests(unittest.TestCase):
             SupportLevel.UNKNOWN,
         )
         self.assertIs(result.confidence, ClassificationConfidence.UNKNOWN)
+        self.assertIs(result.classification_status, ClassificationRunStatus.FAILED)
         self.assertEqual(len(result.classification_reasons), 1)
         self.assertNotIn("{{{", result.classification_reasons[0])
 
@@ -125,6 +127,7 @@ class SafeLLMInterfaceTests(unittest.TestCase):
             SupportLevel.UNKNOWN,
         )
         self.assertIs(result.confidence, ClassificationConfidence.UNKNOWN)
+        self.assertIs(result.classification_status, ClassificationRunStatus.FAILED)
 
     def test_invalid_enum_value_returns_safe_unknown(self):
         result, _ = run_classifier(
@@ -165,6 +168,21 @@ class SafeLLMInterfaceTests(unittest.TestCase):
             NoticeFamily.UNKNOWN,
             ProceedingType.UNKNOWN,
             SupportLevel.UNKNOWN,
+        )
+
+    def test_valid_unknown_notice_is_not_classification_failure(self):
+        result, _ = run_classifier(
+            "Unrecognized GST communication",
+            candidate_json(
+                notice_form="UNKNOWN",
+                notice_family="UNKNOWN",
+                proceeding_type="UNKNOWN",
+                confidence="LOW",
+            ),
+        )
+        self.assertIs(
+            result.classification_status,
+            ClassificationRunStatus.SUCCESS,
         )
 
     def test_llm_supplied_support_level_is_ignored(self):
