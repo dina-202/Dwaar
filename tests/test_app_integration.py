@@ -532,6 +532,7 @@ def run_app(
     button_values=None,
     text_values=None,
     evidence_intake_result=None,
+    evidence_error=None,
     logged_in=True,
     user_claims=None,
     available_firms=None,
@@ -621,6 +622,8 @@ def run_app(
     original_evidence = evidence_engine_module.propose_evidence_candidates
 
     def evidence_side_effect(*args, **kwargs):
+        if evidence_error is not None:
+            raise evidence_error
         if evidence_intake_result is not None:
             return evidence_intake_result
         return original_evidence(*args, **kwargs)
@@ -4892,6 +4895,54 @@ class EvidenceWorkspaceUiTests(unittest.TestCase):
         )
         self.assertEqual(second[2].call_count, 0)
         self.assertEqual(second[3].call_count, 0)
+
+    def test_temporary_evidence_runtime_detail_is_hidden_in_customer_mode(self):
+        error = RuntimeError(
+            "private provider token SECRET-EVIDENCE / storage path"
+        )
+        fake, _, _, evidence_mock, _, _ = run_app(
+            supporting_uploads=[self._supporting_upload()],
+            evidence_error=error,
+            engineering_diagnostics=False,
+        )
+        evidence_mock.assert_called_once()
+        text = log_text(fake)
+        self.assertIn(
+            "Supporting evidence could not be analyzed safely.",
+            text,
+        )
+        self.assertNotIn("SECRET-EVIDENCE", text)
+        self.assertNotIn("storage path", text)
+        technical = [
+            call
+            for call in calls_named(fake, "expander")
+            if call[1]
+            and "supporting evidence analysis failure"
+            in str(call[1][0]).lower()
+        ]
+        self.assertEqual(technical, [])
+
+    def test_temporary_evidence_runtime_detail_is_engineering_only(self):
+        error = RuntimeError("private evidence parser detail")
+        fake, *_ = run_app(
+            supporting_uploads=[self._supporting_upload()],
+            evidence_error=error,
+            engineering_diagnostics=True,
+        )
+        text = log_text(fake)
+        self.assertIn(
+            "Supporting evidence could not be analyzed safely.",
+            text,
+        )
+        self.assertIn("private evidence parser detail", text)
+        technical = [
+            call
+            for call in calls_named(fake, "expander")
+            if call[1]
+            and "supporting evidence analysis failure"
+            in str(call[1][0]).lower()
+        ]
+        self.assertEqual(len(technical), 1)
 
     def test_supporting_file_change_recomputes_evidence_not_notice(self):
         shared_state = {}
