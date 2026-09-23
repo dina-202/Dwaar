@@ -125,7 +125,7 @@ class RuntimeBackupCliTests(unittest.TestCase):
                 "object_count": 1,
                 "ok": True,
                 "operation": "create",
-                "source_schema_version": 6,
+                "source_schema_version": 7,
             },
         )
 
@@ -170,7 +170,7 @@ class RuntimeBackupCliTests(unittest.TestCase):
                 "object_count": 1,
                 "ok": True,
                 "operation": "restore",
-                "source_schema_version": 6,
+                "source_schema_version": 7,
             },
         )
 
