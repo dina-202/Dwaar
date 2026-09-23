@@ -1932,16 +1932,27 @@ def _render_persisted_evidence_workspace(
         st.dataframe(
             [
                 {
-                    "document_id": item.document_id,
-                    "filename": item.original_filename,
-                    "byte_size": item.byte_size,
-                    "sha256": item.sha256_hex,
-                    "created_at": item.created_at.isoformat(),
+                    "File": item.original_filename,
+                    "Size (bytes)": item.byte_size,
+                    "Attached at": item.created_at.isoformat(
+                        timespec="minutes"
+                    ),
                 }
                 for item in attached
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — supporting documents"):
+            st.dataframe(
+                [
+                    {
+                        "document_id": item.document_id,
+                        "sha256": item.sha256_hex,
+                    }
+                    for item in attached
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No supporting evidence attached yet.")
 
@@ -1977,12 +1988,18 @@ def _render_persisted_evidence_workspace(
             _reset_evidence_workspace()
             if successes:
                 st.write(
-                    {
-                        "attached_document_ids": [
-                            item.document_id for item in successes
-                        ]
-                    }
+                    f"{len(successes)} supporting evidence file(s) attached."
                 )
+                with st.expander(
+                    "Technical details — attached supporting evidence"
+                ):
+                    st.write(
+                        {
+                            "attached_document_ids": [
+                                item.document_id for item in successes
+                            ]
+                        }
+                    )
             if failures:
                 st.error(
                     "Some supporting evidence files could not be attached: "
@@ -2071,13 +2088,18 @@ def _render_persisted_evidence_workspace(
         st.error("The selected evidence review context could not be loaded.")
         return
 
-    st.write(
-        {
-            "review_snapshot_id": selected_snapshot.snapshot_id,
-            "review_engine_version": selected_snapshot.engine_version,
-            "review_checklist_items": len(snapshot_checklist),
-        }
+    st.caption(
+        f"Reviewing against {len(snapshot_checklist)} checklist item(s) "
+        f"from engine {selected_snapshot.engine_version}."
     )
+    with st.expander("Technical details — evidence review context"):
+        st.write(
+            {
+                "review_snapshot_id": selected_snapshot.snapshot_id,
+                "review_engine_version": selected_snapshot.engine_version,
+                "review_checklist_items": len(snapshot_checklist),
+            }
+        )
 
     context_prefix = (
         f"persisted:{reopened.case.case_id}:"
@@ -2137,34 +2159,61 @@ def _render_persisted_evidence_workspace(
     intake_result = st.session_state.get(_EVIDENCE_INTAKE)
     if intake_result is not None:
         st.write(
-            {
-                "evidence_intake_status": intake_result.status.value,
-                "candidate_count": len(intake_result.candidates),
-                "rejected_candidate_count": (
-                    intake_result.rejected_candidate_count
-                ),
-            }
+            f"{len(intake_result.candidates)} persisted evidence "
+            "candidate(s) proposed for professional review."
         )
+        if intake_result.rejected_candidate_count:
+            st.warning(
+                f"{intake_result.rejected_candidate_count} candidate(s) "
+                "were rejected by deterministic validation."
+            )
 
         if intake_result.candidates:
+            requirement_text_by_id = {
+                item.evidence_id: item.requirement_text
+                for item in snapshot_checklist
+            }
             st.dataframe(
                 [
                     {
-                        "candidate_id": candidate.candidate_id,
-                        "evidence_id": candidate.evidence_id,
-                        "document_id": candidate.document_id,
-                        "source_page": candidate.source_page,
-                        "source_text": candidate.source_text,
-                        "source_origin": candidate.source_origin.value,
-                        "source_verification": (
-                            candidate.source_verification.value
+                        "Evidence requirement": requirement_text_by_id.get(
+                            candidate.evidence_id,
+                            "Evidence requirement",
                         ),
-                        "review_status": candidate.review_status.value,
+                        "Source page": candidate.source_page,
+                        "Source evidence": candidate.source_text,
+                        "Verification": _friendly_enum(
+                            candidate.source_verification
+                        ),
+                        "Review": _friendly_enum(candidate.review_status),
                     }
                     for candidate in intake_result.candidates
                 ],
                 hide_index=True,
             )
+            with st.expander(
+                "Technical details — persisted evidence candidates"
+            ):
+                st.write(
+                    {
+                        "evidence_intake_status": intake_result.status.value,
+                        "rejected_candidate_count": (
+                            intake_result.rejected_candidate_count
+                        ),
+                    }
+                )
+                st.dataframe(
+                    [
+                        {
+                            "candidate_id": candidate.candidate_id,
+                            "evidence_id": candidate.evidence_id,
+                            "document_id": candidate.document_id,
+                            "source_origin": candidate.source_origin.value,
+                        }
+                        for candidate in intake_result.candidates
+                    ],
+                    hide_index=True,
+                )
         else:
             st.write(
                 "No source-grounded evidence candidates were proposed."
@@ -2175,19 +2224,24 @@ def _render_persisted_evidence_workspace(
             context_prefix,
         )
         for candidate in intake_result.candidates:
-            st.subheader(f"Review {candidate.candidate_id}")
-            st.write(
-                {
-                    "evidence_id": candidate.evidence_id,
-                    "document_id": candidate.document_id,
-                    "source_page": candidate.source_page,
-                    "source_text": candidate.source_text,
-                    "source_origin": candidate.source_origin.value,
-                    "source_verification": (
-                        candidate.source_verification.value
-                    ),
-                }
+            st.subheader("Review persisted evidence candidate")
+            st.write(candidate.source_text)
+            st.caption(
+                f"Page {candidate.source_page} · "
+                f"{_friendly_enum(candidate.source_verification)}"
             )
+            with st.expander(
+                "Technical details — persisted evidence candidate "
+                + candidate.candidate_id
+            ):
+                st.write(
+                    {
+                        "candidate_id": candidate.candidate_id,
+                        "evidence_id": candidate.evidence_id,
+                        "document_id": candidate.document_id,
+                        "source_origin": candidate.source_origin.value,
+                    }
+                )
             note = st.text_input(
                 "Reviewer note (optional)",
                 key=(
@@ -2243,14 +2297,20 @@ def _render_persisted_evidence_workspace(
                     )
                 else:
                     st.write(
-                        {
-                            "saved_evidence_review_id": (
-                                saved_review.review_id
-                            ),
-                            "decision": saved_review.decision.value,
-                            "snapshot_id": saved_review.snapshot_id,
-                        }
+                        "Evidence review saved: "
+                        f"**{_friendly_enum(saved_review.decision)}**."
                     )
+                    with st.expander(
+                        "Technical details — saved evidence review"
+                    ):
+                        st.write(
+                            {
+                                "saved_evidence_review_id": (
+                                    saved_review.review_id
+                                ),
+                                "snapshot_id": saved_review.snapshot_id,
+                            }
+                        )
                     durable_reviews = review_service.list_reviews(
                         principal,
                         active_firm.firm_id,
@@ -2283,25 +2343,43 @@ def _render_persisted_evidence_workspace(
             st.dataframe(
                 [
                     {
-                        "question_id": item.question_id,
-                        "status": item.status.value,
-                        "required_evidence_ids": list(
-                            item.required_evidence_ids
-                        ),
-                        "confirmed_evidence_ids": list(
-                            item.confirmed_evidence_ids
-                        ),
-                        "missing_evidence_ids": list(
-                            item.missing_evidence_ids
-                        ),
-                        "confirmed_review_ids": list(
-                            item.confirmed_review_ids
-                        ),
+                        "Research question": item.question_id.replace(
+                            "_", " "
+                        ).replace(".", " — ").title(),
+                        "Evidence state": _friendly_enum(item.status),
+                        "Required": len(item.required_evidence_ids),
+                        "Confirmed": len(item.confirmed_evidence_ids),
+                        "Missing": len(item.missing_evidence_ids),
                     }
                     for item in legal_evidence
                 ],
                 hide_index=True,
             )
+            with st.expander(
+                "Technical details — legal evidence readiness"
+            ):
+                st.dataframe(
+                    [
+                        {
+                            "question_id": item.question_id,
+                            "status": item.status.value,
+                            "required_evidence_ids": list(
+                                item.required_evidence_ids
+                            ),
+                            "confirmed_evidence_ids": list(
+                                item.confirmed_evidence_ids
+                            ),
+                            "missing_evidence_ids": list(
+                                item.missing_evidence_ids
+                            ),
+                            "confirmed_review_ids": list(
+                                item.confirmed_review_ids
+                            ),
+                        }
+                        for item in legal_evidence
+                    ],
+                    hide_index=True,
+                )
         else:
             st.write(
                 "No closed legal-evidence readiness plan exists for this "
@@ -2316,18 +2394,29 @@ def _render_persisted_evidence_workspace(
     st.dataframe(
         [
             {
-                "review_id": item.review_id,
-                "evidence_id": item.evidence_id,
-                "document_id": item.document_id,
-                "source_page": item.source_page,
-                "decision": item.decision.value,
-                "reviewed_at": item.reviewed_at.isoformat(),
-                "reviewed_by": item.reviewed_by,
+                "Decision": _friendly_enum(item.decision),
+                "Source page": item.source_page,
+                "Reviewed at": item.reviewed_at.isoformat(
+                    timespec="minutes"
+                ),
+                "Reviewed by": item.reviewed_by,
             }
             for item in durable_reviews
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — durable evidence reviews"):
+        st.dataframe(
+            [
+                {
+                    "review_id": item.review_id,
+                    "evidence_id": item.evidence_id,
+                    "document_id": item.document_id,
+                }
+                for item in durable_reviews
+            ],
+            hide_index=True,
+        )
 
     review_labels = {
         (
