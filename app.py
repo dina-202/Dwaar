@@ -13,6 +13,7 @@ from domain.evidence_review import (
     reviewed_candidate_ids,
 )
 from domain.models import (
+    ClassificationRunStatus,
     DraftGenerationStatus,
     EvidenceReviewStatus,
     SourceTextOrigin,
@@ -199,6 +200,20 @@ def _render_legal_brief(classification, extraction):
         )
 
 
+def _friendly_enum(value):
+    raw = _display(value)
+    if raw == "unavailable":
+        return raw
+    return raw.replace("_", " ").strip().title()
+
+
+def _notice_form_label(notice_form):
+    raw = notice_form.value
+    if raw == "unknown":
+        return "Notice form not identified"
+    return raw.replace("_", " ").upper()
+
+
 def _render_phase2_result(result):
     classification = result.classification
     extraction = result.extraction_result
@@ -208,59 +223,164 @@ def _render_phase2_result(result):
     draft = result.draft_result
 
     st.header("Classification and support")
-    st.write(
-        {
-            "proceeding_type": classification.proceeding_type.value,
-            "support_level": classification.support_level.value,
-            "notice_form": classification.notice_form.value,
-            "confidence": classification.confidence.value,
-        }
-    )
+    if classification.classification_status is ClassificationRunStatus.FAILED:
+        st.error(
+            "AI classification could not be completed. Dwaar has not "
+            "determined that this is an unknown notice; the classification "
+            "step itself needs to be retried."
+        )
+    else:
+        st.write(f"**{_notice_form_label(classification.notice_form)}**")
+        st.caption(
+            f"{_friendly_enum(classification.confidence)}-confidence "
+            "identification."
+        )
+        if classification.support_level.value == "deep_workflow":
+            st.write("Specialist workflow is available for this notice.")
+        elif classification.support_level.value == "triage_only":
+            st.warning(
+                "Dwaar recognizes this notice for triage, but a specialist "
+                "workflow is not yet available for this form."
+            )
+        else:
+            st.warning(
+                "Dwaar could not match this notice to a supported specialist "
+                "workflow."
+            )
+
+    with st.expander("Technical details — classification"):
+        st.write(
+            {
+                "classification_status": classification.classification_status.value,
+                "proceeding_type": classification.proceeding_type.value,
+                "support_level": classification.support_level.value,
+                "notice_form": classification.notice_form.value,
+                "confidence": classification.confidence.value,
+                "classification_reasons": classification.classification_reasons,
+            }
+        )
 
     st.header("Fact extraction")
-    st.write({"extraction_status": extraction.status.value})
+    if extraction.status.value == "success":
+        st.write("Structured facts were extracted successfully.")
+    elif extraction.status.value == "partial":
+        st.warning(
+            "Dwaar extracted usable facts, but rejected one or more candidate "
+            "facts that could not be safely validated."
+        )
+    elif extraction.status.value == "failed":
+        st.error(
+            "Structured fact extraction could not be completed. No absence "
+            "conclusions should be drawn from this result."
+        )
+    else:
+        st.warning("No usable notice text was available for fact extraction.")
+
     if extraction.facts:
         st.dataframe(
             [
                 {
-                    "fact_id": fact.fact_id,
-                    "fact_type": fact.fact_type.value,
-                    "fact_role": fact.fact_role.value,
-                    "status": fact.status.value,
-                    "source_text": _display(fact.source_text),
-                    "source_page": _display(fact.source_page),
-                    "source_origin": fact.source_origin.value,
-                    "source_verification": fact.source_verification.value,
-                    "allowed_in_draft": fact.allowed_in_draft.value,
+                    "Fact": fact.claim,
+                    "Type": _friendly_enum(fact.fact_type),
+                    "Source page": _display(fact.source_page),
+                    "Source text": _display(fact.source_text),
+                    "Verification": _friendly_enum(fact.source_verification),
                 }
                 for fact in extraction.facts
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — extracted facts"):
+            st.dataframe(
+                [
+                    {
+                        "fact_id": fact.fact_id,
+                        "fact_type": fact.fact_type.value,
+                        "fact_role": fact.fact_role.value,
+                        "status": fact.status.value,
+                        "source_text": _display(fact.source_text),
+                        "source_page": _display(fact.source_page),
+                        "source_origin": fact.source_origin.value,
+                        "source_verification": fact.source_verification.value,
+                        "allowed_in_draft": fact.allowed_in_draft.value,
+                    }
+                    for fact in extraction.facts
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No structured facts were extracted.")
 
     st.header("Preflight and deadline")
-    st.write(
-        {
-            "communication_identifier_status": (
-                preflight.communication_identifier_status.value
-            ),
-            "authority_details_status": preflight.authority_details_status.value,
-            "portal_verification_required": (
-                preflight.portal_verification_required
-            ),
-            "authority_verification_required": (
-                preflight.authority_verification_required
-            ),
-            "deadline_status": deadline.deadline_status.value,
-            "response_deadline": _display(deadline.response_deadline),
-            "days_remaining": _display(deadline.days_remaining),
-            "hearing_status": deadline.hearing_status.value,
-            "hearing_date": _display(deadline.hearing_date),
-            "deadline_conflict_status": preflight.deadline_conflict_status.value,
-        }
-    )
+    communication = preflight.communication_identifier_status.value
+    if communication == "both_present":
+        st.write("**Communication ID:** RFN and DIN were found in the notice.")
+    elif communication == "din_present":
+        st.write("**Communication ID:** DIN was found in the notice.")
+    elif communication == "rfn_present":
+        st.write("**Communication ID:** RFN was found in the notice.")
+    elif communication == "neither_found":
+        st.warning("No RFN or DIN was found in the completed extraction.")
+    else:
+        st.warning(
+            "Communication-ID completeness cannot be concluded from the "
+            "current extraction."
+        )
+
+    authority = preflight.authority_details_status.value
+    if authority == "present":
+        st.write("**Authority details:** Core issuing-authority details were found.")
+    elif authority == "partial":
+        st.warning("**Authority details:** Some issuing-authority details were found.")
+    elif authority == "missing":
+        st.warning("**Authority details:** No issuing-authority details were found.")
+    else:
+        st.warning(
+            "**Authority details:** Completeness cannot be concluded from "
+            "the current extraction."
+        )
+
+    if deadline.response_deadline is not None:
+        st.write(
+            f"**Response deadline:** {deadline.response_deadline} "
+            f"({_friendly_enum(deadline.deadline_status)})"
+        )
+        if deadline.days_remaining is not None:
+            st.caption(f"{deadline.days_remaining} day(s) remaining.")
+    else:
+        st.warning(
+            "Exact response deadline is not available from verified inputs. "
+            "Dwaar will not assume a service/receipt date."
+        )
+    if deadline.hearing_date is not None:
+        st.write(
+            f"**Hearing:** {deadline.hearing_date} "
+            f"({_friendly_enum(deadline.hearing_status)})"
+        )
+    else:
+        st.caption("No hearing date is currently available.")
+
+    with st.expander("Technical details — preflight and deadline"):
+        st.write(
+            {
+                "communication_identifier_status": (
+                    preflight.communication_identifier_status.value
+                ),
+                "authority_details_status": preflight.authority_details_status.value,
+                "portal_verification_required": (
+                    preflight.portal_verification_required
+                ),
+                "authority_verification_required": (
+                    preflight.authority_verification_required
+                ),
+                "deadline_status": deadline.deadline_status.value,
+                "response_deadline": _display(deadline.response_deadline),
+                "days_remaining": _display(deadline.days_remaining),
+                "hearing_status": deadline.hearing_status.value,
+                "hearing_date": _display(deadline.hearing_date),
+                "deadline_conflict_status": preflight.deadline_conflict_status.value,
+            }
+        )
 
     _render_legal_brief(classification, extraction)
 
@@ -269,38 +389,69 @@ def _render_phase2_result(result):
         st.dataframe(
             [
                 {
-                    "calculation_type": item.calculation_type.value,
-                    "formula": item.formula,
-                    "status": item.status.value,
-                    "operand_values": [str(value) for value in item.operand_values],
-                    "result": _display(item.result),
-                    "currency": item.currency,
-                    "source_fact_ids": item.source_fact_ids,
+                    "Calculation": _friendly_enum(item.calculation_type),
+                    "Formula": item.formula,
+                    "Status": _friendly_enum(item.status),
+                    "Inputs": [str(value) for value in item.operand_values],
+                    "Result": _display(item.result),
+                    "Currency": item.currency,
                 }
                 for item in result.arithmetic_results
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — arithmetic"):
+            st.dataframe(
+                [
+                    {
+                        "calculation_type": item.calculation_type.value,
+                        "formula": item.formula,
+                        "status": item.status.value,
+                        "operand_values": [
+                            str(value) for value in item.operand_values
+                        ],
+                        "result": _display(item.result),
+                        "currency": item.currency,
+                        "source_fact_ids": item.source_fact_ids,
+                    }
+                    for item in result.arithmetic_results
+                ],
+                hide_index=True,
+            )
 
     st.header("Validation status")
-    st.write(
-        {
-            "overall_status": validation.overall_status.value,
-            "draft_eligibility": validation.draft_eligibility.value,
-        }
+    if validation.overall_status is ValidationStatus.PASS:
+        st.write("Validation checks passed for the current analysis state.")
+    elif validation.overall_status is ValidationStatus.WARNING:
+        st.warning(
+            "The analysis can continue, but one or more items require "
+            "professional attention."
+        )
+    else:
+        st.warning(
+            "The current analysis is not ready for specialist drafting."
+        )
+    st.caption(
+        "Drafting: " + _friendly_enum(validation.draft_eligibility)
     )
     _render_checks(validation.checks)
+    with st.expander("Technical details — validation"):
+        st.write(
+            {
+                "overall_status": validation.overall_status.value,
+                "draft_eligibility": validation.draft_eligibility.value,
+            }
+        )
 
     st.header("Unresolved requirements")
     if draft.unresolved_requirements:
         st.dataframe(
             [
                 {
-                    "requirement_id": item.requirement_id,
-                    "requirement_text": item.requirement_text,
-                    "status": item.status.value,
-                    "related_fact_ids": item.related_fact_ids,
-                    "calculation_type": _display(item.calculation_type),
+                    "Requirement": item.requirement_text,
+                    "Status": _friendly_enum(item.status),
+                    "Related facts": item.related_fact_ids,
+                    "Calculation": _display(item.calculation_type),
                 }
                 for item in draft.unresolved_requirements
             ],
@@ -314,9 +465,8 @@ def _render_phase2_result(result):
         st.dataframe(
             [
                 {
-                    "evidence_id": item.evidence_id,
-                    "requirement_text": item.requirement_text,
-                    "status": item.status.value,
+                    "Evidence needed": item.requirement_text,
+                    "Status": _friendly_enum(item.status),
                 }
                 for item in draft.evidence_checklist
             ],
@@ -330,10 +480,9 @@ def _render_phase2_result(result):
         st.dataframe(
             [
                 {
-                    "review_id": item.review_id,
-                    "level": item.level.value,
-                    "reason": item.reason,
-                    "mandatory": item.mandatory,
+                    "Review": _friendly_enum(item.level),
+                    "Reason": item.reason,
+                    "Mandatory": item.mandatory,
                 }
                 for item in draft.review_requirements
             ],
@@ -345,38 +494,42 @@ def _render_phase2_result(result):
     if result.triage_summary is not None:
         triage = result.triage_summary
         st.header("Triage summary")
-        st.write(triage.message)
-        st.write(
-            {
-                "proceeding_type": triage.proceeding_type.value,
-                "notice_form": triage.notice_form.value,
-                "support_level": triage.support_level.value,
-                "classification_confidence": (
-                    triage.classification_confidence.value
-                ),
-                "extraction_status": triage.extraction_status.value,
-                "portal_verification_required": (
-                    triage.portal_verification_required
-                ),
-                "authority_verification_required": (
-                    triage.authority_verification_required
-                ),
-                "communication_identifier_status": (
-                    triage.communication_identifier_status.value
-                ),
-                "authority_details_status": (
-                    triage.authority_details_status.value
-                ),
-                "deadline_status": triage.deadline_status.value,
-                "hearing_status": triage.hearing_status.value,
-                "requested_document_fact_ids": (
-                    triage.requested_document_fact_ids
-                ),
-                "referenced_annexure_fact_ids": (
-                    triage.referenced_annexure_fact_ids
-                ),
-            }
-        )
+        if classification.classification_status is ClassificationRunStatus.FAILED:
+            st.error(triage.message)
+        else:
+            st.write(triage.message)
+        with st.expander("Technical details — triage"):
+            st.write(
+                {
+                    "proceeding_type": triage.proceeding_type.value,
+                    "notice_form": triage.notice_form.value,
+                    "support_level": triage.support_level.value,
+                    "classification_confidence": (
+                        triage.classification_confidence.value
+                    ),
+                    "extraction_status": triage.extraction_status.value,
+                    "portal_verification_required": (
+                        triage.portal_verification_required
+                    ),
+                    "authority_verification_required": (
+                        triage.authority_verification_required
+                    ),
+                    "communication_identifier_status": (
+                        triage.communication_identifier_status.value
+                    ),
+                    "authority_details_status": (
+                        triage.authority_details_status.value
+                    ),
+                    "deadline_status": triage.deadline_status.value,
+                    "hearing_status": triage.hearing_status.value,
+                    "requested_document_fact_ids": (
+                        triage.requested_document_fact_ids
+                    ),
+                    "referenced_annexure_fact_ids": (
+                        triage.referenced_annexure_fact_ids
+                    ),
+                }
+            )
 
     draft_is_displayable = (
         draft.status is DraftGenerationStatus.SUCCESS
@@ -390,24 +543,45 @@ def _render_phase2_result(result):
             st.markdown(section.rendered_text)
     else:
         st.header("Drafting status")
-        st.write(
-            {
-                "status": draft.status.value,
-                "failure_code": _display(draft.failure_code),
-                "error_message": _display(draft.error_message),
-                "draft_eligibility": draft.draft_eligibility.value,
-            }
-        )
-        if draft.post_validation is not None:
-            st.subheader("Post-validation diagnostics")
+        if classification.classification_status is ClassificationRunStatus.FAILED:
+            st.warning(
+                "Drafting is unavailable because notice classification did "
+                "not complete successfully."
+            )
+        elif classification.support_level.value == "triage_only":
+            st.warning(
+                "Specialist drafting is not available for this triage-only "
+                "notice workflow."
+            )
+        elif draft.status.value == "failed":
+            st.warning(
+                "Specialist drafting could not be completed. Review the "
+                "analysis state and retry when the blocking issue is resolved."
+            )
+        else:
+            st.warning(
+                "Specialist drafting is blocked by the current validation "
+                "or workflow state."
+            )
+        with st.expander("Technical details — drafting"):
             st.write(
                 {
-                    "overall_status": (
-                        draft.post_validation.overall_status.value
-                    )
+                    "status": draft.status.value,
+                    "failure_code": _display(draft.failure_code),
+                    "error_message": _display(draft.error_message),
+                    "draft_eligibility": draft.draft_eligibility.value,
                 }
             )
-            _render_checks(draft.post_validation.checks)
+            if draft.post_validation is not None:
+                st.subheader("Post-validation diagnostics")
+                st.write(
+                    {
+                        "overall_status": (
+                            draft.post_validation.overall_status.value
+                        )
+                    }
+                )
+                _render_checks(draft.post_validation.checks)
 
 
 _NOTICE_KEY = "_dwaar_notice_analysis_key"
