@@ -515,6 +515,28 @@ def make_result(
     )
 
 
+def make_reopened_case_fixture(case, *, filename="saved-notice.pdf"):
+    notice = StoredDocumentRef(
+        document_id=f"DOC-NOTICE-{case.case_id}",
+        case_id=case.case_id,
+        kind=CaseDocumentKind.NOTICE,
+        original_filename=filename,
+        media_type="application/pdf",
+        byte_size=len(PDF_BYTES),
+        sha256_hex="a" * 64,
+        storage_key="objects/" + "a" * 32,
+        created_at=case.opened_at,
+    )
+    return ReopenedCaseAnalysis(
+        case=case,
+        notice_document=notice,
+        notice_pdf_bytes=PDF_BYTES,
+        document_pages=DOCUMENT_PAGES,
+        raw_text=RAW_TEXT,
+        analysis=make_result(),
+    )
+
+
 def log_text(fake):
     return repr(fake.calls)
 
@@ -4798,12 +4820,16 @@ class CaseWorkQueueUiTests(unittest.TestCase):
         self.assertIn("does not rank legal importance", text)
         service.update_case_operations.assert_not_called()
 
-    def test_focus_queue_case_moves_it_to_saved_cases(self):
-        service, item, _ = self._service()
+    def test_queue_open_action_reopens_selected_case_in_one_step(self):
+        service, item, case = self._service()
+        service.get_case_timeline.return_value = []
+        service.list_documents.return_value = []
+        reopened = make_reopened_case_fixture(case)
         fake, *_ = run_app(
             upload=False,
             available_firms=[self._firm(update=False)],
             persistence_service=service,
+            reopen_result=reopened,
             button_values={
                 f"focus_queue_case_{item.case_id}": True,
             },
@@ -4813,10 +4839,24 @@ class CaseWorkQueueUiTests(unittest.TestCase):
             fake.session_state["_dwaar_focused_case_id"],
             item.case_id,
         )
-        self.assertIn(
-            "Open saved case",
-            log_text(fake),
+        self.assertNotIn(
+            "_dwaar_open_case_request_id",
+            fake.session_state,
         )
+        fake.reopen_mock.assert_called_once_with(
+            service,
+            ANY,
+            "F-TEST",
+            item.case_id,
+            TODAY,
+        )
+        self.assertEqual(
+            fake.session_state["_dwaar_opened_case_id"],
+            item.case_id,
+        )
+        text = log_text(fake)
+        self.assertIn("Open selected case", text)
+        self.assertIn("Opened case", text)
 
     def test_update_user_can_save_controlled_case_operations(self):
         service, item, original_case = self._service()
@@ -5035,12 +5075,16 @@ class ClientWorkspaceUiTests(unittest.TestCase):
             client_id=client.client_id,
         )
 
-    def test_focus_from_client_workspace_moves_case_to_saved_case_selector(self):
+    def test_client_open_action_reopens_selected_case_in_one_step(self):
         service, client, _, newer, older = self._service()
+        service.get_case_timeline.return_value = []
+        service.list_documents.return_value = []
         selected_case_label = "2. Older DRC-01 · DRC-01"
+        reopened = make_reopened_case_fixture(older)
         fake, *_ = run_app(
             upload=False,
             persistence_service=service,
+            reopen_result=reopened,
             selectbox_values={
                 "dwaar_client_workspace_selector": client.display_name,
                 f"dwaar_client_case_selector_{client.client_id}": (
@@ -5056,6 +5100,17 @@ class ClientWorkspaceUiTests(unittest.TestCase):
             fake.session_state["_dwaar_focused_case_id"],
             older.case_id,
         )
+        self.assertNotIn(
+            "_dwaar_open_case_request_id",
+            fake.session_state,
+        )
+        fake.reopen_mock.assert_called_once_with(
+            service,
+            ANY,
+            "F-TEST",
+            older.case_id,
+            TODAY,
+        )
         saved_case_selects = [
             call
             for call in calls_named(fake, "selectbox")
@@ -5065,10 +5120,9 @@ class ClientWorkspaceUiTests(unittest.TestCase):
         saved_options = saved_case_selects[0][1][1]
         self.assertIn(older.title, saved_options[0])
         self.assertNotIn(older.case_id, saved_options[0])
-        self.assertIn(
-            "Open saved case",
-            log_text(fake),
-        )
+        text = log_text(fake)
+        self.assertIn("Open selected client case", text)
+        self.assertIn("Opened case", text)
 
     def test_read_only_case_access_still_gets_client_workspace(self):
         service, *_ = self._service()
