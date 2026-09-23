@@ -2303,6 +2303,24 @@ class SavedCaseWorkspaceUiTests(unittest.TestCase):
             text,
         )
         self.assertIn(RAW_TEXT, text)
+        downloads = calls_named(fake, "download_button")
+        notice_downloads = [
+            call
+            for call in downloads
+            if call[1]
+            and call[1][0] == "Download original notice PDF"
+        ]
+        self.assertEqual(len(notice_downloads), 1)
+        self.assertEqual(notice_downloads[0][2]["data"], PDF_BYTES)
+        self.assertEqual(
+            notice_downloads[0][2]["file_name"],
+            "saved-notice.pdf",
+        )
+        self.assertEqual(
+            notice_downloads[0][2]["mime"],
+            "application/pdf",
+        )
+
 
     def test_opened_case_is_reused_on_unrelated_rerun(self):
         service = Mock()
