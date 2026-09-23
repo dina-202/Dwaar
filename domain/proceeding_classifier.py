@@ -29,6 +29,7 @@ from typing import Dict, List, Optional
 
 from domain.models import (
     ClassificationConfidence,
+    ClassificationRunStatus,
     NoticeClassification,
     NoticeFamily,
     NoticeForm,
@@ -295,6 +296,7 @@ def _safe_unknown_classification(reason: str) -> NoticeClassification:
         support_level=SupportLevel.UNKNOWN,
         confidence=ClassificationConfidence.UNKNOWN,
         classification_reasons=[reason],
+        classification_status=ClassificationRunStatus.FAILED,
     )
 
 
@@ -428,4 +430,5 @@ def classify_notice(raw_text: str) -> NoticeClassification:
         support_level=support_level,
         confidence=confidence,
         classification_reasons=reasons,
+        classification_status=ClassificationRunStatus.SUCCESS,
     )
