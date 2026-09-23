@@ -109,6 +109,40 @@ Primary:
 Technical:
 - candidate/evidence/document/review IDs and source-channel enums
 
+### Professional fact review — earned extension
+
+The pilot now has an explicit professional decision layer over extracted facts.
+
+Fact review is bound to one saved analysis version. A CA reviews the exact
+source-grounded fact preserved in that analysis; the browser supplies only the
+selected fact identity and cannot replace the source quote that is persisted.
+
+The professional surface shows:
+
+- fact type;
+- exact source evidence;
+- source page and verification state;
+- the latest professional decision: Confirmed, Rejected, or Not reviewed.
+
+**Confirmed** means only that the extracted item accurately reflects the source
+notice. It is not an admission of a departmental allegation, a taxpayer
+liability conclusion, legal acceptance, or filing approval.
+
+**Rejected** means the extracted item/source mapping must not be relied on.
+Draft approval for a draft derived from that saved analysis is blocked while
+the latest professional decision for any source fact remains Rejected.
+
+Review history is append-only. A later review does not overwrite an earlier
+decision; the latest decision per fact is the operational state, selected
+deterministically by review timestamp and review ID.
+
+Reviewer notes and exact fact-review payloads are stored through the encrypted,
+snapshot-bound review channel. Machine fact/review IDs and reviewer account IDs
+remain audit/engineering data and are not part of the default CA surface.
+
+Fact review never mutates the original extracted fact or silently converts a
+department allegation into a taxpayer fact.
+
 ### Triage case attention
 
 The professional queue must reflect what the saved analysis actually supports.
