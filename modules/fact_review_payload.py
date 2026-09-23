@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Dict, Optional
 
 from domain.fact_review_models import (
+    FACT_REVIEW_NOTE_MAX_CHARS,
     FACT_REVIEW_SCHEMA_VERSION,
     FactReviewDecision,
 )
@@ -139,6 +140,10 @@ def build_fact_review_payload(
         if isinstance(reviewer_note, str) and reviewer_note.strip()
         else None
     )
+    if note is not None and len(note) > FACT_REVIEW_NOTE_MAX_CHARS:
+        raise ValueError(
+            "reviewer_note exceeds the professional review note limit"
+        )
     quote_hash = source_text_sha256(fact["source_text"])
     fingerprint = fact_fingerprint(
         snapshot_id=snapshot_id,
@@ -219,6 +224,11 @@ def validate_fact_review_payload(payload: object) -> Dict[str, object]:
     note = payload.get("reviewer_note")
     if note is not None and not isinstance(note, str):
         raise ValueError("fact review reviewer_note is invalid")
+    if (
+        isinstance(note, str)
+        and len(note) > FACT_REVIEW_NOTE_MAX_CHARS
+    ):
+        raise ValueError("fact review reviewer_note exceeds size limit")
     reviewed_at = payload.get("reviewed_at")
     if not isinstance(reviewed_at, str) or not reviewed_at:
         raise ValueError("fact review reviewed_at is invalid")
