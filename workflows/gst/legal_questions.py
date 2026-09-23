@@ -97,6 +97,17 @@ def _common(proceeding_type: ProceedingType):
 GST_LEGAL_QUESTION_PLANS: Dict[
     ProceedingType, Tuple[GstLegalQuestionSpec, ...]
 ] = {
+    ProceedingType.GST_SEC61_SCRUTINY: (
+        _question(
+            "gst_sec61_scrutiny.process",
+            ProceedingType.GST_SEC61_SCRUTINY,
+            (
+                "What source-verified Section 61 / Rule 99 scrutiny process "
+                "and response forms apply to this ASMT-10?"
+            ),
+            LegalTopic.SCRUTINY_PROCESS,
+        ),
+    ),
     ProceedingType.GST_SEC73_GENERAL: _common(
         ProceedingType.GST_SEC73_GENERAL
     ),
