@@ -3444,34 +3444,59 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
     reviews = st.session_state.setdefault(_EVIDENCE_REVIEWS, [])
 
     st.write(
-        {
-            "evidence_intake_status": intake_result.status.value,
-            "candidate_count": len(intake_result.candidates),
-            "rejected_candidate_count": (
-                intake_result.rejected_candidate_count
-            ),
-        }
+        f"{len(intake_result.candidates)} evidence candidate(s) proposed "
+        f"for professional review."
     )
+    if intake_result.rejected_candidate_count:
+        st.warning(
+            f"{intake_result.rejected_candidate_count} candidate(s) were "
+            "rejected by Dwaar's deterministic validation."
+        )
 
     if intake_result.candidates:
+        requirement_text_by_id = {
+            item.evidence_id: item.requirement_text
+            for item in evidence_checklist
+        }
         st.dataframe(
             [
                 {
-                    "candidate_id": candidate.candidate_id,
-                    "evidence_id": candidate.evidence_id,
-                    "document_id": candidate.document_id,
-                    "source_page": candidate.source_page,
-                    "source_text": candidate.source_text,
-                    "source_origin": candidate.source_origin.value,
-                    "source_verification": (
-                        candidate.source_verification.value
+                    "Evidence requirement": requirement_text_by_id.get(
+                        candidate.evidence_id,
+                        "Evidence requirement",
                     ),
-                    "review_status": candidate.review_status.value,
+                    "Source page": candidate.source_page,
+                    "Source evidence": candidate.source_text,
+                    "Verification": _friendly_enum(
+                        candidate.source_verification
+                    ),
+                    "Review": _friendly_enum(candidate.review_status),
                 }
                 for candidate in intake_result.candidates
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — evidence candidates"):
+            st.write(
+                {
+                    "evidence_intake_status": intake_result.status.value,
+                    "rejected_candidate_count": (
+                        intake_result.rejected_candidate_count
+                    ),
+                }
+            )
+            st.dataframe(
+                [
+                    {
+                        "candidate_id": candidate.candidate_id,
+                        "evidence_id": candidate.evidence_id,
+                        "document_id": candidate.document_id,
+                        "source_origin": candidate.source_origin.value,
+                    }
+                    for candidate in intake_result.candidates
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No source-grounded evidence candidates were proposed.")
 
@@ -3480,19 +3505,23 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
         if candidate.candidate_id in reviewed_ids:
             continue
 
-        st.subheader(f"Review {candidate.candidate_id}")
-        st.write(
-            {
-                "evidence_id": candidate.evidence_id,
-                "document_id": candidate.document_id,
-                "source_page": candidate.source_page,
-                "source_text": candidate.source_text,
-                "source_origin": candidate.source_origin.value,
-                "source_verification": (
-                    candidate.source_verification.value
-                ),
-            }
+        st.subheader("Review evidence candidate")
+        st.write(candidate.source_text)
+        st.caption(
+            f"Page {candidate.source_page} · "
+            f"{_friendly_enum(candidate.source_verification)}"
         )
+        with st.expander(
+            f"Technical details — evidence candidate {candidate.candidate_id}"
+        ):
+            st.write(
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "evidence_id": candidate.evidence_id,
+                    "document_id": candidate.document_id,
+                    "source_origin": candidate.source_origin.value,
+                }
+            )
         note = st.text_input(
             "Reviewer note (optional)",
             key=f"evidence_note_{workspace_key}_{candidate.candidate_id}",
@@ -3533,22 +3562,31 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
         st.dataframe(
             [
                 {
-                    "review_id": review.review_id,
-                    "candidate_id": review.candidate_id,
-                    "evidence_id": review.evidence_id,
-                    "document_id": review.document_id,
-                    "source_page": review.source_page,
-                    "decision": review.decision.value,
-                    "source_origin": review.source_origin.value,
-                    "source_verification": (
-                        review.source_verification.value
-                    ),
-                    "reviewer_note": _display(review.reviewer_note),
+                    "Decision": _friendly_enum(review.decision),
+                    "Source page": review.source_page,
+                    "Reviewer note": _display(review.reviewer_note),
                 }
                 for review in reviews
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — evidence review records"):
+            st.dataframe(
+                [
+                    {
+                        "review_id": review.review_id,
+                        "candidate_id": review.candidate_id,
+                        "evidence_id": review.evidence_id,
+                        "document_id": review.document_id,
+                        "source_origin": review.source_origin.value,
+                        "source_verification": (
+                            review.source_verification.value
+                        ),
+                    }
+                    for review in reviews
+                ],
+                hide_index=True,
+            )
 
 
 st.set_page_config(
