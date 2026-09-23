@@ -20,9 +20,29 @@ from domain.case_models import (
     Firm,
     StoredDocumentRef,
 )
-from domain.legal_brief_models import LEGAL_BRIEF_SCHEMA_VERSION
-from domain.models import NoticeForm, ProceedingType
-from modules.encrypted_document_store import EncryptedLocalDocumentStore
+from domain.legal_brief_models import (
+    LEGAL_BRIEF_SCHEMA_VERSION,
+    LegalBriefRef,
+)
+from domain.legal_date_models import LegalDateBasis
+from domain.legal_knowledge_models import LegalTopic
+from domain.legal_question_models import (
+    LegalFactSelector,
+    LegalQuestionPlan,
+    LegalQuestionResult,
+    LegalQuestionStatus,
+)
+from domain.models import (
+    FactRole,
+    FactStatus,
+    FactType,
+    NoticeForm,
+    ProceedingType,
+)
+from modules.encrypted_document_store import (
+    EncryptedLocalDocumentStore,
+    generate_storage_key,
+)
 from modules.legal_brief_service import (
     LegalBriefIntegrityError,
     load_legal_brief,
@@ -45,6 +65,31 @@ from workflows.gst.legal_research import resolve_gst_legal_brief
 
 NOW = datetime(2026, 9, 23, 1, 0, tzinfo=timezone.utc)
 ACTOR = "OIDC-" + "a" * 64
+
+
+def question_plan(catalog_version):
+    selector = LegalFactSelector(
+        fact_type=FactType.STATED_AMOUNT,
+        fact_role=FactRole.GSTR2B_ITC_REFLECTED_AMOUNT,
+        accepted_statuses=(FactStatus.CONFIRMED,),
+    )
+    return LegalQuestionPlan(
+        proceeding_type=ProceedingType.GST_SEC73_ITC,
+        questions=(
+            LegalQuestionResult(
+                question_id="gst_sec73_itc.eligibility",
+                question_text="Which ITC rules govern this period?",
+                topic=LegalTopic.ITC_ELIGIBILITY,
+                date_basis=LegalDateBasis.TAX_PERIOD_END,
+                status=LegalQuestionStatus.MISSING_FACTS,
+                related_fact_ids=("F-T",),
+                missing_fact_selectors=(selector,),
+                matched_rule_ids=(),
+            ),
+        ),
+        catalog_version=catalog_version,
+    )
+
 
 
 class LegalBriefPersistenceTests(unittest.TestCase):
@@ -139,6 +184,137 @@ class LegalBriefPersistenceTests(unittest.TestCase):
         first = encode_legal_brief_payload(payload)
         self.assertEqual(first, encode_legal_brief_payload(payload))
         self.assertEqual(decode_legal_brief_payload(first), payload)
+
+    def test_v2_payload_preserves_legal_question_state(self):
+        plan = question_plan(self.result.catalog_version)
+        payload = build_legal_brief_payload(
+            self.result,
+            snapshot_id="SNAP-1",
+            as_of_date=date(2026, 8, 1),
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            question_plan=plan,
+        )
+        self.assertEqual(payload["schema_version"], 2)
+        self.assertEqual(
+            payload["questions"],
+            [
+                {
+                    "question_id": "gst_sec73_itc.eligibility",
+                    "question_text": "Which ITC rules govern this period?",
+                    "topic": "itc_eligibility",
+                    "date_basis": "tax_period_end",
+                    "status": "missing_facts",
+                    "related_fact_ids": ["F-T"],
+                    "missing_fact_selectors": [
+                        {
+                            "fact_type": "stated_amount",
+                            "fact_role": "gstr2b_itc_reflected_amount",
+                            "accepted_statuses": ["confirmed"],
+                        }
+                    ],
+                    "matched_rule_ids": [],
+                }
+            ],
+        )
+        self.assertEqual(
+            decode_legal_brief_payload(
+                encode_legal_brief_payload(payload)
+            ),
+            payload,
+        )
+
+    def test_v1_payload_remains_decodable_without_question_reconstruction(self):
+        payload = build_legal_brief_payload(
+            self.result,
+            snapshot_id="SNAP-1",
+            as_of_date=date(2026, 8, 1),
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+        )
+        legacy = dict(payload)
+        legacy["schema_version"] = 1
+        legacy.pop("questions")
+        decoded = decode_legal_brief_payload(
+            encode_legal_brief_payload(legacy)
+        )
+        self.assertEqual(decoded, legacy)
+        self.assertNotIn("questions", decoded)
+
+    def test_persisted_v2_round_trip_freezes_question_plan(self):
+        plan = question_plan(self.result.catalog_version)
+        brief = persist_legal_brief(
+            self.briefs,
+            self.store,
+            case_id="CASE-1",
+            snapshot=self.snapshot,
+            result=self.result,
+            as_of_date=date(2026, 8, 1),
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            actor_id=ACTOR,
+            created_at=NOW,
+            question_plan=plan,
+        )
+        self.assertEqual(brief.schema_version, 2)
+        loaded = load_legal_brief(
+            self.briefs,
+            self.store,
+            legal_brief_id=brief.legal_brief_id,
+            expected_snapshot=self.snapshot,
+        )
+        self.assertEqual(
+            loaded.payload["questions"][0]["status"],
+            "missing_facts",
+        )
+
+    def test_persisted_v1_brief_remains_loadable(self):
+        current = build_legal_brief_payload(
+            self.result,
+            snapshot_id="SNAP-1",
+            as_of_date=date(2026, 8, 1),
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+        )
+        legacy = dict(current)
+        legacy["schema_version"] = 1
+        legacy.pop("questions")
+        encoded = encode_legal_brief_payload(legacy)
+        storage_key = generate_storage_key()
+        self.store.put(storage_key, encoded)
+        legacy_ref = LegalBriefRef(
+            legal_brief_id="LEGAL-V1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            schema_version=1,
+            catalog_version=self.result.catalog_version,
+            as_of_date=date(2026, 8, 1),
+            proceeding_type=ProceedingType.GST_SEC73_ITC,
+            byte_size=len(encoded),
+            sha256_hex=hashlib.sha256(encoded).hexdigest(),
+            storage_key=storage_key,
+            created_at=NOW,
+            created_by=ACTOR,
+        )
+        self.briefs.save_brief(
+            legacy_ref,
+            CaseEvent(
+                event_id="EV-LEGAL-V1",
+                case_id="CASE-1",
+                event_type=CaseEventType.LEGAL_BRIEF_SAVED,
+                occurred_at=NOW,
+                actor_id=ACTOR,
+                payload={
+                    "legal_brief_id": "LEGAL-V1",
+                    "snapshot_id": "SNAP-1",
+                    "catalog_version": self.result.catalog_version,
+                },
+            ),
+        )
+        loaded = load_legal_brief(
+            self.briefs,
+            self.store,
+            legal_brief_id="LEGAL-V1",
+            expected_snapshot=self.snapshot,
+        )
+        self.assertEqual(loaded.metadata.schema_version, 1)
+        self.assertNotIn("questions", loaded.payload)
 
     def test_save_load_round_trip_is_snapshot_and_catalog_bound(self):
         brief = persist_legal_brief(
