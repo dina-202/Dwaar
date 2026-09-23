@@ -3488,7 +3488,7 @@ class CaseWorkQueueUiTests(unittest.TestCase):
         self.assertIn("draft_awaiting_review", text)
         self.assertIn("legal_research", text)
         self.assertIn("draft", text)
-        self.assertIn("attention_count", text)
+        self.assertIn("Needs attention", text)
         self.assertIn("not a priority score or legal verdict", text)
         service.update_case_operations.assert_not_called()
 
@@ -3508,7 +3508,7 @@ class CaseWorkQueueUiTests(unittest.TestCase):
             item.case_id,
         )
         self.assertIn(
-            "Use Open saved case below",
+            "Open saved case",
             log_text(fake),
         )
 
@@ -3727,7 +3727,7 @@ class ClientWorkspaceUiTests(unittest.TestCase):
         saved_options = saved_case_selects[0][1][1]
         self.assertTrue(saved_options[0].endswith(older.case_id))
         self.assertIn(
-            "Use Open saved case below",
+            "Open saved case",
             log_text(fake),
         )
 
@@ -4098,7 +4098,7 @@ class DurableIntakeUiTests(unittest.TestCase):
         self.assertEqual(len(title_calls), 1)
         self.assertEqual(
             title_calls[0][2]["value"],
-            "DRC-01 — gst_sec73_itc",
+            "DRC-01 — Section 73 — ITC",
         )
 
 

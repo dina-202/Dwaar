@@ -230,6 +230,18 @@ def _notice_form_label(notice_form):
     return raw.replace("_", " ").upper()
 
 
+def _proceeding_label(proceeding_type):
+    labels = {
+        "gst_sec73_itc": "Section 73 — ITC",
+        "gst_sec73_general": "Section 73 — General",
+        "gst_sec73_rcm": "Section 73 — RCM",
+        "gst_sec74_fraud": "Section 74 — Fraud allegation",
+        "gst_sec129_enforcement": "Section 129 — Enforcement",
+        "unknown": "Intake",
+    }
+    return labels.get(proceeding_type.value, _friendly_enum(proceeding_type))
+
+
 def _render_phase2_result(result):
     classification = result.classification
     extraction = result.extraction_result
@@ -806,27 +818,33 @@ def _render_historical_snapshot(snapshot):
         "with the current engine."
     )
     st.write(
-        {
-            "snapshot_id": metadata.snapshot_id,
-            "created_at": metadata.created_at.isoformat(),
-            "schema_version": metadata.schema_version,
-            "engine_version": metadata.engine_version,
-            "source_document_id": metadata.source_document_id,
-            "source_document_sha256": metadata.source_document_sha256,
-        }
+        f"Saved {metadata.created_at.isoformat(timespec='minutes')} · "
+        f"Engine {metadata.engine_version}"
     )
 
     classification = payload["classification"]
     st.write(
-        {
-            "historical_notice_form": classification["notice_form"],
-            "historical_proceeding_type": (
-                classification["proceeding_type"]
-            ),
-            "historical_support_level": classification["support_level"],
-            "historical_confidence": classification["confidence"],
-        }
+        "**Notice:** "
+        + classification["notice_form"].replace("_", " ").upper()
+        + " · **Proceeding:** "
+        + classification["proceeding_type"].replace("_", " ").title()
     )
+    st.caption(
+        "Support: "
+        + classification["support_level"].replace("_", " ").title()
+        + " · Confidence: "
+        + classification["confidence"].replace("_", " ").title()
+    )
+    with st.expander("Technical details — historical snapshot"):
+        st.write(
+            {
+                "snapshot_id": metadata.snapshot_id,
+                "schema_version": metadata.schema_version,
+                "engine_version": metadata.engine_version,
+                "source_document_id": metadata.source_document_id,
+                "source_document_sha256": metadata.source_document_sha256,
+            }
+        )
 
     extraction = payload["extraction"]
     historical_facts = extraction["facts"]
@@ -837,34 +855,36 @@ def _render_historical_snapshot(snapshot):
 
     deadline = payload["deadline"]
     st.write(
-        {
-            "historical_response_deadline": deadline["response_deadline"],
-            "historical_deadline_status": deadline["deadline_status"],
-            "historical_days_remaining": deadline["days_remaining"],
-            "historical_hearing_date": deadline["hearing_date"],
-            "historical_hearing_status": deadline["hearing_status"],
-        }
+        "**Historical response deadline:** "
+        + _display(deadline["response_deadline"])
+        + " · "
+        + str(deadline["deadline_status"]).replace("_", " ").title()
     )
+    if deadline["hearing_date"] is not None:
+        st.caption(
+            "Hearing: "
+            + str(deadline["hearing_date"])
+            + " · "
+            + str(deadline["hearing_status"]).replace("_", " ").title()
+        )
 
     validation = payload["validation"]
-    st.write(
-        {
-            "historical_validation_status": validation["overall_status"],
-            "historical_draft_eligibility": (
-                validation["draft_eligibility"]
-            ),
-        }
-    )
-
     draft = payload["draft"]
     st.write(
-        {
-            "historical_draft_status": draft["status"],
-            "historical_draft_eligibility": (
-                draft["draft_eligibility"]
-            ),
-        }
+        "**Historical validation:** "
+        + str(validation["overall_status"]).replace("_", " ").title()
+        + " · **Drafting:** "
+        + str(draft["draft_eligibility"]).replace("_", " ").title()
     )
+    with st.expander("Technical details — historical decision state"):
+        st.write(
+            {
+                "deadline": deadline,
+                "validation_status": validation["overall_status"],
+                "draft_eligibility": validation["draft_eligibility"],
+                "draft_status": draft["status"],
+            }
+        )
     if draft["sections"]:
         st.caption(
             "Historical draft text below is preserved for audit/history "
@@ -927,12 +947,10 @@ def _render_snapshot_history(
             except Exception:
                 st.error("The analysis snapshot could not be saved.")
             else:
-                st.write(
-                    {
-                        "saved_snapshot_id": saved.snapshot_id,
-                        "engine_version": saved.engine_version,
-                    }
-                )
+                st.write("Current analysis snapshot saved.")
+                st.caption(f"Engine {saved.engine_version}")
+                with st.expander("Technical details — saved snapshot"):
+                    st.write({"saved_snapshot_id": saved.snapshot_id})
                 try:
                     history = snapshot_service.list_snapshot_history(
                         principal,
@@ -953,16 +971,25 @@ def _render_snapshot_history(
     st.dataframe(
         [
             {
-                "snapshot_id": item.snapshot_id,
-                "created_at": item.created_at.isoformat(),
-                "schema_version": item.schema_version,
-                "engine_version": item.engine_version,
-                "source_document_id": item.source_document_id,
+                "Saved at": item.created_at.isoformat(timespec="minutes"),
+                "Engine": item.engine_version,
             }
             for item in history
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — analysis history"):
+        st.dataframe(
+            [
+                {
+                    "snapshot_id": item.snapshot_id,
+                    "schema_version": item.schema_version,
+                    "source_document_id": item.source_document_id,
+                }
+                for item in history
+            ],
+            hide_index=True,
+        )
 
     labels = {
         (
@@ -1027,17 +1054,21 @@ def _render_snapshot_history(
                 except Exception:
                     st.error("The verified legal brief could not be saved.")
                 else:
-                    st.write(
-                        {
-                            "saved_legal_brief_id": (
-                                saved_brief.legal_brief_id
-                            ),
-                            "catalog_version": saved_brief.catalog_version,
-                            "legal_as_of_date": (
-                                saved_brief.as_of_date.isoformat()
-                            ),
-                        }
+                    st.write("Verified legal brief saved.")
+                    st.caption(
+                        f"Catalog {saved_brief.catalog_version} · "
+                        f"Legal as of {saved_brief.as_of_date.isoformat()}"
                     )
+                    with st.expander(
+                        "Technical details — saved legal brief"
+                    ):
+                        st.write(
+                            {
+                                "saved_legal_brief_id": (
+                                    saved_brief.legal_brief_id
+                                )
+                            }
+                        )
                     try:
                         legal_briefs = legal_brief_service.list_for_snapshot(
                             principal,
@@ -1056,16 +1087,26 @@ def _render_snapshot_history(
             st.dataframe(
                 [
                     {
-                        "legal_brief_id": item.legal_brief_id,
-                        "created_at": item.created_at.isoformat(),
-                        "catalog_version": item.catalog_version,
-                        "as_of_date": item.as_of_date.isoformat(),
-                        "proceeding_type": item.proceeding_type.value,
+                        "Saved at": item.created_at.isoformat(timespec="minutes"),
+                        "Catalog": item.catalog_version,
+                        "Legal as of": item.as_of_date.isoformat(),
+                        "Proceeding": _proceeding_label(item.proceeding_type),
                     }
                     for item in legal_briefs
                 ],
                 hide_index=True,
             )
+            with st.expander("Technical details — legal research history"):
+                st.dataframe(
+                    [
+                        {
+                            "legal_brief_id": item.legal_brief_id,
+                            "proceeding_type": item.proceeding_type.value,
+                        }
+                        for item in legal_briefs
+                    ],
+                    hide_index=True,
+                )
             brief_labels = {
                 (
                     f"{item.created_at.isoformat()} — "
@@ -1229,25 +1270,41 @@ def _render_draft_work_product_workspace(
         st.dataframe(
             [
                 {
-                    "draft_version_id": item.draft_version_id,
-                    "version_number": item.version_number,
-                    "source_snapshot_id": item.source_snapshot_id,
-                    "parent_draft_version_id": _display(
-                        item.parent_draft_version_id
+                    "Version": item.version_number,
+                    "Type": (
+                        "Generated baseline"
+                        if item.generated_baseline
+                        else "Professional edit"
                     ),
-                    "generated_baseline": item.generated_baseline,
-                    "review_status": item.review_status.value,
-                    "created_at": item.created_at.isoformat(),
-                    "created_by": item.created_by,
-                    "reviewed_at": _display(item.reviewed_at),
-                    "reviewed_by": _display(item.reviewed_by),
-                    "approved_at": _display(item.approved_at),
-                    "approved_by": _display(item.approved_by),
+                    "Review status": _friendly_enum(item.review_status),
+                    "Created at": item.created_at.isoformat(
+                        timespec="minutes"
+                    ),
+                    "Created by": item.created_by,
+                    "Reviewed at": _display(item.reviewed_at),
+                    "Approved at": _display(item.approved_at),
                 }
                 for item in versions
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — draft history"):
+            st.dataframe(
+                [
+                    {
+                        "draft_version_id": item.draft_version_id,
+                        "source_snapshot_id": item.source_snapshot_id,
+                        "parent_draft_version_id": _display(
+                            item.parent_draft_version_id
+                        ),
+                        "review_status": item.review_status.value,
+                        "reviewed_by": _display(item.reviewed_by),
+                        "approved_by": _display(item.approved_by),
+                    }
+                    for item in versions
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No durable draft work-product versions yet.")
 
@@ -1342,16 +1399,22 @@ def _render_draft_work_product_workspace(
                         case_id=reopened.case.case_id,
                     )
                     st.write(
-                        {
-                            "created_draft_version_id": (
-                                created.draft_version_id
-                            ),
-                            "version_number": created.version_number,
-                            "source_snapshot_id": (
-                                created.source_snapshot_id
-                            ),
-                        }
+                        f"Generated draft baseline saved as version "
+                        f"**{created.version_number}**."
                     )
+                    with st.expander(
+                        "Technical details — generated draft baseline"
+                    ):
+                        st.write(
+                            {
+                                "created_draft_version_id": (
+                                    created.draft_version_id
+                                ),
+                                "source_snapshot_id": (
+                                    created.source_snapshot_id
+                                ),
+                            }
+                        )
         else:
             st.warning(
                 "Save an analysis snapshot before creating a durable "
@@ -1396,14 +1459,18 @@ def _render_draft_work_product_workspace(
         return
 
     st.write(
-        {
-            "draft_version_id": selected.draft_version_id,
-            "version_number": selected.version_number,
-            "source_snapshot_id": selected.source_snapshot_id,
-            "review_status": selected.review_status.value,
-            "content_sha256": selected.content_sha256,
-        }
+        f"**Version {selected.version_number}** · "
+        f"{_friendly_enum(selected.review_status)}"
     )
+    with st.expander("Technical details — selected draft"):
+        st.write(
+            {
+                "draft_version_id": selected.draft_version_id,
+                "source_snapshot_id": selected.source_snapshot_id,
+                "review_status": selected.review_status.value,
+                "content_sha256": selected.content_sha256,
+            }
+        )
 
     latest = versions[-1]
     is_latest = latest.draft_version_id == selected.draft_version_id
@@ -1440,17 +1507,23 @@ def _render_draft_work_product_workspace(
                 st.error("The edited draft version could not be saved.")
             else:
                 st.write(
-                    {
-                        "created_draft_version_id": (
-                            created.draft_version_id
-                        ),
-                        "version_number": created.version_number,
-                        "parent_draft_version_id": (
-                            created.parent_draft_version_id
-                        ),
-                        "review_status": created.review_status.value,
-                    }
+                    f"Professional edit saved as version "
+                    f"**{created.version_number}**."
                 )
+                with st.expander(
+                    "Technical details — saved draft version"
+                ):
+                    st.write(
+                        {
+                            "created_draft_version_id": (
+                                created.draft_version_id
+                            ),
+                            "parent_draft_version_id": (
+                                created.parent_draft_version_id
+                            ),
+                            "review_status": created.review_status.value,
+                        }
+                    )
     else:
         st.text_area(
             "Professional draft text",
@@ -1503,13 +1576,20 @@ def _render_draft_work_product_workspace(
             else:
                 selected = updated
                 st.write(
-                    {
-                        "reviewed_draft_version_id": (
-                            updated.draft_version_id
-                        ),
-                        "review_status": updated.review_status.value,
-                    }
+                    "Draft review status updated to "
+                    f"**{_friendly_enum(updated.review_status)}**."
                 )
+                with st.expander(
+                    "Technical details — draft review transition"
+                ):
+                    st.write(
+                        {
+                            "reviewed_draft_version_id": (
+                                updated.draft_version_id
+                            ),
+                            "review_status": updated.review_status.value,
+                        }
+                    )
 
     if selected.review_status in {
         DraftReviewStatus.REVIEWED,
@@ -1583,25 +1663,39 @@ def _render_filing_workspace(
         st.dataframe(
             [
                 {
-                    "filing_id": item.filing_id,
-                    "filing_reference": item.filing_reference,
-                    "approved_draft_version_id": (
-                        item.approved_draft_version_id
+                    "Filing reference": item.filing_reference,
+                    "Filed at": item.filed_at.isoformat(timespec="minutes"),
+                    "Filed by": item.filed_by,
+                    "Acknowledgement": (
+                        "Attached"
+                        if item.acknowledgement_document_id is not None
+                        else "Pending"
                     ),
-                    "filed_response_document_id": (
-                        item.filed_response_document_id
-                    ),
-                    "acknowledgement_document_id": _display(
-                        item.acknowledgement_document_id
-                    ),
-                    "filed_at": item.filed_at.isoformat(),
-                    "filed_by": item.filed_by,
-                    "recorded_at": item.recorded_at.isoformat(),
                 }
                 for item in filings
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — filing history"):
+            st.dataframe(
+                [
+                    {
+                        "filing_id": item.filing_id,
+                        "approved_draft_version_id": (
+                            item.approved_draft_version_id
+                        ),
+                        "filed_response_document_id": (
+                            item.filed_response_document_id
+                        ),
+                        "acknowledgement_document_id": _display(
+                            item.acknowledgement_document_id
+                        ),
+                        "recorded_at": item.recorded_at.isoformat(),
+                    }
+                    for item in filings
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No filing records yet.")
 
@@ -1754,21 +1848,23 @@ def _render_filing_workspace(
                                 case_id=reopened.case.case_id,
                             )
                             st.write(
-                                {
-                                    "recorded_filing_id": (
-                                        saved.filing_id
-                                    ),
-                                    "filing_reference": (
-                                        saved.filing_reference
-                                    ),
-                                    "filed_response_document_id": (
-                                        saved.filed_response_document_id
-                                    ),
-                                    "acknowledgement_document_id": (
-                                        saved.acknowledgement_document_id
-                                    ),
-                                }
+                                "Filing recorded successfully. Reference: "
+                                f"**{saved.filing_reference}**"
                             )
+                            with st.expander(
+                                "Technical details — recorded filing"
+                            ):
+                                st.write(
+                                    {
+                                        "recorded_filing_id": saved.filing_id,
+                                        "filed_response_document_id": (
+                                            saved.filed_response_document_id
+                                        ),
+                                        "acknowledgement_document_id": (
+                                            saved.acknowledgement_document_id
+                                        ),
+                                    }
+                                )
 
     missing_ack = [
         item
@@ -1824,14 +1920,18 @@ def _render_filing_workspace(
         except Exception:
             st.error("The acknowledgement could not be attached.")
         else:
-            st.write(
-                {
-                    "updated_filing_id": updated.filing_id,
-                    "acknowledgement_document_id": (
-                        updated.acknowledgement_document_id
-                    ),
-                }
-            )
+            st.write("Acknowledgement attached successfully.")
+            with st.expander(
+                "Technical details — acknowledgement attachment"
+            ):
+                st.write(
+                    {
+                        "updated_filing_id": updated.filing_id,
+                        "acknowledgement_document_id": (
+                            updated.acknowledgement_document_id
+                        ),
+                    }
+                )
 
 
 def _render_persisted_evidence_workspace(
@@ -1871,16 +1971,27 @@ def _render_persisted_evidence_workspace(
         st.dataframe(
             [
                 {
-                    "document_id": item.document_id,
-                    "filename": item.original_filename,
-                    "byte_size": item.byte_size,
-                    "sha256": item.sha256_hex,
-                    "created_at": item.created_at.isoformat(),
+                    "File": item.original_filename,
+                    "Size (bytes)": item.byte_size,
+                    "Attached at": item.created_at.isoformat(
+                        timespec="minutes"
+                    ),
                 }
                 for item in attached
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — supporting documents"):
+            st.dataframe(
+                [
+                    {
+                        "document_id": item.document_id,
+                        "sha256": item.sha256_hex,
+                    }
+                    for item in attached
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No supporting evidence attached yet.")
 
@@ -1916,12 +2027,18 @@ def _render_persisted_evidence_workspace(
             _reset_evidence_workspace()
             if successes:
                 st.write(
-                    {
-                        "attached_document_ids": [
-                            item.document_id for item in successes
-                        ]
-                    }
+                    f"{len(successes)} supporting evidence file(s) attached."
                 )
+                with st.expander(
+                    "Technical details — attached supporting evidence"
+                ):
+                    st.write(
+                        {
+                            "attached_document_ids": [
+                                item.document_id for item in successes
+                            ]
+                        }
+                    )
             if failures:
                 st.error(
                     "Some supporting evidence files could not be attached: "
@@ -2010,13 +2127,18 @@ def _render_persisted_evidence_workspace(
         st.error("The selected evidence review context could not be loaded.")
         return
 
-    st.write(
-        {
-            "review_snapshot_id": selected_snapshot.snapshot_id,
-            "review_engine_version": selected_snapshot.engine_version,
-            "review_checklist_items": len(snapshot_checklist),
-        }
+    st.caption(
+        f"Reviewing against {len(snapshot_checklist)} checklist item(s) "
+        f"from engine {selected_snapshot.engine_version}."
     )
+    with st.expander("Technical details — evidence review context"):
+        st.write(
+            {
+                "review_snapshot_id": selected_snapshot.snapshot_id,
+                "review_engine_version": selected_snapshot.engine_version,
+                "review_checklist_items": len(snapshot_checklist),
+            }
+        )
 
     context_prefix = (
         f"persisted:{reopened.case.case_id}:"
@@ -2076,34 +2198,61 @@ def _render_persisted_evidence_workspace(
     intake_result = st.session_state.get(_EVIDENCE_INTAKE)
     if intake_result is not None:
         st.write(
-            {
-                "evidence_intake_status": intake_result.status.value,
-                "candidate_count": len(intake_result.candidates),
-                "rejected_candidate_count": (
-                    intake_result.rejected_candidate_count
-                ),
-            }
+            f"{len(intake_result.candidates)} persisted evidence "
+            "candidate(s) proposed for professional review."
         )
+        if intake_result.rejected_candidate_count:
+            st.warning(
+                f"{intake_result.rejected_candidate_count} candidate(s) "
+                "were rejected by deterministic validation."
+            )
 
         if intake_result.candidates:
+            requirement_text_by_id = {
+                item.evidence_id: item.requirement_text
+                for item in snapshot_checklist
+            }
             st.dataframe(
                 [
                     {
-                        "candidate_id": candidate.candidate_id,
-                        "evidence_id": candidate.evidence_id,
-                        "document_id": candidate.document_id,
-                        "source_page": candidate.source_page,
-                        "source_text": candidate.source_text,
-                        "source_origin": candidate.source_origin.value,
-                        "source_verification": (
-                            candidate.source_verification.value
+                        "Evidence requirement": requirement_text_by_id.get(
+                            candidate.evidence_id,
+                            "Evidence requirement",
                         ),
-                        "review_status": candidate.review_status.value,
+                        "Source page": candidate.source_page,
+                        "Source evidence": candidate.source_text,
+                        "Verification": _friendly_enum(
+                            candidate.source_verification
+                        ),
+                        "Review": _friendly_enum(candidate.review_status),
                     }
                     for candidate in intake_result.candidates
                 ],
                 hide_index=True,
             )
+            with st.expander(
+                "Technical details — persisted evidence candidates"
+            ):
+                st.write(
+                    {
+                        "evidence_intake_status": intake_result.status.value,
+                        "rejected_candidate_count": (
+                            intake_result.rejected_candidate_count
+                        ),
+                    }
+                )
+                st.dataframe(
+                    [
+                        {
+                            "candidate_id": candidate.candidate_id,
+                            "evidence_id": candidate.evidence_id,
+                            "document_id": candidate.document_id,
+                            "source_origin": candidate.source_origin.value,
+                        }
+                        for candidate in intake_result.candidates
+                    ],
+                    hide_index=True,
+                )
         else:
             st.write(
                 "No source-grounded evidence candidates were proposed."
@@ -2114,19 +2263,24 @@ def _render_persisted_evidence_workspace(
             context_prefix,
         )
         for candidate in intake_result.candidates:
-            st.subheader(f"Review {candidate.candidate_id}")
-            st.write(
-                {
-                    "evidence_id": candidate.evidence_id,
-                    "document_id": candidate.document_id,
-                    "source_page": candidate.source_page,
-                    "source_text": candidate.source_text,
-                    "source_origin": candidate.source_origin.value,
-                    "source_verification": (
-                        candidate.source_verification.value
-                    ),
-                }
+            st.subheader("Review persisted evidence candidate")
+            st.write(candidate.source_text)
+            st.caption(
+                f"Page {candidate.source_page} · "
+                f"{_friendly_enum(candidate.source_verification)}"
             )
+            with st.expander(
+                "Technical details — persisted evidence candidate "
+                + candidate.candidate_id
+            ):
+                st.write(
+                    {
+                        "candidate_id": candidate.candidate_id,
+                        "evidence_id": candidate.evidence_id,
+                        "document_id": candidate.document_id,
+                        "source_origin": candidate.source_origin.value,
+                    }
+                )
             note = st.text_input(
                 "Reviewer note (optional)",
                 key=(
@@ -2182,14 +2336,20 @@ def _render_persisted_evidence_workspace(
                     )
                 else:
                     st.write(
-                        {
-                            "saved_evidence_review_id": (
-                                saved_review.review_id
-                            ),
-                            "decision": saved_review.decision.value,
-                            "snapshot_id": saved_review.snapshot_id,
-                        }
+                        "Evidence review saved: "
+                        f"**{_friendly_enum(saved_review.decision)}**."
                     )
+                    with st.expander(
+                        "Technical details — saved evidence review"
+                    ):
+                        st.write(
+                            {
+                                "saved_evidence_review_id": (
+                                    saved_review.review_id
+                                ),
+                                "snapshot_id": saved_review.snapshot_id,
+                            }
+                        )
                     durable_reviews = review_service.list_reviews(
                         principal,
                         active_firm.firm_id,
@@ -2222,25 +2382,43 @@ def _render_persisted_evidence_workspace(
             st.dataframe(
                 [
                     {
-                        "question_id": item.question_id,
-                        "status": item.status.value,
-                        "required_evidence_ids": list(
-                            item.required_evidence_ids
-                        ),
-                        "confirmed_evidence_ids": list(
-                            item.confirmed_evidence_ids
-                        ),
-                        "missing_evidence_ids": list(
-                            item.missing_evidence_ids
-                        ),
-                        "confirmed_review_ids": list(
-                            item.confirmed_review_ids
-                        ),
+                        "Research question": item.question_id.replace(
+                            "_", " "
+                        ).replace(".", " — ").title(),
+                        "Evidence state": _friendly_enum(item.status),
+                        "Required": len(item.required_evidence_ids),
+                        "Confirmed": len(item.confirmed_evidence_ids),
+                        "Missing": len(item.missing_evidence_ids),
                     }
                     for item in legal_evidence
                 ],
                 hide_index=True,
             )
+            with st.expander(
+                "Technical details — legal evidence readiness"
+            ):
+                st.dataframe(
+                    [
+                        {
+                            "question_id": item.question_id,
+                            "status": item.status.value,
+                            "required_evidence_ids": list(
+                                item.required_evidence_ids
+                            ),
+                            "confirmed_evidence_ids": list(
+                                item.confirmed_evidence_ids
+                            ),
+                            "missing_evidence_ids": list(
+                                item.missing_evidence_ids
+                            ),
+                            "confirmed_review_ids": list(
+                                item.confirmed_review_ids
+                            ),
+                        }
+                        for item in legal_evidence
+                    ],
+                    hide_index=True,
+                )
         else:
             st.write(
                 "No closed legal-evidence readiness plan exists for this "
@@ -2255,18 +2433,29 @@ def _render_persisted_evidence_workspace(
     st.dataframe(
         [
             {
-                "review_id": item.review_id,
-                "evidence_id": item.evidence_id,
-                "document_id": item.document_id,
-                "source_page": item.source_page,
-                "decision": item.decision.value,
-                "reviewed_at": item.reviewed_at.isoformat(),
-                "reviewed_by": item.reviewed_by,
+                "Decision": _friendly_enum(item.decision),
+                "Source page": item.source_page,
+                "Reviewed at": item.reviewed_at.isoformat(
+                    timespec="minutes"
+                ),
+                "Reviewed by": item.reviewed_by,
             }
             for item in durable_reviews
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — durable evidence reviews"):
+        st.dataframe(
+            [
+                {
+                    "review_id": item.review_id,
+                    "evidence_id": item.evidence_id,
+                    "document_id": item.document_id,
+                }
+                for item in durable_reviews
+            ],
+            hide_index=True,
+        )
 
     review_labels = {
         (
@@ -2300,31 +2489,42 @@ def _render_persisted_evidence_workspace(
             st.error("The evidence review details could not be loaded.")
         else:
             st.write(
-                {
-                    "review_id": loaded_review.metadata.review_id,
-                    "snapshot_id": loaded_review.metadata.snapshot_id,
-                    "evidence_id": loaded_review.metadata.evidence_id,
-                    "document_id": loaded_review.metadata.document_id,
-                    "source_page": loaded_review.metadata.source_page,
-                    "decision": loaded_review.metadata.decision.value,
-                    "source_text": (
-                        loaded_review.payload["candidate"]["source_text"]
-                    ),
-                    "source_origin": (
-                        loaded_review.payload["candidate"]["source_origin"]
-                    ),
-                    "source_verification": (
-                        loaded_review.payload["candidate"][
-                            "source_verification"
-                        ]
-                    ),
-                    "reviewer_note": _display(
-                        loaded_review.payload["reviewer_note"]
-                    ),
-                    "reviewed_at": loaded_review.payload["reviewed_at"],
-                    "reviewed_by": loaded_review.payload["reviewed_by"],
-                }
+                "**Decision:** "
+                + str(loaded_review.metadata.decision.value)
+                    .replace("_", " ")
+                    .title()
             )
+            st.write(loaded_review.payload["candidate"]["source_text"])
+            st.caption(
+                "Page "
+                + str(loaded_review.metadata.source_page)
+                + " · Reviewed "
+                + str(loaded_review.payload["reviewed_at"])
+                + " by "
+                + str(loaded_review.payload["reviewed_by"])
+            )
+            reviewer_note = loaded_review.payload["reviewer_note"]
+            if reviewer_note:
+                st.write("**Reviewer note:** " + str(reviewer_note))
+            with st.expander(
+                "Technical details — encrypted evidence review"
+            ):
+                st.write(
+                    {
+                        "review_id": loaded_review.metadata.review_id,
+                        "snapshot_id": loaded_review.metadata.snapshot_id,
+                        "evidence_id": loaded_review.metadata.evidence_id,
+                        "document_id": loaded_review.metadata.document_id,
+                        "source_origin": (
+                            loaded_review.payload["candidate"]["source_origin"]
+                        ),
+                        "source_verification": (
+                            loaded_review.payload["candidate"][
+                                "source_verification"
+                            ]
+                        ),
+                    }
+                )
 
 
 def _render_case_work_queue(principal, active_firm):
@@ -2367,30 +2567,41 @@ def _render_case_work_queue(principal, active_firm):
     st.dataframe(
         [
             {
-                "case_id": row.work_item.case_id,
-                "client": row.work_item.client_name,
-                "title": row.work_item.title,
-                "status": row.work_item.status.value,
-                "deadline_status": row.work_item.deadline_status.value,
-                "response_deadline": _display(
-                    row.work_item.response_deadline
+                "Client": row.work_item.client_name,
+                "Matter": row.work_item.title,
+                "Status": _friendly_enum(row.work_item.status),
+                "Deadline": _display(row.work_item.response_deadline),
+                "Deadline state": _friendly_enum(
+                    row.work_item.deadline_status
                 ),
-                "days_remaining": _display(row.work_item.days_remaining),
-                "assigned_to": _display(row.work_item.assigned_to),
-                "reviewer_id": _display(row.work_item.reviewer_id),
-                "attention_count": row.attention_count,
-                "attention_codes": [
-                    code.value for code in row.attention_codes
-                ],
-                "attention_workspaces": [
-                    workspace.value
-                    for workspace in row.attention_workspaces
-                ],
+                "Days remaining": _display(row.work_item.days_remaining),
+                "Assignee": _display(row.work_item.assigned_to),
+                "Reviewer": _display(row.work_item.reviewer_id),
+                "Needs attention": row.attention_count,
             }
             for row in professional_queue
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — work queue"):
+        st.dataframe(
+            [
+                {
+                    "case_id": row.work_item.case_id,
+                    "status": row.work_item.status.value,
+                    "deadline_status": row.work_item.deadline_status.value,
+                    "attention_codes": [
+                        code.value for code in row.attention_codes
+                    ],
+                    "attention_workspaces": [
+                        workspace.value
+                        for workspace in row.attention_workspaces
+                    ],
+                }
+                for row in professional_queue
+            ],
+            hide_index=True,
+        )
 
     labels = {
         (
@@ -2410,16 +2621,18 @@ def _render_case_work_queue(principal, active_firm):
 
     if selected_row.attention_codes:
         st.write(
-            {
-                "selected_case_attention": [
-                    code.value
-                    for code in selected_row.attention_codes
-                ],
-                "owning_workspaces": [
-                    workspace.value
-                    for workspace in selected_row.attention_workspaces
-                ],
-            }
+            "**Needs attention:** "
+            + ", ".join(
+                _friendly_enum(code)
+                for code in selected_row.attention_codes
+            )
+        )
+        st.caption(
+            "Continue in: "
+            + ", ".join(
+                _friendly_enum(workspace)
+                for workspace in selected_row.attention_workspaces
+            )
         )
     else:
         st.caption(
@@ -2432,12 +2645,9 @@ def _render_case_work_queue(principal, active_firm):
         key=f"focus_queue_case_{selected.case_id}",
     ):
         st.session_state[_FOCUSED_CASE_ID] = selected.case_id
-        st.write(
-            {
-                "focused_case_id": selected.case_id,
-                "next_step": "Use Open saved case below.",
-            }
-        )
+        st.write("Case selected. Use **Open saved case** below.")
+        with st.expander("Technical details — selected queue case"):
+            st.write({"focused_case_id": selected.case_id})
 
     if AccessPermission.CASE_UPDATE not in active_firm.permissions:
         st.caption(
@@ -2569,14 +2779,18 @@ def _render_case_work_queue(principal, active_firm):
 
     st.session_state[_FOCUSED_CASE_ID] = updated.case_id
     st.write(
-        {
-            "updated_case_id": updated.case_id,
-            "status": updated.status.value,
-            "response_deadline": _display(updated.response_deadline),
-            "assigned_to": _display(updated.assigned_to),
-            "reviewer_id": _display(updated.reviewer_id),
-        }
+        f"Case operations saved. Status: **{_friendly_enum(updated.status)}**."
     )
+    st.caption(
+        "Response deadline: "
+        + _display(updated.response_deadline)
+        + " · Assignee: "
+        + _display(updated.assigned_to)
+        + " · Reviewer: "
+        + _display(updated.reviewer_id)
+    )
+    with st.expander("Technical details — case operations"):
+        st.write({"updated_case_id": updated.case_id})
 
 
 def _render_client_workspace(principal, active_firm):
@@ -2639,29 +2853,38 @@ def _render_client_workspace(principal, active_firm):
         st.error("Client history could not be loaded.")
         return
 
-    st.write(
-        {
-            "client_id": workspace.client.client_id,
-            "client_name": workspace.client.display_name,
-            "registration_count": len(workspace.registrations),
-            "case_count": len(workspace.cases),
-        }
+    st.write(f"**{workspace.client.display_name}**")
+    st.caption(
+        f"{len(workspace.registrations)} tax registration(s) · "
+        f"{len(workspace.cases)} saved matter(s)"
     )
+    with st.expander("Technical details — client"):
+        st.write({"client_id": workspace.client.client_id})
 
     st.subheader("Tax registrations")
     if workspace.registrations:
         st.dataframe(
             [
                 {
-                    "registration_id": item.registration_id,
-                    "jurisdiction": item.jurisdiction,
-                    "identifier_type": item.identifier_type,
-                    "identifier_value": item.identifier_value,
+                    "Jurisdiction": item.jurisdiction,
+                    "Identifier": item.identifier_type,
+                    "Value": item.identifier_value,
                 }
                 for item in workspace.registrations
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — tax registrations"):
+            st.dataframe(
+                [
+                    {
+                        "registration_id": item.registration_id,
+                        "identifier_value": item.identifier_value,
+                    }
+                    for item in workspace.registrations
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No tax registrations saved for this client.")
 
@@ -2673,19 +2896,29 @@ def _render_client_workspace(principal, active_firm):
     st.dataframe(
         [
             {
-                "case_id": case.case_id,
-                "title": case.title,
-                "status": case.status.value,
-                "notice_form": case.notice_form.value,
-                "proceeding_type": case.proceeding_type.value,
-                "opened_at": case.opened_at.isoformat(),
-                "response_deadline": _display(case.response_deadline),
-                "registration_id": _display(case.registration_id),
+                "Matter": case.title,
+                "Status": _friendly_enum(case.status),
+                "Notice": _notice_form_label(case.notice_form),
+                "Proceeding": _proceeding_label(case.proceeding_type),
+                "Opened": case.opened_at.date().isoformat(),
+                "Response deadline": _display(case.response_deadline),
             }
             for case in workspace.cases
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — client case history"):
+        st.dataframe(
+            [
+                {
+                    "case_id": case.case_id,
+                    "registration_id": _display(case.registration_id),
+                    "proceeding_type": case.proceeding_type.value,
+                }
+                for case in workspace.cases
+            ],
+            hide_index=True,
+        )
 
     case_labels = {
         f"{case.title} — {case.case_id}": case
@@ -2703,12 +2936,9 @@ def _render_client_workspace(principal, active_firm):
         key=f"focus_client_case_{selected_case.case_id}",
     ):
         st.session_state[_FOCUSED_CASE_ID] = selected_case.case_id
-        st.write(
-            {
-                "focused_case_id": selected_case.case_id,
-                "next_step": "Use Open saved case below.",
-            }
-        )
+        st.write("Case selected. Use **Open saved case** below.")
+        with st.expander("Technical details — selected client case"):
+            st.write({"focused_case_id": selected_case.case_id})
 
 
 def _render_professional_case_attention(
@@ -2740,30 +2970,13 @@ def _render_professional_case_attention(
         st.error("Professional case attention could not be loaded.")
         return
 
-    st.write(
-        {
-            "latest_snapshot_id": _display(
-                attention.latest_snapshot_id
-            ),
-            "latest_legal_brief_id": _display(
-                attention.latest_legal_brief_id
-            ),
-            "latest_draft_version_id": _display(
-                attention.latest_draft_version_id
-            ),
-            "latest_filing_id": _display(
-                attention.latest_filing_id
-            ),
-        }
-    )
     if attention.items:
         st.dataframe(
             [
                 {
-                    "attention": item.code.value,
-                    "workspace": item.code.workspace.value,
-                    "message": item.message,
-                    "related_id": _display(item.related_id),
+                    "Attention": _friendly_enum(item.code),
+                    "Continue in": _friendly_enum(item.code.workspace),
+                    "What needs attention": item.message,
                 }
                 for item in attention.items
             ],
@@ -2774,6 +2987,36 @@ def _render_professional_case_attention(
             "No operational attention item is currently identified by "
             "the deterministic workbench projection."
         )
+
+    with st.expander("Technical details — case attention"):
+        st.write(
+            {
+                "latest_snapshot_id": _display(
+                    attention.latest_snapshot_id
+                ),
+                "latest_legal_brief_id": _display(
+                    attention.latest_legal_brief_id
+                ),
+                "latest_draft_version_id": _display(
+                    attention.latest_draft_version_id
+                ),
+                "latest_filing_id": _display(
+                    attention.latest_filing_id
+                ),
+            }
+        )
+        if attention.items:
+            st.dataframe(
+                [
+                    {
+                        "attention_code": item.code.value,
+                        "workspace": item.code.workspace.value,
+                        "related_id": _display(item.related_id),
+                    }
+                    for item in attention.items
+                ],
+                hide_index=True,
+            )
 
 
 def _render_case_timeline(
@@ -2808,18 +3051,27 @@ def _render_case_timeline(
     st.dataframe(
         [
             {
-                "occurred_at": item.occurred_at.isoformat(),
-                "category": item.category.value,
-                "event_type": item.event_type.value,
-                "title": item.title,
-                "summary": item.summary,
-                "actor_id": _display(item.actor_id),
-                "event_id": item.event_id,
+                "When": item.occurred_at.isoformat(timespec="minutes"),
+                "Category": _friendly_enum(item.category),
+                "Activity": item.title,
+                "Details": item.summary,
             }
             for item in items
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — case timeline"):
+        st.dataframe(
+            [
+                {
+                    "event_id": item.event_id,
+                    "event_type": item.event_type.value,
+                    "actor_id": _display(item.actor_id),
+                }
+                for item in items
+            ],
+            hide_index=True,
+        )
 
 
 def _render_saved_cases_workspace(principal, active_firm):
@@ -2867,17 +3119,29 @@ def _render_saved_cases_workspace(principal, active_firm):
     st.dataframe(
         [
             {
-                "case_id": case.case_id,
-                "title": case.title,
-                "status": case.status.value,
-                "notice_form": case.notice_form.value,
-                "proceeding_type": case.proceeding_type.value,
-                "response_deadline": _display(case.response_deadline),
+                "Matter": case.title,
+                "Status": _friendly_enum(case.status),
+                "Notice": _notice_form_label(case.notice_form),
+                "Proceeding": _proceeding_label(case.proceeding_type),
+                "Response deadline": _display(case.response_deadline),
             }
             for case in cases
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — saved cases"):
+        st.dataframe(
+            [
+                {
+                    "case_id": case.case_id,
+                    "status": case.status.value,
+                    "notice_form": case.notice_form.value,
+                    "proceeding_type": case.proceeding_type.value,
+                }
+                for case in cases
+            ],
+            hide_index=True,
+        )
 
     labels = {
         f"{case.title} — {case.case_id}": case
@@ -2981,15 +3245,18 @@ def _render_saved_cases_workspace(principal, active_firm):
         _reset_evidence_workspace()
 
     st.subheader("Opened case")
-    st.write(
-        {
-            "case_id": reopened.case.case_id,
-            "title": reopened.case.title,
-            "status": reopened.case.status.value,
-            "notice_filename": reopened.notice_document.original_filename,
-            "analysis_source": "recomputed_from_encrypted_notice",
-        }
+    st.write(f"**{reopened.case.title}**")
+    st.caption(
+        f"{_friendly_enum(reopened.case.status)} · "
+        f"{reopened.notice_document.original_filename}"
     )
+    with st.expander("Technical details — opened case"):
+        st.write(
+            {
+                "case_id": reopened.case.case_id,
+                "analysis_source": "recomputed_from_encrypted_notice",
+            }
+        )
     st.caption(
         "The persisted notice was decrypted and integrity-checked, then "
         "the current analysis engine recomputed this live result. Saved "
@@ -3087,12 +3354,14 @@ def _render_save_intake_workspace(
     saved_intakes = st.session_state.setdefault(_SAVED_INTAKES, {})
     existing_case_id = saved_intakes.get(save_key)
     if existing_case_id:
-        st.write(
-            {
-                "saved_case_id": existing_case_id,
-                "status": "intake",
-            }
-        )
+        st.write("This notice is already saved as an intake case.")
+        with st.expander("Technical details — saved intake"):
+            st.write(
+                {
+                    "saved_case_id": existing_case_id,
+                    "status": "intake",
+                }
+            )
         return
 
     service = None
@@ -3179,16 +3448,20 @@ def _render_save_intake_workspace(
         selected_registration = registration_labels[
             selected_registration_label
         ]
-        st.write(
-            {
-                "selected_client_id": selected_client.client_id,
-                "selected_registration_id": (
-                    None
-                    if selected_registration is None
-                    else selected_registration.registration_id
-                ),
-            }
+        st.caption(
+            "Using existing client: " + selected_client.display_name
         )
+        with st.expander("Technical details — selected client"):
+            st.write(
+                {
+                    "selected_client_id": selected_client.client_id,
+                    "selected_registration_id": (
+                        None
+                        if selected_registration is None
+                        else selected_registration.registration_id
+                    ),
+                }
+            )
     else:
         client_name = st.text_input(
             "Client name",
@@ -3209,7 +3482,7 @@ def _render_save_intake_workspace(
     )
     default_title = (
         f"{notice_form_label} — "
-        f"{result.classification.proceeding_type.value}"
+        f"{_proceeding_label(result.classification.proceeding_type)}"
     )
     case_title = st.text_input(
         "Case title",
@@ -3293,13 +3566,17 @@ def _render_save_intake_workspace(
 
     saved_intakes[save_key] = saved_case.case_id
     st.write(
-        {
-            "saved_case_id": saved_case.case_id,
-            "status": saved_case.status.value,
-            "client_id": saved_case.client_id,
-            "registration_id": saved_case.registration_id,
-        }
+        "Intake case saved successfully. It is now available in Saved cases."
     )
+    with st.expander("Technical details — saved intake"):
+        st.write(
+            {
+                "saved_case_id": saved_case.case_id,
+                "status": saved_case.status.value,
+                "client_id": saved_case.client_id,
+                "registration_id": saved_case.registration_id,
+            }
+        )
 
 
 def _render_evidence_workspace(notice_pdf_bytes, result):
@@ -3356,34 +3633,59 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
     reviews = st.session_state.setdefault(_EVIDENCE_REVIEWS, [])
 
     st.write(
-        {
-            "evidence_intake_status": intake_result.status.value,
-            "candidate_count": len(intake_result.candidates),
-            "rejected_candidate_count": (
-                intake_result.rejected_candidate_count
-            ),
-        }
+        f"{len(intake_result.candidates)} evidence candidate(s) proposed "
+        f"for professional review."
     )
+    if intake_result.rejected_candidate_count:
+        st.warning(
+            f"{intake_result.rejected_candidate_count} candidate(s) were "
+            "rejected by Dwaar's deterministic validation."
+        )
 
     if intake_result.candidates:
+        requirement_text_by_id = {
+            item.evidence_id: item.requirement_text
+            for item in evidence_checklist
+        }
         st.dataframe(
             [
                 {
-                    "candidate_id": candidate.candidate_id,
-                    "evidence_id": candidate.evidence_id,
-                    "document_id": candidate.document_id,
-                    "source_page": candidate.source_page,
-                    "source_text": candidate.source_text,
-                    "source_origin": candidate.source_origin.value,
-                    "source_verification": (
-                        candidate.source_verification.value
+                    "Evidence requirement": requirement_text_by_id.get(
+                        candidate.evidence_id,
+                        "Evidence requirement",
                     ),
-                    "review_status": candidate.review_status.value,
+                    "Source page": candidate.source_page,
+                    "Source evidence": candidate.source_text,
+                    "Verification": _friendly_enum(
+                        candidate.source_verification
+                    ),
+                    "Review": _friendly_enum(candidate.review_status),
                 }
                 for candidate in intake_result.candidates
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — evidence candidates"):
+            st.write(
+                {
+                    "evidence_intake_status": intake_result.status.value,
+                    "rejected_candidate_count": (
+                        intake_result.rejected_candidate_count
+                    ),
+                }
+            )
+            st.dataframe(
+                [
+                    {
+                        "candidate_id": candidate.candidate_id,
+                        "evidence_id": candidate.evidence_id,
+                        "document_id": candidate.document_id,
+                        "source_origin": candidate.source_origin.value,
+                    }
+                    for candidate in intake_result.candidates
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No source-grounded evidence candidates were proposed.")
 
@@ -3392,19 +3694,23 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
         if candidate.candidate_id in reviewed_ids:
             continue
 
-        st.subheader(f"Review {candidate.candidate_id}")
-        st.write(
-            {
-                "evidence_id": candidate.evidence_id,
-                "document_id": candidate.document_id,
-                "source_page": candidate.source_page,
-                "source_text": candidate.source_text,
-                "source_origin": candidate.source_origin.value,
-                "source_verification": (
-                    candidate.source_verification.value
-                ),
-            }
+        st.subheader("Review evidence candidate")
+        st.write(candidate.source_text)
+        st.caption(
+            f"Page {candidate.source_page} · "
+            f"{_friendly_enum(candidate.source_verification)}"
         )
+        with st.expander(
+            f"Technical details — evidence candidate {candidate.candidate_id}"
+        ):
+            st.write(
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "evidence_id": candidate.evidence_id,
+                    "document_id": candidate.document_id,
+                    "source_origin": candidate.source_origin.value,
+                }
+            )
         note = st.text_input(
             "Reviewer note (optional)",
             key=f"evidence_note_{workspace_key}_{candidate.candidate_id}",
@@ -3445,22 +3751,31 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
         st.dataframe(
             [
                 {
-                    "review_id": review.review_id,
-                    "candidate_id": review.candidate_id,
-                    "evidence_id": review.evidence_id,
-                    "document_id": review.document_id,
-                    "source_page": review.source_page,
-                    "decision": review.decision.value,
-                    "source_origin": review.source_origin.value,
-                    "source_verification": (
-                        review.source_verification.value
-                    ),
-                    "reviewer_note": _display(review.reviewer_note),
+                    "Decision": _friendly_enum(review.decision),
+                    "Source page": review.source_page,
+                    "Reviewer note": _display(review.reviewer_note),
                 }
                 for review in reviews
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — evidence review records"):
+            st.dataframe(
+                [
+                    {
+                        "review_id": review.review_id,
+                        "candidate_id": review.candidate_id,
+                        "evidence_id": review.evidence_id,
+                        "document_id": review.document_id,
+                        "source_origin": review.source_origin.value,
+                        "source_verification": (
+                            review.source_verification.value
+                        ),
+                    }
+                    for review in reviews
+                ],
+                hide_index=True,
+            )
 
 
 st.set_page_config(
