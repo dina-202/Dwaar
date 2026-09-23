@@ -280,10 +280,9 @@ def _render_phase2_result(result):
         st.dataframe(
             [
                 {
-                    "Fact": fact.claim,
                     "Type": _friendly_enum(fact.fact_type),
+                    "Source evidence": _display(fact.source_text),
                     "Source page": _display(fact.source_page),
-                    "Source text": _display(fact.source_text),
                     "Verification": _friendly_enum(fact.source_verification),
                 }
                 for fact in extraction.facts
