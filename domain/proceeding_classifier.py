@@ -38,7 +38,7 @@ from domain.models import (
 from domain.taxonomy_registry import lookup_notice_form
 from modules.llm_client import call_gemini
 
-# The five approved Phase-2 deep-workflow ProceedingTypes (§4, §12).
+# The six approved specialist-workflow ProceedingTypes (§4, §12).
 _DEEP_PROCEEDING_TYPES = {
     ProceedingType.GST_SEC61_SCRUTINY,
     ProceedingType.GST_SEC73_ITC,
@@ -82,6 +82,24 @@ def _build_classification_prompt(raw_text: str) -> str:
         f"Valid NoticeFamily names: {', '.join(m.name for m in NoticeFamily)}\n"
         f"Valid ProceedingType names: {', '.join(m.name for m in ProceedingType)}\n"
         "Valid confidence values: HIGH, MEDIUM, LOW, UNKNOWN\n"
+        "\n"
+        "Proceeding candidate guidance (Python validates every candidate):\n"
+        "- ASMT_10 + explicit Section 61 or Rule 99 scrutiny marker + "
+        "explicit discrepancy wording -> GST_SEC61_SCRUTINY.\n"
+        "- DRC_01 + Section 73 + ITC/16(2)(aa)/Rule 36(4) or explicit "
+        "GSTR-2B versus GSTR-3B ITC mismatch -> GST_SEC73_ITC.\n"
+        "- DRC_01 + Section 73 + RCM/reverse-charge/9(3) marker -> "
+        "GST_SEC73_RCM.\n"
+        "- DRC_01 + Section 73 + output-tax/short-payment or GSTR-1 versus "
+        "GSTR-3B liability mismatch, without ITC/RCM markers -> "
+        "GST_SEC73_GENERAL.\n"
+        "- DRC_01 + Section 74 + fraud/suppression/wilful-misstatement "
+        "marker -> GST_SEC74_FRAUD.\n"
+        "- MOV_SERIES + Section 129 or explicit goods/conveyance detention "
+        "marker -> GST_SEC129_ENFORCE.\n"
+        "- If the form is recognized but none of the supported proceeding "
+        "patterns is clearly present, use UNKNOWN; do not force a nearest "
+        "workflow.\n"
         "\n"
         "Do NOT output or decide: support_level, deadlines, tax calculations, "
         "evidence requirements, legal defences, case law, reply-form "
