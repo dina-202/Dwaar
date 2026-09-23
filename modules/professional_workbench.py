@@ -79,10 +79,6 @@ def build_professional_case_attention(
             for item in briefs
             if item.metadata.snapshot_id == latest_snapshot.snapshot_id
         )
-        latest_brief = _latest(
-            snapshot_briefs,
-            "metadata",
-        ) if False else None
         if snapshot_briefs:
             latest_brief = max(
                 snapshot_briefs,
