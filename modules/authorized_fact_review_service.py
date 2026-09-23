@@ -15,6 +15,7 @@ from domain.fact_review_models import (
     FactReviewDecision,
     FactReviewRef,
     LoadedFactReview,
+    latest_fact_reviews,
 )
 from domain.persistence_ports import (
     AccessGrantRepository,
@@ -235,6 +236,23 @@ class AuthorizedFactReviewService:
             review_id=review.review_id,
         )
 
+    def latest_reviews_by_fact(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+        snapshot_id: str,
+    ) -> Dict[str, FactReviewRef]:
+        return latest_fact_reviews(
+            self.list_reviews(
+                principal,
+                firm_id,
+                case_id=case_id,
+                snapshot_id=snapshot_id,
+            )
+        )
+
     def rejected_fact_ids(
         self,
         principal: AuthenticatedPrincipal,
@@ -244,12 +262,12 @@ class AuthorizedFactReviewService:
         snapshot_id: str,
     ) -> set[str]:
         return {
-            review.fact_id
-            for review in self.list_reviews(
+            fact_id
+            for fact_id, review in self.latest_reviews_by_fact(
                 principal,
                 firm_id,
                 case_id=case_id,
                 snapshot_id=snapshot_id,
-            )
+            ).items()
             if review.decision is FactReviewDecision.REJECTED
         }
