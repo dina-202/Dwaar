@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
+from pathlib import Path
 from typing import Mapping, Optional
 
 from domain.runtime_readiness_models import (
@@ -19,12 +21,34 @@ from modules.runtime_access import (
     RuntimeAccessConfigurationError,
     database_path_from_environment,
 )
-from modules.runtime_persistence import (
-    RuntimePersistenceConfigurationError,
-    document_key_from_environment,
-    object_root_from_environment,
+from modules.runtime_security import (
+    RuntimeSecurityConfigurationError,
+    decode_document_master_key,
 )
 from modules.sqlite_case_repository import LocalSQLiteCaseRepository
+
+
+def _object_root_from_environment(
+    environment: Optional[Mapping[str, str]],
+) -> str:
+    source = os.environ if environment is None else environment
+    value = source.get("DWAAR_OBJECT_ROOT")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("object root is not configured")
+    return str(Path(value.strip()).expanduser())
+
+
+def _document_key_from_environment(
+    environment: Optional[Mapping[str, str]],
+) -> bytes:
+    source = os.environ if environment is None else environment
+    value = source.get("DWAAR_DOCUMENT_KEY_B64")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("document key is not configured")
+    try:
+        return decode_document_master_key(value)
+    except RuntimeSecurityConfigurationError as error:
+        raise ValueError("document key is invalid") from error
 
 
 def _check(
@@ -70,8 +94,8 @@ def evaluate_runtime_readiness(
 
     object_root = None
     try:
-        object_root = object_root_from_environment(environment)
-    except RuntimePersistenceConfigurationError:
+        object_root = _object_root_from_environment(environment)
+    except ValueError:
         pass
     checks.append(
         _check(
@@ -84,8 +108,8 @@ def evaluate_runtime_readiness(
 
     document_key = None
     try:
-        document_key = document_key_from_environment(environment)
-    except RuntimePersistenceConfigurationError:
+        document_key = _document_key_from_environment(environment)
+    except ValueError:
         pass
     checks.append(
         _check(
