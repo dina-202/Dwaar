@@ -81,7 +81,7 @@ class GstLegalResearchProfileTests(unittest.TestCase):
             (LegalTopic.RCM_APPLICABILITY,),
         )
 
-    def test_fraud_scope_stays_unresolved_pending_curated_authority(self):
+    def test_fraud_scope_stays_unresolved_without_tax_period_anchor(self):
         result = resolve_gst_legal_brief(
             ProceedingType.GST_SEC74_FRAUD,
             date(2026, 9, 23),
