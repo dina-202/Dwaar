@@ -12,6 +12,10 @@ from domain.draft_work_product_models import (
 )
 from domain.filing_models import FilingRecord
 from domain.legal_brief_models import LoadedLegalBrief
+from domain.legal_evidence_models import (
+    LegalEvidenceReadiness,
+    LegalEvidenceReadinessStatus,
+)
 from domain.professional_workbench_models import (
     CaseAttentionCode,
     CaseAttentionItem,
@@ -32,6 +36,8 @@ def build_professional_case_attention(
     legal_briefs: Iterable[LoadedLegalBrief],
     draft_versions: Iterable[DraftVersionRef],
     filings: Iterable[FilingRecord],
+    legal_evidence_readiness: Iterable[LegalEvidenceReadiness] = (),
+    legal_evidence_contract_drift: bool = False,
 ) -> ProfessionalCaseAttention:
     """Build read-only operational attention facts.
 
@@ -45,12 +51,20 @@ def build_professional_case_attention(
     briefs = tuple(legal_briefs)
     drafts = tuple(draft_versions)
     filings = tuple(filings)
+    evidence_readiness = tuple(legal_evidence_readiness)
+    if not isinstance(legal_evidence_contract_drift, bool):
+        raise TypeError("legal_evidence_contract_drift must be a bool")
 
     for values, expected, label in (
         (snapshots, AnalysisSnapshotRef, "snapshots"),
         (briefs, LoadedLegalBrief, "legal_briefs"),
         (drafts, DraftVersionRef, "draft_versions"),
         (filings, FilingRecord, "filings"),
+        (
+            evidence_readiness,
+            LegalEvidenceReadiness,
+            "legal_evidence_readiness",
+        ),
     ):
         if any(not isinstance(item, expected) for item in values):
             raise TypeError(f"{label} contains an invalid value")
@@ -116,6 +130,31 @@ def build_professional_case_attention(
                         latest_brief.metadata.legal_brief_id,
                     )
                 )
+
+            if legal_evidence_contract_drift:
+                items.append(
+                    CaseAttentionItem(
+                        CaseAttentionCode.LEGAL_EVIDENCE_CONTRACT_DRIFT,
+                        "The latest snapshot does not match the current "
+                        "closed legal-evidence requirement contract.",
+                        latest_snapshot.snapshot_id,
+                    )
+                )
+            else:
+                for readiness in evidence_readiness:
+                    if (
+                        readiness.status
+                        is not LegalEvidenceReadinessStatus
+                        .REQUIRED_EVIDENCE_CONFIRMED
+                    ):
+                        items.append(
+                            CaseAttentionItem(
+                                CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE,
+                                "Human-confirmed supporting evidence is "
+                                "incomplete for a legal research question.",
+                                readiness.question_id,
+                            )
+                        )
 
         if latest_draft is None:
             items.append(
