@@ -27,6 +27,7 @@ from domain.evidence_review_models import (
 )
 from domain.filing_models import FilingRecord
 from domain.fact_review_models import (
+    FACT_REVIEW_NOTE_MAX_CHARS,
     FactReviewDecision,
     FactReviewRef,
 )
@@ -2681,6 +2682,41 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
         self.assertNotIn("FREV-SECRET", text)
         self.assertNotIn("fact_role", text)
         self.assertNotIn("alleged", text.lower())
+
+    def test_fact_review_note_control_uses_domain_size_limit(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+        fact_service = Mock()
+        fact_service.list_reviewable_facts.return_value = [
+            self._reviewable_fact()
+        ]
+        fact_service.latest_reviews_by_fact.return_value = {}
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm(fact_review=True)],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            fact_review_service=fact_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(),
+        )
+
+        note_calls = [
+            call
+            for call in calls_named(fake, "text_area")
+            if call[2].get("key") == "fact_review_note_SNAP-1"
+        ]
+        self.assertEqual(len(note_calls), 1)
+        self.assertEqual(
+            note_calls[0][2]["max_chars"],
+            FACT_REVIEW_NOTE_MAX_CHARS,
+        )
 
     def test_confirm_fact_review_writes_only_selected_snapshot_fact_id(self):
         case_service = Mock()
