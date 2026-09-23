@@ -16,6 +16,9 @@ from modules.authorized_evidence_review_service import (
     AuthorizedEvidenceReviewService,
 )
 from modules.authorized_filing_service import AuthorizedFilingService
+from modules.authorized_fact_review_service import (
+    AuthorizedFactReviewService,
+)
 from modules.authorized_legal_brief_service import AuthorizedLegalBriefService
 from modules.professional_queue import build_professional_case_queue
 from modules.professional_workbench import build_professional_case_attention
@@ -32,6 +35,9 @@ class AuthorizedProfessionalWorkbenchService:
         evidence_review_service: Optional[
             AuthorizedEvidenceReviewService
         ] = None,
+        fact_review_service: Optional[
+            AuthorizedFactReviewService
+        ] = None,
     ):
         self._cases = case_service
         self._snapshots = snapshot_service
@@ -39,6 +45,7 @@ class AuthorizedProfessionalWorkbenchService:
         self._drafts = draft_service
         self._filings = filing_service
         self._evidence = evidence_review_service
+        self._fact_reviews = fact_review_service
 
     def list_case_attention_queue(
         self,
@@ -145,6 +152,7 @@ class AuthorizedProfessionalWorkbenchService:
         evidence_contract_drift = False
         triage_evidence_review_pending = False
         notice_evidence_review_pending = False
+        fact_review_rejected = False
         if latest_snapshot is not None and self._evidence is not None:
             if specialist_workflow_available:
                 try:
@@ -230,6 +238,20 @@ class AuthorizedProfessionalWorkbenchService:
                     for item in triage_checklist
                 )
 
+        if latest_snapshot is not None and self._fact_reviews is not None:
+            try:
+                fact_review_rejected = bool(
+                    self._fact_reviews.rejected_fact_ids(
+                        principal,
+                        firm_id,
+                        case_id=case.case_id,
+                        snapshot_id=latest_snapshot.snapshot_id,
+                    )
+                )
+            except PermissionError:
+                # CASE_READ must not imply FACT_REVIEW visibility.
+                fact_review_rejected = False
+
         drafts = self._drafts.list_versions(
             principal,
             firm_id,
@@ -251,4 +273,5 @@ class AuthorizedProfessionalWorkbenchService:
             specialist_workflow_available=specialist_workflow_available,
             triage_evidence_review_pending=triage_evidence_review_pending,
             notice_evidence_review_pending=notice_evidence_review_pending,
+            fact_review_rejected=fact_review_rejected,
         )
