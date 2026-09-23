@@ -36,6 +36,10 @@ class GstLegalResearchProfileTests(unittest.TestCase):
                 (LegalTopic.HEARING_RIGHT, LegalDateBasis.NOTICE_DATE),
                 (LegalTopic.DEMAND_SCOPE, LegalDateBasis.NOTICE_DATE),
                 (
+                    LegalTopic.ITC_MISMATCH_VERIFICATION,
+                    LegalDateBasis.TAX_PERIOD_END,
+                ),
+                (
                     LegalTopic.ITC_ELIGIBILITY,
                     LegalDateBasis.TAX_PERIOD_END,
                 ),
@@ -68,7 +72,10 @@ class GstLegalResearchProfileTests(unittest.TestCase):
         )
         self.assertEqual(
             result.unresolved_topics,
-            (LegalTopic.ITC_ELIGIBILITY,),
+            (
+                LegalTopic.ITC_MISMATCH_VERIFICATION,
+                LegalTopic.ITC_ELIGIBILITY,
+            ),
         )
 
     def test_rcm_brief_keeps_applicability_unresolved(self):

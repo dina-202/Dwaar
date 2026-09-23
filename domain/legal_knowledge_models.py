@@ -30,6 +30,7 @@ class LegalTopic(Enum):
     SECTION_129_TIMELINE = "section_129_timeline"
     SECTION_129_HEARING = "section_129_hearing"
     ITC_ELIGIBILITY = "itc_eligibility"
+    ITC_MISMATCH_VERIFICATION = "itc_mismatch_verification"
     RCM_APPLICABILITY = "rcm_applicability"
     FRAUD_SUPPRESSION_SCOPE = "fraud_suppression_scope"
 

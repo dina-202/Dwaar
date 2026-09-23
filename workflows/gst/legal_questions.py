@@ -105,6 +105,16 @@ GST_LEGAL_QUESTION_PLANS: Dict[
     )
     + (
         _question(
+            "gst_sec73_itc.mismatch_verification",
+            ProceedingType.GST_SEC73_ITC,
+            (
+                "Which source-verified GSTR-3B versus supplier-statement "
+                "mismatch-verification regime governs the relevant period?"
+            ),
+            LegalTopic.ITC_MISMATCH_VERIFICATION,
+            _selector(FactType.TAX_PERIOD),
+        ),
+        _question(
             "gst_sec73_itc.eligibility",
             ProceedingType.GST_SEC73_ITC,
             (

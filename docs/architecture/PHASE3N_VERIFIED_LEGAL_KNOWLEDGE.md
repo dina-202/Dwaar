@@ -43,12 +43,14 @@ Initial official hosts are closed to:
 - `indiacode.nic.in`
 - `cbic-gst.gov.in`
 - `www.cbic-gst.gov.in`
+- `gstcouncil.gov.in`
+- `www.gstcouncil.gov.in`
 
 All source URLs must use HTTPS.
 
 Search engines, tax blogs, commercial databases, LLM output, social media, summaries and secondary articles may help a human discover material, but they cannot become a `SOURCE_VERIFIED` Dwaar source merely because they are useful.
 
-The initial v1 pack intentionally uses India Code for CGST Act propositions. CBIC sources are allowed by the framework but are added only when the exact notification/rule/circular version is curated.
+The initial v1 pack intentionally used India Code for CGST Act propositions. CBIC and the official GST Council (Ministry of Finance) are also approved primary government sources, but a notification/rule/circular is added only when the exact source and applicability period have been curated.
 
 ## 4. Source verification is not legal approval
 

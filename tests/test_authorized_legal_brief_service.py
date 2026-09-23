@@ -174,6 +174,7 @@ class AuthorizedLegalBriefServiceTests(unittest.TestCase):
                 "source_verified_research_ready",
                 "source_verified_research_ready",
                 "missing_facts",
+                "missing_facts",
             ],
         )
         snapshot_service.load_snapshot.assert_called_once()
@@ -233,7 +234,7 @@ class AuthorizedLegalBriefServiceTests(unittest.TestCase):
         result = persist_mock.call_args.kwargs["result"]
         self.assertEqual(
             tuple(item.value for item in result.unresolved_topics),
-            ("itc_eligibility",),
+            ("itc_mismatch_verification", "itc_eligibility"),
         )
 
     @mock.patch(
