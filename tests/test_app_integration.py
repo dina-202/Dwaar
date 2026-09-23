@@ -1637,6 +1637,8 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
     def test_triage_only_notice_renders_source_grounded_working_summary(self):
         fake, *_ = run_app(result=self._triage_result())
         text = log_text(fake)
+        self.assertIn("ASMT-10", text)
+        self.assertIn("Assessment / scrutiny", text)
         self.assertIn("Triage working summary", text)
         self.assertIn("Key notice details", text)
         self.assertIn("Reply within 30 days from the date of receipt", text)
