@@ -561,3 +561,163 @@ def verify_runtime_backup(
             "backup object directory contains an unexpected file set"
         )
     return manifest
+
+
+
+def restore_runtime_backup(
+    backup_dir: str,
+    *,
+    target_db_path: str,
+    target_object_root: str,
+    document_key: bytes,
+) -> RuntimeBackupManifest:
+    """Restore a verified backup only into an empty runtime target.
+
+    The function never overwrites an existing database and never restores
+    into a non-empty object directory. All database/object validation occurs
+    in staging paths before the targets are published.
+    """
+    if not isinstance(target_db_path, str) or not target_db_path.strip():
+        raise ValueError("target_db_path must be non-empty")
+    if not isinstance(target_object_root, str) or not target_object_root.strip():
+        raise ValueError("target_object_root must be non-empty")
+    _validate_document_key(document_key)
+
+    manifest = verify_runtime_backup(
+        backup_dir,
+        document_key=document_key,
+    )
+    backup_root = Path(backup_dir).expanduser().resolve()
+    target_db = Path(target_db_path).expanduser().resolve()
+    target_objects = Path(target_object_root).expanduser().resolve()
+
+    if target_db.exists():
+        raise RuntimeBackupError(
+            "restore target database already exists"
+        )
+    if target_objects.exists():
+        if not target_objects.is_dir():
+            raise RuntimeBackupError(
+                "restore target object path is not a directory"
+            )
+        if any(target_objects.iterdir()):
+            raise RuntimeBackupError(
+                "restore target object directory is not empty"
+            )
+
+    db_parent = target_db.parent
+    object_parent = target_objects.parent
+    db_parent.mkdir(parents=True, exist_ok=True)
+    object_parent.mkdir(parents=True, exist_ok=True)
+
+    stage_id = uuid.uuid4().hex
+    staged_db = db_parent / f".dwaar-restore-{stage_id}.sqlite3"
+    staged_objects = object_parent / f".dwaar-restore-{stage_id}-objects"
+    backup_database = backup_root / "dwaar.sqlite3.enc"
+    backup_objects = backup_root / "objects"
+
+    published_objects = False
+    published_db = False
+    try:
+        plaintext = _decrypt_database_backup(
+            backup_database,
+            document_key=document_key,
+            backup_id=manifest.backup_id,
+        )
+        with staged_db.open("xb") as handle:
+            try:
+                os.chmod(staged_db, 0o600)
+            except OSError:
+                pass
+            handle.write(plaintext)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+        staged_objects.mkdir(parents=False, exist_ok=False)
+        try:
+            os.chmod(staged_objects, 0o700)
+        except OSError:
+            pass
+
+        for item in manifest.objects:
+            source = _object_path(backup_objects, item.storage_key)
+            target = _object_path(staged_objects, item.storage_key)
+            shutil.copyfile(source, target)
+            try:
+                os.chmod(target, 0o600)
+            except OSError:
+                pass
+
+        with sqlite3.connect(str(staged_db), timeout=10) as connection:
+            schema_version = _validate_database(connection)
+            storage_keys = _referenced_storage_keys(connection)
+        if schema_version != manifest.source_schema_version:
+            raise RuntimeBackupError(
+                "restored database schema binding mismatch"
+            )
+        manifest_keys = tuple(item.storage_key for item in manifest.objects)
+        if storage_keys != manifest_keys:
+            raise RuntimeBackupError(
+                "restored database object references do not match backup"
+            )
+
+        restored_store = EncryptedLocalDocumentStore(
+            str(staged_objects),
+            document_key,
+        )
+        for item in manifest.objects:
+            path = _object_path(staged_objects, item.storage_key)
+            if (
+                path.stat().st_size != item.byte_size
+                or _sha256(path) != item.ciphertext_sha256
+            ):
+                raise RuntimeBackupError(
+                    "restored encrypted object hash or size mismatch"
+                )
+            try:
+                restored_store.get(item.storage_key)
+            except Exception as error:
+                raise RuntimeBackupError(
+                    "restored encrypted object authentication failed"
+                ) from error
+
+        if target_objects.exists():
+            # The caller supplied an empty directory. Remove it immediately
+            # before atomically replacing it with the validated staged tree.
+            target_objects.rmdir()
+        staged_objects.rename(target_objects)
+        published_objects = True
+
+        # Publish the database last. Its presence is the completion marker
+        # for this clean-target restore operation.
+        staged_db.rename(target_db)
+        published_db = True
+
+        with sqlite3.connect(str(target_db), timeout=10) as connection:
+            _validate_database(connection)
+            if _referenced_storage_keys(connection) != manifest_keys:
+                raise RuntimeBackupError(
+                    "published restore object references are inconsistent"
+                )
+        published_store = EncryptedLocalDocumentStore(
+            str(target_objects),
+            document_key,
+        )
+        for item in manifest.objects:
+            published_store.get(item.storage_key)
+        return manifest
+    except Exception:
+        if published_db:
+            try:
+                target_db.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if published_objects:
+            shutil.rmtree(target_objects, ignore_errors=True)
+        raise
+    finally:
+        try:
+            staged_db.unlink(missing_ok=True)
+        except OSError:
+            pass
+        shutil.rmtree(staged_objects, ignore_errors=True)
