@@ -30,6 +30,10 @@ from domain.case_models import (
     StoredDocumentRef,
 )
 from domain.draft_work_product_models import DraftReviewStatus
+from domain.fact_review_models import (
+    FactReviewDecision,
+    FactReviewRef,
+)
 from domain.models import NoticeForm, ProceedingType
 from modules.authorized_case_service import AuthorizedCaseService
 from modules.authorized_filing_service import AuthorizedFilingService
@@ -545,7 +549,7 @@ class FilingAcknowledgementTests(FilingIntegrationFixture):
 
 
 class AuthorizedFilingServiceTests(unittest.TestCase):
-    def build(self, permissions=None):
+    def build(self, permissions=None, fact_reviews=None):
         case_service = mock.Mock()
         case_service.get_case.return_value = CaseRecord(
             "CASE-1",
@@ -584,6 +588,7 @@ class AuthorizedFilingServiceTests(unittest.TestCase):
             filings,
             drafts,
             store,
+            fact_review_repository=fact_reviews,
         )
         return service, case_service, access, filings, drafts, store
 
@@ -664,6 +669,114 @@ class AuthorizedFilingServiceTests(unittest.TestCase):
                 recorded_at=NOW,
             )
         persist.assert_not_called()
+
+    @staticmethod
+    def _fact_review(decision, *, review_id, reviewed_at):
+        return FactReviewRef(
+            review_id=review_id,
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            fact_id="F-001",
+            fact_fingerprint="a" * 64,
+            source_text_sha256="b" * 64,
+            decision=decision,
+            byte_size=10,
+            sha256_hex="c" * 64,
+            storage_key="objects/" + "d" * 32,
+            reviewed_at=reviewed_at,
+            reviewed_by=PRINCIPAL.user_id,
+        )
+
+    @mock.patch(
+        "modules.authorized_filing_service.persist_filing"
+    )
+    def test_later_rejected_source_fact_blocks_already_approved_draft_filing(
+        self,
+        persist,
+    ):
+        fact_reviews = mock.Mock()
+        fact_reviews.list_review_refs.return_value = [
+            self._fact_review(
+                FactReviewDecision.REJECTED,
+                review_id="FREV-1",
+                reviewed_at=NOW,
+            )
+        ]
+        service, _, _, _, drafts, _ = self.build(
+            fact_reviews=fact_reviews
+        )
+        drafts.get_version_ref.return_value = mock.Mock(
+            case_id="CASE-1",
+            source_snapshot_id="SNAP-1",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "professionally rejected extracted fact",
+        ):
+            service.record_filing(
+                PRINCIPAL,
+                "F-1",
+                case_id="CASE-1",
+                approved_draft_version_id="DRAFT-1",
+                filing_reference="ARN-1",
+                filed_response_filename="response.pdf",
+                filed_response_payload=b"%PDF fixture",
+                acknowledgement_filename=None,
+                acknowledgement_payload=None,
+                filed_at=FILED_AT,
+                recorded_at=NOW,
+            )
+
+        fact_reviews.list_review_refs.assert_called_once_with("SNAP-1")
+        persist.assert_not_called()
+
+    @mock.patch(
+        "modules.authorized_filing_service.persist_filing"
+    )
+    def test_later_confirmation_supersedes_old_rejection_for_filing(
+        self,
+        persist,
+    ):
+        fact_reviews = mock.Mock()
+        fact_reviews.list_review_refs.return_value = [
+            self._fact_review(
+                FactReviewDecision.REJECTED,
+                review_id="FREV-1",
+                reviewed_at=NOW,
+            ),
+            self._fact_review(
+                FactReviewDecision.CONFIRMED,
+                review_id="FREV-2",
+                reviewed_at=NOW + timedelta(minutes=1),
+            ),
+        ]
+        service, _, _, _, drafts, _ = self.build(
+            fact_reviews=fact_reviews
+        )
+        drafts.get_version_ref.return_value = mock.Mock(
+            case_id="CASE-1",
+            source_snapshot_id="SNAP-1",
+        )
+        persist.return_value = mock.sentinel.filing
+
+        result = service.record_filing(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            approved_draft_version_id="DRAFT-1",
+            filing_reference="ARN-1",
+            filed_response_filename="response.pdf",
+            filed_response_payload=b"%PDF fixture",
+            acknowledgement_filename=None,
+            acknowledgement_payload=None,
+            filed_at=FILED_AT,
+            recorded_at=NOW,
+        )
+
+        self.assertIs(result, mock.sentinel.filing)
+        fact_reviews.list_review_refs.assert_called_once_with("SNAP-1")
+        persist.assert_called_once()
 
     def test_list_filings_is_case_scoped(self):
         service, _, _, filings, _, _ = self.build()
