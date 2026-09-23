@@ -25,6 +25,7 @@ class LegalVerificationStatus(Enum):
 
 
 class LegalTopic(Enum):
+    SCRUTINY_PROCESS = "scrutiny_process"
     HEARING_RIGHT = "hearing_right"
     DEMAND_SCOPE = "demand_scope"
     SECTION_129_TIMELINE = "section_129_timeline"
