@@ -1250,6 +1250,26 @@ class EngineeringDiagnosticsUiTests(unittest.TestCase):
         )
 
 
+class ProfessionalLabelUiTests(unittest.TestCase):
+    def test_customer_labels_preserve_tax_acronyms(self):
+        fake, *_ = run_app(engineering_diagnostics=False)
+        text = log_text(fake)
+
+        for expected in (
+            "ITC Difference",
+            "GSTR-2B ITC Reflected Amount",
+            "Senior CA Or Advocate",
+        ):
+            self.assertIn(expected, text)
+
+        for broken in (
+            "Itc Difference",
+            "Gstr2B Itc Reflected Amount",
+            "Senior Ca Or Advocate",
+        ):
+            self.assertNotIn(broken, text)
+
+
 class UploadAndFailureTests(unittest.TestCase):
     def test_no_upload_means_no_extraction_or_orchestrator(self):
         _, extractor, runner, _, events, today_calls = run_app(upload=False)
