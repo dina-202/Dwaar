@@ -17,7 +17,7 @@ from domain.legal_knowledge_models import (
 from domain.models import ProceedingType
 
 
-GST_LEGAL_CATALOG_VERSION = "gst-legal.v2.2026-09-23"
+GST_LEGAL_CATALOG_VERSION = "gst-legal.v3.2026-09-23"
 
 CGST_ACT_INDIA_CODE = LegalSourceRef(
     source_id="src.cgst_act.indiacode.2026-09-23",
@@ -34,11 +34,80 @@ CGST_ACT_INDIA_CODE = LegalSourceRef(
     verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
 )
 
+CIRCULAR_183_CBIC = LegalSourceRef(
+    source_id="src.cbic.circular.183.2022",
+    authority_type=LegalAuthorityType.CIRCULAR,
+    title="Circular No. 183/15/2022-GST",
+    issuer="Central Board of Indirect Taxes and Customs",
+    official_url="https://cbic-gst.gov.in/pdf/circular-183.pdf",
+    official_domain="cbic-gst.gov.in",
+    version_label="Circular dated 2022-12-27",
+    publication_date=date(2022, 12, 27),
+    retrieved_at=date(2026, 9, 23),
+    verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
+)
+
+CIRCULAR_193_GST_COUNCIL = LegalSourceRef(
+    source_id="src.gstcouncil.circular.193.2023",
+    authority_type=LegalAuthorityType.CIRCULAR,
+    title="Circular No. 193/05/2023-GST",
+    issuer="Central Board of Indirect Taxes and Customs",
+    official_url="https://gstcouncil.gov.in/node/4914",
+    official_domain="gstcouncil.gov.in",
+    version_label="GST Council circular page dated 2023-07-17",
+    publication_date=date(2023, 7, 17),
+    retrieved_at=date(2026, 9, 23),
+    verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
+)
+
 GST_LEGAL_SOURCES = (
     CGST_ACT_INDIA_CODE,
+    CIRCULAR_183_CBIC,
+    CIRCULAR_193_GST_COUNCIL,
 )
 
 GST_LEGAL_RULES = (
+    LegalRule(
+        rule_id="cbic.itc_mismatch_verification.fy2017_2018.v1",
+        rule_key="cbic.itc_mismatch_verification",
+        source_id=CIRCULAR_183_CBIC.source_id,
+        provision="Circular No. 183/15/2022-GST",
+        proposition=(
+            "For FY 2017-18 and 2018-19, Circular 183 provides a "
+            "case-specific verification procedure for specified differences "
+            "between ITC availed in FORM GSTR-3B and ITC appearing in FORM "
+            "GSTR-2A; the procedure requires verification of relevant "
+            "Section 16 conditions and prescribed supplier tax-payment "
+            "evidence, subject to the circular's stated scope and conditions."
+        ),
+        effective_from=date(2017, 4, 1),
+        effective_to=date(2019, 3, 31),
+        jurisdiction="India",
+        topic=LegalTopic.ITC_MISMATCH_VERIFICATION,
+        proceeding_types=(ProceedingType.GST_SEC73_ITC,),
+        verified_at=date(2026, 9, 23),
+        verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
+    ),
+    LegalRule(
+        rule_id="cbic.itc_mismatch_verification.2019_2021.v2",
+        rule_key="cbic.itc_mismatch_verification",
+        source_id=CIRCULAR_193_GST_COUNCIL.source_id,
+        provision="Circular No. 193/05/2023-GST",
+        proposition=(
+            "For 1 April 2019 through 31 December 2021, Circular 193 "
+            "provides period-specific verification guidance for differences "
+            "between ITC availed in FORM GSTR-3B and ITC appearing in FORM "
+            "GSTR-2A, including the Rule 36(4) limits applicable during "
+            "the sub-periods identified in that circular."
+        ),
+        effective_from=date(2019, 4, 1),
+        effective_to=date(2021, 12, 31),
+        jurisdiction="India",
+        topic=LegalTopic.ITC_MISMATCH_VERIFICATION,
+        proceeding_types=(ProceedingType.GST_SEC73_ITC,),
+        verified_at=date(2026, 9, 23),
+        verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
+    ),
     LegalRule(
         rule_id="cgst.s75.4.hearing.v1",
         rule_key="cgst.s75.4.hearing",
