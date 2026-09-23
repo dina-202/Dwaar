@@ -3947,7 +3947,7 @@ class CaseWorkQueueUiTests(unittest.TestCase):
         self.assertIn("legal_research", text)
         self.assertIn("draft", text)
         self.assertIn("Needs attention", text)
-        self.assertIn("not a priority score or legal verdict", text)
+        self.assertIn("does not rank legal importance", text)
         service.update_case_operations.assert_not_called()
 
     def test_focus_queue_case_moves_it_to_saved_cases(self):
@@ -4001,7 +4001,7 @@ class CaseWorkQueueUiTests(unittest.TestCase):
             available_firms=[self._firm(update=True)],
             persistence_service=service,
             selectbox_values={
-                f"case_ops_status_{item.case_id}": "analyzed",
+                f"case_ops_status_{item.case_id}": "Analyzed",
                 f"case_ops_assignee_{item.case_id}": "OIDC-ASSIGNEE",
                 f"case_ops_reviewer_{item.case_id}": "OIDC-REVIEWER",
             },
@@ -4034,6 +4034,35 @@ class CaseWorkQueueUiTests(unittest.TestCase):
             fake.session_state["_dwaar_focused_case_id"],
             item.case_id,
         )
+
+    def test_case_status_selector_uses_professional_labels(self):
+        service, item, _ = self._service()
+        service.allowed_case_status_targets.return_value = (
+            CaseStatus.INTAKE,
+            CaseStatus.EVIDENCE_COLLECTION,
+            CaseStatus.DRAFT_REVIEW,
+        )
+        service.list_assignable_user_ids.return_value = []
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(update=True)],
+            persistence_service=service,
+            engineering_diagnostics=False,
+        )
+        calls = [
+            call
+            for call in calls_named(fake, "selectbox")
+            if call[2].get("key") == f"case_ops_status_{item.case_id}"
+        ]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            list(calls[0][1][1]),
+            ["Intake", "Evidence Collection", "Draft Review"],
+        )
+        text = log_text(fake)
+        self.assertNotIn("evidence_collection", text)
+        self.assertNotIn("draft_review", text)
 
     def test_invalid_deadline_does_not_call_update(self):
         service, item, _ = self._service()
