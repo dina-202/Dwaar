@@ -1211,6 +1211,7 @@ class SourceBoundaryTests(unittest.TestCase):
                 "domain.draft_work_product_models",
                 "domain.evidence_engine",
                 "domain.evidence_review",
+                "domain.fact_review_models",
                 "domain.models",
                 "domain.phase2_orchestrator",
                 "modules.case_evidence_service",
