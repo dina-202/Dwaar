@@ -38,6 +38,7 @@ def build_professional_case_attention(
     filings: Iterable[FilingRecord],
     legal_evidence_readiness: Iterable[LegalEvidenceReadiness] = (),
     legal_evidence_contract_drift: bool = False,
+    specialist_workflow_available: bool = True,
 ) -> ProfessionalCaseAttention:
     """Build read-only operational attention facts.
 
@@ -54,6 +55,9 @@ def build_professional_case_attention(
     evidence_readiness = tuple(legal_evidence_readiness)
     if not isinstance(legal_evidence_contract_drift, bool):
         raise TypeError("legal_evidence_contract_drift must be a bool")
+
+    if not isinstance(specialist_workflow_available, bool):
+        raise TypeError("specialist_workflow_available must be a bool")
 
     for values, expected, label in (
         (snapshots, AnalysisSnapshotRef, "snapshots"),
@@ -112,51 +116,54 @@ def build_professional_case_attention(
                 )
             )
         else:
-            if latest_brief is None:
-                items.append(
-                    CaseAttentionItem(
-                        CaseAttentionCode.LEGAL_BRIEF_NOT_SAVED,
-                        "No verified legal brief is preserved for the "
-                        "latest analysis snapshot.",
-                        latest_snapshot.snapshot_id,
-                    )
-                )
-            elif latest_brief.payload.get("unresolved_topics"):
-                items.append(
-                    CaseAttentionItem(
-                        CaseAttentionCode.LEGAL_RESEARCH_UNRESOLVED,
-                        "The latest legal brief still contains unresolved "
-                        "legal research topics.",
-                        latest_brief.metadata.legal_brief_id,
-                    )
-                )
-
-            if legal_evidence_contract_drift:
-                items.append(
-                    CaseAttentionItem(
-                        CaseAttentionCode.LEGAL_EVIDENCE_CONTRACT_DRIFT,
-                        "The latest snapshot does not match the current "
-                        "closed legal-evidence requirement contract.",
-                        latest_snapshot.snapshot_id,
-                    )
-                )
-            else:
-                for readiness in evidence_readiness:
-                    if (
-                        readiness.status
-                        is not LegalEvidenceReadinessStatus
-                        .REQUIRED_EVIDENCE_CONFIRMED
-                    ):
-                        items.append(
-                            CaseAttentionItem(
-                                CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE,
-                                "Human-confirmed supporting evidence is "
-                                "incomplete for a legal research question.",
-                                readiness.question_id,
-                            )
+            if specialist_workflow_available:
+                if latest_brief is None:
+                    items.append(
+                        CaseAttentionItem(
+                            CaseAttentionCode.LEGAL_BRIEF_NOT_SAVED,
+                            "No verified legal brief is preserved for the "
+                            "latest analysis snapshot.",
+                            latest_snapshot.snapshot_id,
                         )
+                    )
+                elif latest_brief.payload.get("unresolved_topics"):
+                    items.append(
+                        CaseAttentionItem(
+                            CaseAttentionCode.LEGAL_RESEARCH_UNRESOLVED,
+                            "The latest legal brief still contains unresolved "
+                            "legal research topics.",
+                            latest_brief.metadata.legal_brief_id,
+                        )
+                    )
 
-        if latest_draft is None:
+                if legal_evidence_contract_drift:
+                    items.append(
+                        CaseAttentionItem(
+                            CaseAttentionCode.LEGAL_EVIDENCE_CONTRACT_DRIFT,
+                            "The latest snapshot does not match the current "
+                            "closed legal-evidence requirement contract.",
+                            latest_snapshot.snapshot_id,
+                        )
+                    )
+                else:
+                    for readiness in evidence_readiness:
+                        if (
+                            readiness.status
+                            is not LegalEvidenceReadinessStatus
+                            .REQUIRED_EVIDENCE_CONFIRMED
+                        ):
+                            items.append(
+                                CaseAttentionItem(
+                                    CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE,
+                                    "Human-confirmed supporting evidence is "
+                                    "incomplete for a legal research question.",
+                                    readiness.question_id,
+                                )
+                            )
+
+        if latest_draft is None and (
+            specialist_workflow_available or latest_snapshot is None
+        ):
             items.append(
                 CaseAttentionItem(
                     CaseAttentionCode.DRAFT_NOT_STARTED,
