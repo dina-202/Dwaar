@@ -3727,7 +3727,7 @@ class ClientWorkspaceUiTests(unittest.TestCase):
         saved_options = saved_case_selects[0][1][1]
         self.assertTrue(saved_options[0].endswith(older.case_id))
         self.assertIn(
-            "Use Open saved case below",
+            "Open saved case",
             log_text(fake),
         )
 
