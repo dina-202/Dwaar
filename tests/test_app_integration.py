@@ -3117,6 +3117,39 @@ class DraftWorkProductUiTests(unittest.TestCase):
         self.assertEqual(calls_named(fake, "download_button"), [])
         draft_service.export_version_docx.assert_not_called()
 
+    def test_customer_draft_history_hides_audit_identity_ids(self):
+        service = self._case_service()
+        version = self._version(status=DraftReviewStatus.APPROVED)
+        draft_service = Mock()
+        draft_service.list_versions.return_value = [version]
+        draft_service.load_version.return_value = self._loaded(version)
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot()
+        ]
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm()],
+            persistence_service=service,
+            snapshot_service=snapshot_service,
+            draft_service=draft_service,
+            reopen_result=self._reopened(),
+            button_values={"open_saved_case_CASE-1": True},
+        )
+
+        text = log_text(fake)
+        self.assertIn("Draft work product", headers(fake))
+        self.assertIn("Version", text)
+        for internal_identity in (
+            version.created_by,
+            version.reviewed_by,
+            version.approved_by,
+        ):
+            self.assertNotIn(internal_identity, text)
+
+
     def test_historical_version_is_read_only_and_cannot_be_edited(self):
         service = self._case_service()
         old = self._version()
@@ -3290,6 +3323,7 @@ class FilingWorkspaceUiTests(unittest.TestCase):
         ]
         fake, *_ = run_app(
             upload=False,
+            engineering_diagnostics=False,
             available_firms=[self._firm(can_file=False)],
             persistence_service=self._case_service(),
             filing_service=filing_service,
@@ -3301,6 +3335,7 @@ class FilingWorkspaceUiTests(unittest.TestCase):
         self.assertIn("Filing & acknowledgement", headers(fake))
         text = log_text(fake)
         self.assertIn("ARN-TEST-001", text)
+        self.assertNotIn("OIDC-FILER", text)
         self.assertIn(
             "does not allow recording filings",
             text,
@@ -3913,6 +3948,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
 
         fake, *_ = run_app(
             upload=False,
+            engineering_diagnostics=False,
             available_firms=[self._firm(evidence_review=True)],
             persistence_service=service,
             snapshot_service=self._snapshot_service(),
@@ -3934,6 +3970,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
         text = log_text(fake)
         self.assertIn("Historical encrypted quote", text)
         self.assertIn("Historical private note", text)
+        self.assertNotIn(saved.reviewed_by, text)
 
     def test_persisted_evidence_analysis_failure_is_generic(self):
         evidence_ref = self._evidence_ref()
