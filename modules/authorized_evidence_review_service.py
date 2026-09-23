@@ -127,37 +127,40 @@ class AuthorizedEvidenceReviewService:
         return checklist
 
     @staticmethod
-    def _triage_snapshot_evidence_checklist(
+    def _notice_grounded_evidence_targets(
         payload: dict,
+        *,
+        requested_ids,
+        annexure_ids,
+        evidence_namespace: str,
     ) -> List[EvidenceChecklistItem]:
-        classification = payload.get("classification")
-        if (
-            not isinstance(classification, dict)
-            or classification.get("support_level") != "triage_only"
-        ):
-            return []
+        """Resolve saved notice-selected evidence facts without inference.
 
-        triage = payload.get("triage_summary")
+        The caller supplies only fact IDs already selected by deterministic
+        preflight/triage. Exact confirmed source_text becomes the review target;
+        model-authored claims are never used.
+        """
         extraction = payload.get("extraction")
-        if not isinstance(triage, dict) or not isinstance(extraction, dict):
-            raise ValueError("triage snapshot evidence context is invalid")
-
-        requested_ids = triage.get("requested_document_fact_ids")
-        annexure_ids = triage.get("referenced_annexure_fact_ids")
+        if not isinstance(extraction, dict):
+            raise ValueError("snapshot evidence context is invalid")
         facts = extraction.get("facts")
+        if not isinstance(facts, list):
+            raise ValueError("snapshot evidence context is invalid")
         if (
             not isinstance(requested_ids, list)
             or not isinstance(annexure_ids, list)
-            or not isinstance(facts, list)
-        ):
-            raise ValueError("triage snapshot evidence context is invalid")
-        if (
-            any(not isinstance(value, str) or not value for value in requested_ids)
-            or any(not isinstance(value, str) or not value for value in annexure_ids)
+            or any(
+                not isinstance(value, str) or not value
+                for value in requested_ids
+            )
+            or any(
+                not isinstance(value, str) or not value
+                for value in annexure_ids
+            )
             or len(requested_ids) != len(set(requested_ids))
             or len(annexure_ids) != len(set(annexure_ids))
         ):
-            raise ValueError("triage snapshot evidence references are invalid")
+            raise ValueError("snapshot evidence references are invalid")
 
         requested = set(requested_ids)
         annexures = set(annexure_ids)
@@ -174,16 +177,18 @@ class AuthorizedEvidenceReviewService:
             if fact_id not in target_ids:
                 continue
             if fact_id in resolved:
-                raise ValueError("triage snapshot evidence reference is ambiguous")
+                raise ValueError(
+                    "snapshot evidence reference is ambiguous"
+                )
 
             fact_type = fact.get("fact_type")
             if fact_id in requested:
                 expected_type = "requested_document"
-                evidence_prefix = "triage.requested_document"
+                evidence_kind = "requested_document"
                 text_prefix = "Department-requested record: "
             else:
                 expected_type = "referenced_annexure"
-                evidence_prefix = "triage.referenced_annexure"
+                evidence_kind = "referenced_annexure"
                 text_prefix = "Notice-referenced annexure: "
 
             source_text = fact.get("source_text")
@@ -193,20 +198,91 @@ class AuthorizedEvidenceReviewService:
                 or not isinstance(source_text, str)
                 or not source_text.strip()
             ):
-                raise ValueError("triage snapshot evidence reference is invalid")
+                raise ValueError(
+                    "snapshot evidence reference is invalid"
+                )
 
             resolved.add(fact_id)
             checklist.append(
                 EvidenceChecklistItem(
-                    evidence_id=f"{evidence_prefix}.{fact_id}",
+                    evidence_id=(
+                        f"{evidence_namespace}.{evidence_kind}.{fact_id}"
+                    ),
                     requirement_text=text_prefix + source_text,
                     status=EvidenceStatus.UNKNOWN,
                 )
             )
 
         if resolved != target_ids:
-            raise ValueError("triage snapshot evidence reference is unresolved")
+            raise ValueError("snapshot evidence reference is unresolved")
         return checklist
+
+    @classmethod
+    def _triage_snapshot_evidence_checklist(
+        cls,
+        payload: dict,
+    ) -> List[EvidenceChecklistItem]:
+        classification = payload.get("classification")
+        if (
+            not isinstance(classification, dict)
+            or classification.get("support_level") != "triage_only"
+        ):
+            return []
+
+        triage = payload.get("triage_summary")
+        if not isinstance(triage, dict):
+            raise ValueError("triage snapshot evidence context is invalid")
+
+        requested_ids = triage.get("requested_document_fact_ids")
+        annexure_ids = triage.get("referenced_annexure_fact_ids")
+        try:
+            return cls._notice_grounded_evidence_targets(
+                payload,
+                requested_ids=requested_ids,
+                annexure_ids=annexure_ids,
+                evidence_namespace="triage",
+            )
+        except ValueError as error:
+            raise ValueError(
+                str(error).replace(
+                    "snapshot evidence", "triage snapshot evidence"
+                )
+            ) from error
+
+    @classmethod
+    def _section61_operational_evidence_checklist(
+        cls,
+        payload: dict,
+    ) -> List[EvidenceChecklistItem]:
+        """Preserve per-record ASMT-10 evidence targets after deep promotion."""
+        classification = payload.get("classification")
+        if not isinstance(classification, dict):
+            return []
+        if (
+            classification.get("support_level") != "deep_workflow"
+            or classification.get("proceeding_type")
+            != "gst_sec61_scrutiny"
+        ):
+            return []
+
+        preflight = payload.get("preflight")
+        if not isinstance(preflight, dict):
+            raise ValueError(
+                "Section 61 snapshot evidence context is invalid"
+            )
+        requested_ids = preflight.get("requested_document_fact_ids")
+        annexure_ids = preflight.get("referenced_annexure_fact_ids")
+        try:
+            return cls._notice_grounded_evidence_targets(
+                payload,
+                requested_ids=requested_ids,
+                annexure_ids=annexure_ids,
+                evidence_namespace="sec61_scrutiny.notice",
+            )
+        except ValueError as error:
+            raise ValueError(
+                "Section 61 " + str(error)
+            ) from error
 
     @classmethod
     def _snapshot_evidence_checklist_from_payload(
@@ -214,8 +290,19 @@ class AuthorizedEvidenceReviewService:
         payload: dict,
     ) -> List[EvidenceChecklistItem]:
         specialist = cls._specialist_snapshot_evidence_checklist(payload)
+        section61_operational = (
+            cls._section61_operational_evidence_checklist(payload)
+        )
         if specialist:
-            return specialist
+            specialist_ids = {item.evidence_id for item in specialist}
+            if any(
+                item.evidence_id in specialist_ids
+                for item in section61_operational
+            ):
+                raise ValueError(
+                    "snapshot evidence checklist IDs are ambiguous"
+                )
+            return specialist + section61_operational
         return cls._triage_snapshot_evidence_checklist(payload)
 
     @classmethod
