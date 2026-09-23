@@ -218,7 +218,7 @@ def _referenced_storage_keys(
         return referenced_storage_keys(connection)
     except RuntimeStorageAuditError as error:
         raise RuntimeBackupError(
-            "database encrypted storage reference inventory is invalid"
+            "database contains invalid encrypted storage references"
         ) from error
 
 
