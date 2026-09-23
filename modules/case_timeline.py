@@ -18,6 +18,7 @@ _CATEGORY = {
     CaseEventType.LEGAL_BRIEF_SAVED: TimelineCategory.ANALYSIS,
     CaseEventType.EVIDENCE_CANDIDATES_GENERATED: TimelineCategory.EVIDENCE,
     CaseEventType.EVIDENCE_REVIEWED: TimelineCategory.EVIDENCE,
+    CaseEventType.FACT_REVIEWED: TimelineCategory.ANALYSIS,
     CaseEventType.DRAFT_CREATED: TimelineCategory.DRAFT,
     CaseEventType.DRAFT_REVIEWED: TimelineCategory.DRAFT,
     CaseEventType.FILING_RECORDED: TimelineCategory.FILING,
@@ -85,6 +86,14 @@ def _render(event: CaseEvent) -> tuple[str, str]:
             + " was "
             + _value(p, "decision", "reviewed")
             + "."
+        )
+    if t is CaseEventType.FACT_REVIEWED:
+        return "Extracted fact reviewed", (
+            "Fact "
+            + _value(p, "fact_id", "item")
+            + " was "
+            + _value(p, "decision", "reviewed")
+            + " by a professional."
         )
     if t is CaseEventType.DRAFT_CREATED:
         return "Draft version created", (
