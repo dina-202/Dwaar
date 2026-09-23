@@ -14,8 +14,9 @@ from workflows.gst.legal_research import (
 
 
 class GstLegalResearchProfileTests(unittest.TestCase):
-    def test_all_five_deep_workflows_have_profiles(self):
+    def test_all_six_deep_workflows_have_profiles(self):
         expected = {
+            ProceedingType.GST_SEC61_SCRUTINY,
             ProceedingType.GST_SEC73_GENERAL,
             ProceedingType.GST_SEC73_ITC,
             ProceedingType.GST_SEC73_RCM,
@@ -54,6 +55,40 @@ class GstLegalResearchProfileTests(unittest.TestCase):
             },
             {LegalDateBasis.DETENTION_OR_SEIZURE_DATE},
         )
+
+    def test_section61_profile_uses_notice_date_and_closed_process_bundle(self):
+        profile = GST_LEGAL_RESEARCH_PROFILES[
+            ProceedingType.GST_SEC61_SCRUTINY
+        ]
+        self.assertEqual(len(profile.requirements), 1)
+        requirement = profile.requirements[0]
+        self.assertIs(requirement.topic, LegalTopic.SCRUTINY_PROCESS)
+        self.assertIs(requirement.date_basis, LegalDateBasis.NOTICE_DATE)
+        self.assertEqual(
+            requirement.required_rule_keys,
+            (
+                "cgst.s61.scrutiny_process",
+                "cgst.r99.asmt_forms",
+            ),
+        )
+
+    def test_section61_brief_contains_no_generic_reply_period(self):
+        result = resolve_gst_legal_brief(
+            ProceedingType.GST_SEC61_SCRUTINY,
+            date(2026, 9, 23),
+        )
+        self.assertTrue(result.catalog_valid)
+        self.assertEqual(result.unresolved_topics, ())
+        self.assertEqual(len(result.matches), 2)
+        combined = " ".join(
+            item.rule.proposition for item in result.matches
+        ).lower()
+        self.assertNotIn("15 days", combined)
+        self.assertNotIn("fifteen days", combined)
+        self.assertNotIn("30 days", combined)
+        self.assertNotIn("thirty days", combined)
+        self.assertIn("asmt-11", combined)
+        self.assertIn("asmt-12", combined)
 
     def test_unknown_proceeding_has_no_profile(self):
         self.assertIsNone(
