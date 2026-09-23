@@ -305,6 +305,61 @@ def _triage_rows(facts, label):
     ]
 
 
+def _render_deadline_basis(extraction, preflight, deadline):
+    """Show notice-stated and calculated dates as distinct CA-facing facts."""
+    stated_due_facts = _matching_source_facts(
+        extraction,
+        fact_type="stated_due_date",
+    )
+    service_date_facts = _matching_source_facts(
+        extraction,
+        fact_type="document_detail",
+        fact_role="notice_service_date",
+    )
+
+    if not stated_due_facts and not service_date_facts:
+        return
+
+    st.subheader("Deadline basis")
+    if service_date_facts:
+        st.caption(
+            "Service/receipt date evidence extracted from the notice. "
+            "Dwaar uses only verified structured inputs for date arithmetic."
+        )
+        st.dataframe(
+            _triage_rows(service_date_facts, "Service / receipt date"),
+            hide_index=True,
+        )
+
+    if stated_due_facts:
+        st.caption(
+            "A due date printed in the notice is notice evidence; it is "
+            "kept separate from Dwaar's independently calculated deadline."
+        )
+        st.dataframe(
+            _triage_rows(stated_due_facts, "Due date stated in notice"),
+            hide_index=True,
+        )
+
+    conflict = preflight.deadline_conflict_status.value
+    if conflict == "conflict":
+        st.error(
+            "Deadline conflict: the notice-stated due date does not match "
+            "Dwaar's calculated deadline. Professional verification is "
+            "required before relying on either date."
+        )
+    elif conflict == "match":
+        st.write(
+            "The notice-stated due date matches Dwaar's calculated deadline "
+            "for the currently verified inputs."
+        )
+    elif stated_due_facts:
+        st.warning(
+            "Dwaar cannot safely compare the notice-stated due date with a "
+            "calculated deadline from the current verified inputs."
+        )
+
+
 def _render_triage_working_summary(result):
     """Render useful triage facts without promoting workflow support."""
     classification = result.classification
@@ -630,6 +685,8 @@ def _render_phase2_result(result):
         )
     else:
         st.caption("No hearing date is currently available.")
+
+    _render_deadline_basis(extraction, preflight, deadline)
 
     with st.expander("Technical details — preflight and deadline"):
         st.write(
