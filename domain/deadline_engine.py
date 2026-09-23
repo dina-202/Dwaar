@@ -23,8 +23,59 @@ from domain.models import (
 # Spec §3.1: DeadlineStatus.CRITICAL = "Within 7 days".
 CRITICAL_WINDOW_DAYS = 7
 
-# First integer in the response period text, e.g. "21 days", "THIRTY (30) DAYS".
-_PERIOD_DAYS_PATTERN = re.compile(r"(\d{1,3})")
+# Numeric period must be syntactically tied to "day"/"days". This avoids
+# treating unrelated identifiers such as "Section 61" or "ASMT-10" as the
+# response period merely because they appear earlier in the same source span.
+_PERIOD_DAYS_PATTERN = re.compile(
+    r"\b(\d{1,3})\s+(?:calendar\s+)?days?\b",
+    re.IGNORECASE,
+)
+
+_NUMBER_UNITS = {
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+}
+_NUMBER_TENS = {
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+_PERIOD_WORD_PATTERN = re.compile(
+    r"\b("
+    + "|".join(
+        sorted(
+            tuple(_NUMBER_UNITS) + tuple(_NUMBER_TENS),
+            key=len,
+            reverse=True,
+        )
+    )
+    + r")(?:[-\s]+("
+    + "|".join(sorted(_NUMBER_UNITS, key=len, reverse=True))
+    + r"))?\s+(?:calendar\s+)?days?\b",
+    re.IGNORECASE,
+)
 
 # First numeric dd-mm-yyyy style date (also dd/mm/yyyy, dd.mm.yyyy; 2- or
 # 4-digit year). Prose dates are deliberately NOT interpreted.
@@ -32,23 +83,44 @@ _DATE_PATTERN = re.compile(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})")
 
 
 def _parse_period_days(response_period_text: Optional[str]) -> Optional[int]:
-    """Deterministically extract a calendar-day response period, or None.
+    """Deterministically extract an explicit calendar-day period, or None.
 
-    Working-day periods deliberately remain unresolved until Dwaar has a
-    verified working-day / holiday-calendar subsystem. Treating them as
-    calendar days would create a false deterministic deadline.
+    The number must be attached to the word "day"/"days"; unrelated numbers
+    such as section/form identifiers are ignored. Explicit English number
+    words from one through ninety-nine are supported. Working/business-day
+    periods deliberately remain unresolved until Dwaar has a verified
+    working-day / holiday-calendar subsystem.
     """
     if not response_period_text:
         return None
     lowered = response_period_text.lower()
     if "working day" in lowered or "business day" in lowered:
         return None
-    match = _PERIOD_DAYS_PATTERN.search(response_period_text)
-    if not match:
+
+    numeric_match = _PERIOD_DAYS_PATTERN.search(response_period_text)
+    if numeric_match:
+        days = int(numeric_match.group(1))
+        return days if days > 0 else None
+
+    word_match = _PERIOD_WORD_PATTERN.search(response_period_text)
+    if not word_match:
         return None
-    days = int(match.group(1))
-    if days <= 0:
-        return None
+
+    first = word_match.group(1).lower()
+    second = word_match.group(2)
+    if first in _NUMBER_UNITS:
+        # Unit/teen words are complete numbers and cannot safely take a
+        # second unit token ("fifteen two days" must not become 17).
+        if second is not None:
+            return None
+        return _NUMBER_UNITS[first]
+
+    days = _NUMBER_TENS[first]
+    if second is not None:
+        second_value = _NUMBER_UNITS.get(second.lower())
+        if second_value is None or second_value >= 10:
+            return None
+        days += second_value
     return days
 
 
