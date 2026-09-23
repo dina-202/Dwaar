@@ -278,7 +278,7 @@ class ContextAwareLegalResearchTests(unittest.TestCase):
         self.assertEqual(len(result.matches), 2)
         self.assertEqual(
             tuple(item.value for item in result.unresolved_topics),
-            ("itc_eligibility",),
+            ("itc_mismatch_verification", "itc_eligibility"),
         )
 
 
