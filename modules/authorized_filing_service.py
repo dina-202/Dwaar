@@ -30,6 +30,10 @@ from modules.filing_service import (
 )
 
 
+class FilingSourceFactReviewBlockedError(ValueError):
+    """Approved filing basis became unsafe after professional fact review."""
+
+
 class AuthorizedFilingService:
     """Tenant-safe filing/acknowledgement application boundary."""
 
@@ -139,7 +143,7 @@ class AuthorizedFilingService:
                     review.decision is FactReviewDecision.REJECTED
                     for review in latest_reviews.values()
                 ):
-                    raise ValueError(
+                    raise FilingSourceFactReviewBlockedError(
                         "filing is blocked because the approved draft's "
                         "source analysis contains a professionally rejected "
                         "extracted fact"
