@@ -140,6 +140,77 @@ class RuntimeBackupCliTests(unittest.TestCase):
             combined,
         )
 
+    def test_create_then_restore_to_clean_target(self):
+        created = self.run_cli(
+            "create",
+            "--backup-id",
+            "cli-restore",
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        target_db = self.root / "recovered" / "dwaar.db"
+        target_objects = self.root / "recovered" / "objects"
+
+        restored = self.run_cli(
+            "restore",
+            str(self.backup_root / "cli-restore"),
+            "--target-db",
+            str(target_db),
+            "--target-objects",
+            str(target_objects),
+        )
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        payload = self.payload(restored)
+        self.assertEqual(
+            payload,
+            {
+                "backup_id": "cli-restore",
+                "object_count": 1,
+                "ok": True,
+                "operation": "restore",
+                "source_schema_version": 6,
+            },
+        )
+
+        repo = LocalSQLiteCaseRepository(str(target_db))
+        self.assertEqual(repo.get_case("CASE-1").title, "Matter")
+        store = EncryptedLocalDocumentStore(
+            str(target_objects),
+            KEY,
+        )
+        self.assertEqual(store.get(STORAGE_KEY), b"notice")
+
+        combined = created.stdout + restored.stdout
+        self.assertNotIn(str(target_db), combined)
+        self.assertNotIn(str(target_objects), combined)
+
+    def test_restore_refuses_existing_target_and_returns_sanitized_error(self):
+        created = self.run_cli(
+            "create",
+            "--backup-id",
+            "cli-restore",
+        )
+        self.assertEqual(created.returncode, 0, created.stderr)
+        target_db = self.root / "recovered" / "dwaar.db"
+        target_db.parent.mkdir(parents=True)
+        target_db.write_bytes(b"sentinel")
+
+        restored = self.run_cli(
+            "restore",
+            str(self.backup_root / "cli-restore"),
+            "--target-db",
+            str(target_db),
+            "--target-objects",
+            str(self.root / "recovered" / "objects"),
+        )
+        self.assertEqual(restored.returncode, 1)
+        self.assertEqual(
+            self.payload(restored),
+            {"error": "restore_failed", "ok": False},
+        )
+        self.assertEqual(target_db.read_bytes(), b"sentinel")
+        self.assertNotIn(str(target_db), restored.stdout)
+        self.assertEqual(restored.stderr, "")
+
     def test_verify_with_wrong_key_fails_safely(self):
         created = self.run_cli(
             "create",
