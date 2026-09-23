@@ -324,6 +324,49 @@ class BasicExtractionTests(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+    def test_separately_requested_documents_remain_distinct_source_facts(self):
+        raw_text = (
+            "Documents required:\n"
+            "1. Purchase register for FY 2024-25\n"
+            "2. Sales register for FY 2024-25\n"
+            "3. Electronic credit ledger\n"
+        )
+        response = facts_response(
+            candidate(
+                fact_type="requested_document",
+                fact_role="none",
+                claim="Purchase register requested",
+                source_text="1. Purchase register for FY 2024-25",
+            ),
+            candidate(
+                fact_type="requested_document",
+                fact_role="none",
+                claim="Sales register requested",
+                source_text="2. Sales register for FY 2024-25",
+            ),
+            candidate(
+                fact_type="requested_document",
+                fact_role="none",
+                claim="Electronic credit ledger requested",
+                source_text="3. Electronic credit ledger",
+            ),
+        )
+        result, _ = run_extraction(raw_text, response)
+        self.assertEqual(len(result), 3)
+        self.assertEqual(
+            [fact.fact_type for fact in result],
+            [FactType.REQUESTED_DOCUMENT] * 3,
+        )
+        self.assertEqual(
+            [fact.source_text for fact in result],
+            [
+                "1. Purchase register for FY 2024-25",
+                "2. Sales register for FY 2024-25",
+                "3. Electronic credit ledger",
+            ],
+        )
+
+
 class StatusAndPermissionTests(unittest.TestCase):
     """Python owns FactStatus (§17.6) and DraftPermission (§17.8)."""
 
@@ -1377,6 +1420,23 @@ class PromptContractTests(unittest.TestCase):
         prompt = capture_prompt(DEFAULT_SOURCE)
         self.assertIn("<CLASSIFICATION>", prompt)
         self.assertIn("do NOT reclassify it", prompt)
+
+
+    def test_prompt_requires_itemized_requested_document_extraction(self):
+        prompt = capture_prompt(DEFAULT_SOURCE)
+        self.assertIn("REQUESTED DOCUMENT COMPLETENESS", prompt)
+        self.assertIn(
+            "one requested_document candidate for EACH separately stated item",
+            prompt,
+        )
+        self.assertIn(
+            "Do not merge distinct requested records into one summary",
+            prompt,
+        )
+        self.assertIn(
+            "do not split a single compound item unless the notice itself",
+            prompt,
+        )
 
 
 class PromptRoleContractTests(unittest.TestCase):
