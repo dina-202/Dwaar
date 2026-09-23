@@ -130,6 +130,19 @@ _router = LLMRouter(
 )
 
 
+def llm_runtime_configuration_ready() -> bool:
+    """Return whether the current analysis-model runtime is configured.
+
+    This is intentionally configuration-only: it does not call the provider,
+    consume quota, expose key counts, or validate network/provider health.
+    The router already owns credential discovery, so readiness reuses that
+    boundary instead of reading secret values elsewhere.
+    """
+    return bool(_router.slots) and bool(
+        isinstance(_model_name, str) and _model_name.strip()
+    )
+
+
 def build_notice_prompt(notice_text: str, today: str) -> str:
     """
     Load the notice prompt template and inject the notice text into it.
