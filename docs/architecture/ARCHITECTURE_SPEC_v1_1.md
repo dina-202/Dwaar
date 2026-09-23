@@ -4,6 +4,8 @@
 
 **Status:** FINAL — AUTHORITATIVE for all Phase 2 work from Step 2.5 onward (approved by Dina, 2026-08-28). It supersedes `docs/architecture/ARCHITECTURE_SPEC_v1.md`, which is retained unmodified as the historical record (a small superseded notice has been added at its top). Completed Phase 2 Steps 1 and 2 (domain models + deterministic deadline engine) were built under v1 and remain valid; their contracts carry forward unchanged except where this document explicitly says otherwise.
 
+**Current amendment — 2026-09-23:** hands-on ASMT-10 pilot work earned a sixth specialist workflow, `GST_SEC61_SCRUTINY`. The exact current contracts are pinned below. Any earlier sentence in this document that describes ASMT-10 as necessarily `TRIAGE_ONLY`, or describes the specialist registries as containing exactly five entries, is superseded by this amendment and the explicit Section 61 contracts below.
+
 ---
 
 ## 0. Why v1.1 Exists
@@ -12,10 +14,10 @@ Phase 2 v1.0 proved the core engineering direction: deterministic work belongs i
 
 Real-world review now adds two requirements:
 
-1. The system must recognize a much broader universe of GST notices/forms than the five deep workflows currently implemented/planned.
+1. The system must recognize a much broader universe of GST notices/forms than the explicitly registered specialist workflows.
 2. Before legal reasoning or drafting, the system must perform a practical CA-style preflight: identify authority, communication identifier/authenticity path, form, sections/rules, reason, deadlines, arithmetic, evidence, annexures and filing trail.
 
-**Do not throw away the existing five workflows.** They remain the first five deep-analysis workflows. The broader taxonomy is a recognition/triage layer above them.
+**Do not throw away the original five workflows.** They remain the first five deep-analysis workflows. A sixth workflow, `GST_SEC61_SCRUTINY`, was later promoted only after its classification, fact, deadline, validation, drafting, legal-research and document-rehearsal contracts were implemented and tested. The broader taxonomy remains a recognition/triage layer above the registered specialist set.
 
 ---
 
@@ -132,7 +134,7 @@ This is a **product taxonomy**, not a claim that GST has exactly 15 notice types
 ### 3.9 Enforcement / Movement of Goods
 
 - MOV-series / Section 129 detention-related communications.
-- Section 130 confiscation-related notices/orders are recognized but remain outside the initial five deep workflows unless explicitly added to the spec.
+- Section 130 confiscation-related notices/orders are recognized but remain outside the current specialist workflow set unless explicitly added to the spec.
 
 **Section 130 modeling rule (Phase 2):** Section 130 is NOT a `NoticeForm` registry entry. A Section-130-only proceeding in Phase 2 classifies as:
 
@@ -151,17 +153,18 @@ Section 130 itself is captured later as a cited section with provenance in fact 
 
 ---
 
-## 4. Current Deep-Workflow Scope (unchanged)
+## 4. Current Deep-Workflow Scope
 
-The following five remain Phase 2 deep workflows:
+The following six are currently registered specialist workflows:
 
-1. `GST_SEC73_ITC`
-2. `GST_SEC73_GENERAL`
-3. `GST_SEC73_RCM`
-4. `GST_SEC74_FRAUD`
-5. `GST_SEC129_ENFORCE`
+1. `GST_SEC61_SCRUTINY`
+2. `GST_SEC73_ITC`
+3. `GST_SEC73_GENERAL`
+4. `GST_SEC73_RCM`
+5. `GST_SEC74_FRAUD`
+6. `GST_SEC129_ENFORCE`
 
-Everything else in Taxonomy v1 is initially `TRIAGE_ONLY` until a workflow is specified, tested, and promoted to `DEEP_WORKFLOW`.
+Everything else in Taxonomy v1 remains `TRIAGE_ONLY` unless a workflow is explicitly specified, tested, registered and deterministically promoted to `DEEP_WORKFLOW`. Form recognition alone never grants deep support.
 
 This prevents false confidence while allowing the product to understand real-world notice diversity.
 
@@ -226,7 +229,7 @@ Final contract — fields:
 
 - `notice_family: NoticeFamily`
 - `notice_form: NoticeForm`
-- `proceeding_type: ProceedingType` (existing deep-workflow enum; `UNKNOWN` when no deep workflow exists)
+- `proceeding_type: ProceedingType` (registered specialist-workflow enum; `UNKNOWN` when no supported proceeding is safely established)
 - `support_level: SupportLevel`
 - `confidence: ClassificationConfidence`
 - `classification_reasons: List[str]`
@@ -237,16 +240,17 @@ Final contract — fields:
 
 Important: **Form recognition and deep-workflow classification are separate.** `SupportLevel` is assigned by Python taxonomy validation (§9), never by the LLM alone.
 
-Example:
+Examples:
 
 ```text
+ASMT-10 + explicit Section 61/Rule 99 marker + discrepancy wording
 NoticeForm = ASMT_10
 NoticeFamily = ASSESSMENT_SCRUTINY
-ProceedingType = UNKNOWN
-SupportLevel = TRIAGE_ONLY
+ProceedingType = GST_SEC61_SCRUTINY
+SupportLevel = DEEP_WORKFLOW
 ```
 
-That is a valid result and must not trigger a DRC-06 draft.
+If the deterministic Section 61 promotion markers are not all satisfied, ASMT-10 remains recognized but `TRIAGE_ONLY` with `ProceedingType.UNKNOWN`. No ASMT-10 path may trigger a DRC-06 draft; the Section 61 specialist output is a reviewable ASMT-11 explanation.
 
 ### 5.5 `ClassificationConfidence`
 
@@ -465,7 +469,7 @@ The LLM identifies:
 4. `classification_reasons` (concise, marker-based)
 5. `confidence` (`ClassificationConfidence`)
 
-The LLM MUST NOT independently decide whether an unsupported notice has a `DEEP_WORKFLOW`, and must never force an unsupported notice into one of the five deep workflows.
+The LLM MUST NOT independently decide whether an unsupported notice has a `DEEP_WORKFLOW`, and must never force an unsupported notice into one of the six registered specialist workflows.
 
 **Part B — Python taxonomy validation / registry (deterministic):**
 
@@ -486,7 +490,10 @@ DRC-01 + Section 73 + RCM/9(3)
 → DRC_01 / DEMAND_ADJUDICATION / GST_SEC73_RCM / DEEP_WORKFLOW
   (confidence HIGH; reasons: marker "DRC-01", marker "9(3)")
 
-ASMT-10
+ASMT-10 + (Section 61 OR Rule 99) + explicit discrepancy marker
+→ ASMT_10 / ASSESSMENT_SCRUTINY / GST_SEC61_SCRUTINY / DEEP_WORKFLOW
+
+ASMT-10 without the complete deterministic promotion marker set
 → ASMT_10 / ASSESSMENT_SCRUTINY / UNKNOWN / TRIAGE_ONLY
 
 REG-17
@@ -500,7 +507,7 @@ Section 130 only (no Section 129/MOV markers)
 
 ## 10. Revised Workflow Registry Contract
 
-The five deep workflows remain deterministic Python definitions.
+The six registered specialist workflows remain deterministic Python definitions.
 
 `WorkflowDefinition` fields:
 
@@ -514,6 +521,7 @@ The five deep workflows remain deterministic Python definitions.
 
 Default severities:
 
+- GST_SEC61_SCRUTINY → MEDIUM
 - GST_SEC73_ITC → MEDIUM
 - GST_SEC73_GENERAL → MEDIUM
 - GST_SEC73_RCM → MEDIUM
@@ -537,15 +545,15 @@ Special rules guardrail:
 - (a) a corresponding deterministic Validation Engine check, or
 - (b) an explicit mandatory CA-review gate.
 
-Registry contains exactly five entries in Phase 2. `UNKNOWN` has no workflow.
+Registry currently contains exactly six entries. `UNKNOWN` has no workflow.
 
-### 10.1 Current-Law Safety Decisions Governing the Five Workflows
+### 10.1 Current-Law Safety Decisions Governing the Six Workflows
 
 Recorded architectural decisions (August 2026):
 
 **1. Section 73 / Section 74 temporal scope.**
 
-Current CGST Sections 73 and 74 apply to determination pertaining to periods up to Financial Year 2023-24. The existing five Phase-2 workflows remain valid for notices that expressly invoke Sections 73 or 74. They must NOT be treated as substitutes for Section 74A.
+Current CGST Sections 73 and 74 apply to determination pertaining to periods up to Financial Year 2023-24. The existing Section 73 / Section 74 specialist workflows remain valid for notices that expressly invoke Sections 73 or 74. They must NOT be treated as substitutes for Section 74A.
 
 For a DRC-01 expressly invoking Section 74A:
 
@@ -578,6 +586,10 @@ The Deadline Engine receives only structured date inputs. A taxpayer reply deadl
 
 Record explicitly: MOV-09 is an order issued by the department in the enforcement sequence. It must NEVER be represented as "taxpayer reply in MOV-09". A Section-129 workflow output must therefore say "reviewable enforcement response/submission appropriate to the actual notice/form" and must not hardcode MOV-09 as a taxpayer reply form.
 
+**5. Section 61 / ASMT-10 response timing.**
+
+The Section 61 scrutiny workflow must not hardcode a generic 15-day or 30-day reply period. Dwaar may parse a response period only from source-grounded notice wording and may calculate a calendar deadline only when the required service/receipt input is verified. The verified legal pack may describe the stable Section 61 scrutiny process and the ASMT-10 / ASMT-11 / ASMT-12 form sequence, but it must not supply a generic response-period length unless a later versioned legal rule resolves the authoritative-source/effective-date question.
+
 ### 10.2 Workflow Contract Rules
 
 1. `WorkflowDefinition` content is a CASE-HANDLING REQUIREMENT set, not a legal conclusion.
@@ -588,9 +600,9 @@ Record explicitly: MOV-09 is an order issued by the department in the enforcemen
 6. No legal proposition in a workflow may be treated as permanently current law merely because it appears in `WorkflowDefinition`.
 7. Time-sensitive legal rules/rates/limits belong eventually in the verified, versioned Legal Knowledge / Rule subsystem.
 
-### 10.3 Authoritative Five-Workflow Contracts (Phase 2 Step 5)
+### 10.3 Authoritative Six-Workflow Contracts
 
-The following five contracts are the AUTHORITATIVE content for Phase 2 Step 5. Implement each `WorkflowDefinition` verbatim from these lists. Do not invent, add, drop, or reinterpret content.
+The following six contracts are the AUTHORITATIVE current `WorkflowDefinition` content. The original five were created in Phase 2 Step 5; Contract 6 was earned by the 2026-09-23 ASMT-10 pilot work. Implement these lists verbatim; do not invent, add, drop, or reinterpret content.
 
 **Contract 1 — `GST_SEC73_ITC`**
 
@@ -801,6 +813,44 @@ The following five contracts are the AUTHORITATIVE content for Phase 2 Step 5. I
 6. "A Section-130-only proceeding does not use this deep workflow and remains TRIAGE_ONLY until a separate workflow exists."
 7. "Active detention/seizure requires urgent CA escalation, but deadline status must come from the deterministic Deadline Engine and explicit procedural dates."
 
+**Contract 6 — `GST_SEC61_SCRUTINY`**
+
+- `proceeding_type`: `GST_SEC61_SCRUTINY`
+- `default_severity`: `MEDIUM`
+
+`required_facts`:
+
+1. "Discrepancy / issue stated by the department in FORM GST ASMT-10"
+2. "FY / tax period under scrutiny"
+3. "Response period stated in the notice, where stated"
+
+`evidence_requirements`:
+
+1. "Return(s) and statements under scrutiny for the relevant period"
+2. "Reconciliation and supporting records relevant to each discrepancy stated in FORM GST ASMT-10"
+3. "Documents explicitly requested in FORM GST ASMT-10, where stated"
+4. "Annexures or discrepancy computations referenced by FORM GST ASMT-10, where stated"
+
+`issue_types`:
+
+1. "RETURN_SCRUTINY_DISCREPANCY"
+2. "DISCREPANCY_RECONCILIATION"
+3. "RESPONSE_TIMELINE"
+
+`output_structure`:
+
+1. "Scrutiny working paper"
+2. "Discrepancy-by-discrepancy response matrix"
+3. "Reviewable ASMT-11 explanation"
+
+`special_rules`:
+
+1. "Every discrepancy stated in FORM GST ASMT-10 remains a departmental allegation unless independently supported by taxpayer evidence."
+2. "Address each stated discrepancy separately; never treat the notice wording alone as an admission by the taxpayer."
+3. "Do not inject a generic statutory reply period; use only the notice-stated response period or due date and verified service/receipt inputs."
+4. "Any acceptance of a discrepancy, payment, or corrective action requires taxpayer evidence and professional confirmation."
+5. "Mandatory CA review is required before any ASMT-11 response is filed."
+
 ---
 
 ## 11. Triage-Only Output Contract
@@ -839,6 +889,7 @@ It MUST NOT invent:
 | DRC-01 + Sec 73 + RCM markers | DEEP → GST_SEC73_RCM |
 | DRC-01 + Sec 74 fraud/suppression markers | DEEP → GST_SEC74_FRAUD |
 | Section 129 / MOV detention | DEEP → GST_SEC129_ENFORCE |
+| ASMT-10 + (Section 61 or Rule 99) + explicit discrepancy marker | DEEP → GST_SEC61_SCRUTINY |
 | GSTR-3A | TRIAGE_ONLY |
 | CMP-05 | TRIAGE_ONLY |
 | REG-03 | TRIAGE_ONLY |
@@ -847,7 +898,7 @@ It MUST NOT invent:
 | PCT-03 | TRIAGE_ONLY |
 | RFD-08 | TRIAGE_ONLY |
 | ASMT-02 | TRIAGE_ONLY |
-| ASMT-10 | TRIAGE_ONLY |
+| ASMT-10 without the complete Section 61 promotion marker set | TRIAGE_ONLY |
 | ASMT-14 | TRIAGE_ONLY |
 | ADT-01 | TRIAGE_ONLY |
 | RVN-01 | TRIAGE_ONLY |
@@ -901,7 +952,8 @@ New Phase 2 components follow the v1 §6 folder conventions: pure-Python no-LLM 
 - One focused LLM call (routed through `modules/llm_client.py` and the LLM router) + Python validation, exactly per §9.
 - The LLM returns the apparent classification; Python validation produces the final `NoticeClassification`.
 - Must classify the four fixtures to their deep workflows.
-- Must also be testable with synthetic ASMT-10 / REG-17 / DRC-01B / DRC-01C / Section-130-only text and return TRIAGE_ONLY rather than forcing a deep workflow.
+- Must test synthetic ASMT-10 with the complete Section 61/Rule 99 + discrepancy marker gate as `GST_SEC61_SCRUTINY / DEEP_WORKFLOW`.
+- Must also test incomplete ASMT-10, REG-17, DRC-01B, DRC-01C and Section-130-only text as `TRIAGE_ONLY` rather than forcing an unrelated deep workflow.
 
 **Step 4 follow-up (before Step 5 code):** add/verify an offline classifier safety test:
 
@@ -917,7 +969,7 @@ No Section-74A deep type may be invented in Phase 2.
 
 ### Step 5 — Deep Workflow Registry
 
-- Implement exactly five `WorkflowDefinition` objects.
+- The registry currently contains exactly six `WorkflowDefinition` objects: the original five plus `GST_SEC61_SCRUTINY`.
 - The per-workflow content of `required_facts`, `evidence_requirements`, `issue_types`, `output_structure` and `special_rules` is defined authoritatively in §10.3. Implement those lists verbatim; do not invent content.
 - Registry keyed by `ProceedingType`.
 - No workflow for `UNKNOWN`.
@@ -965,19 +1017,20 @@ The authoritative Preflight + Arithmetic contract is defined in §18 (finalized 
 
 ---
 
-## 14. Near-Term Workflow Expansion Priority (after the five deep workflows are stable)
+## 14. Near-Term Workflow Expansion Priority
 
-Recommended next deep workflows:
+ASMT-10 has now graduated from this list into the sixth registered specialist workflow. Remaining expansion should continue to be earned by real workflow/pilot evidence.
+
+Recommended candidates:
 
 1. DRC-01C — ITC mismatch return-compliance response
 2. DRC-01B — outward-liability mismatch response
-3. ASMT-10 — scrutiny discrepancy + ASMT-11 response workflow
-4. REG-17 — cancellation SCN response
-5. RFD-08 — refund-rejection response
-6. GSTR-3A — non-filer remediation
-7. ADT-01 — audit readiness/evidence workflow
+3. REG-17 — cancellation SCN response
+4. RFD-08 — refund-rejection response
+5. GSTR-3A — non-filer remediation
+6. ADT-01 — audit readiness/evidence workflow
 
-Do not implement this expansion until the Phase 2 architecture is stable and CA pilot feedback supports prioritization.
+Do not promote a candidate merely because its form is recognized; require explicit workflow, validation, drafting, legal-source and regression contracts.
 
 ---
 
@@ -2689,9 +2742,36 @@ without inspecting natural-language claims.
 The following are exact mapping contracts. Requirement IDs are stable
 Phase-2 identifiers. `text` is the corresponding workflow `required_facts`
 string verbatim. `accepted` is shorthand for `accepted_fact_statuses`; any
-field not listed keeps its §19.11 default. The five proceeding prefixes
-`sec73_itc`, `sec73_general`, `sec73_rcm`, `sec74_fraud`, `sec129` are also
-the stable evidence-ID prefixes (§19.18).
+field not listed keeps its §19.11 default. The six proceeding prefixes
+`sec61_scrutiny`, `sec73_itc`, `sec73_general`, `sec73_rcm`, `sec74_fraud`,
+`sec129` are also the stable evidence-ID prefixes (§19.18).
+
+**GST_SEC61_SCRUTINY**
+
+```text
+R1  id          = "sec61_scrutiny.r1"
+    text        = "Discrepancy / issue stated by the department in FORM GST ASMT-10"
+    kind        = FACT
+    fact_type   = DEPARTMENT_ALLEGATION
+    fact_role   = NONE
+    accepted    = ALLEGED
+
+R2  id          = "sec61_scrutiny.r2"
+    text        = "FY / tax period under scrutiny"
+    kind        = FACT
+    fact_type   = TAX_PERIOD
+    fact_role   = NONE
+    accepted    = CONFIRMED
+    absent_on_success = REQUIRES_VERIFICATION
+
+R3  id          = "sec61_scrutiny.r3"
+    text        = "Response period stated in the notice, where stated"
+    kind        = FACT
+    fact_type   = DOCUMENT_DETAIL
+    fact_role   = RESPONSE_PERIOD
+    accepted    = CONFIRMED
+    absent_on_success = REQUIRES_VERIFICATION
+```
 
 **GST_SEC73_ITC**
 
@@ -2915,8 +2995,8 @@ R9  id          = "sec129.r9"
     absent_on_success = REQUIRES_VERIFICATION
 ```
 
-Total: 5 + 5 + 5 + 5 + 9 = 29 requirement mappings. In order, they are the
-complete verbatim `required_facts` lists of the five current workflows
+Total: 3 + 5 + 5 + 5 + 5 + 9 = 32 requirement mappings. In order, they are the
+complete verbatim `required_facts` lists of the six current workflows
 (§10.3).
 
 ### 19.17 `EvidenceStatus`
@@ -3251,12 +3331,31 @@ review_rules: Dict[int, ReviewLevel]
 
 Indices in `special_rule_handling` / `review_rules` are zero-based indices
 into the workflow's exact `special_rules` list. Each current special rule
-index must be mapped. The Phase-2 registry contains exactly five profiles,
-one per deep workflow, keyed by `ProceedingType`.
+index must be mapped. The current registry contains exactly six profiles,
+one per registered specialist workflow, keyed by `ProceedingType`.
 
 In the mappings below, `REVIEW_GATE (LEVEL)` means
 `special_rule_handling[index]` contains `REVIEW_GATE` and
 `review_rules[index] = LEVEL`.
+
+### 19.34A Special-rule mapping — GST_SEC61_SCRUTINY
+
+```text
+index 0 — UPSTREAM_INVARIANT
+    rule: "Every discrepancy stated in FORM GST ASMT-10 remains a departmental allegation unless independently supported by taxpayer evidence."
+
+index 1 — REVIEW_GATE (CA_REVIEW)
+    rule: "Address each stated discrepancy separately; never treat the notice wording alone as an admission by the taxpayer."
+
+index 2 — UPSTREAM_INVARIANT + REVIEW_GATE (CA_REVIEW)
+    rule: "Do not inject a generic statutory reply period; use only the notice-stated response period or due date and verified service/receipt inputs."
+
+index 3 — REVIEW_GATE (CA_REVIEW)
+    rule: "Any acceptance of a discrepancy, payment, or corrective action requires taxpayer evidence and professional confirmation."
+
+index 4 — REVIEW_GATE (CA_REVIEW)
+    rule: "Mandatory CA review is required before any ASMT-11 response is filed."
+```
 
 ### 19.35 Special-rule mapping — GST_SEC73_ITC
 
@@ -3356,8 +3455,8 @@ index 6 — DETERMINISTIC_CHECK + REVIEW_GATE (URGENT_CA_REVIEW)
 Every `GST_SEC129_ENFORCE` deep case therefore receives an
 `URGENT_CA_REVIEW` `ReviewRequirement`.
 
-The five mappings above cover all 24 current workflow special rules
-(4 + 4 + 4 + 5 + 7); every rule index is mapped.
+The six mappings above cover all 29 current workflow special rules
+(5 + 4 + 4 + 4 + 5 + 7); every rule index is mapped.
 
 ### 19.40 Special-rule execution policy
 
@@ -3365,7 +3464,7 @@ The five mappings above cover all 24 current workflow special rules
   mapping.
 - `FUTURE_LEGAL_RULE`: create a deterministic WARNING:
   `"This workflow rule requires future verified legal-rule support and CA review."`
-  It must also have `REVIEW_GATE` in the current five profiles.
+  It must also have `REVIEW_GATE` wherever the current profile mapping requires professional review.
 - `UPSTREAM_INVARIANT`: re-check the applicable upstream invariant where a
   deterministic structured input exists. If the invariant cannot be
   rechecked without prohibited source-code introspection: emit a `PASS`
@@ -10404,11 +10503,11 @@ Existing contracts remain:
 DraftGenerationStatus  = 3
 DraftFailureCode       = 6
 FactRole               = 22
-WorkflowRequirementSpecs = 29
-special-rule mappings  = 24
-validation profiles    = 5
-drafting profiles      = 5
-deep workflows         = 5
+WorkflowRequirementSpecs = 32
+special-rule mappings  = 29
+validation profiles    = 6
+drafting profiles      = 6
+deep workflows         = 6
 ```
 
 New Step-10 models (two dataclasses, no new enums):
