@@ -1822,7 +1822,6 @@ def _render_draft_work_product_workspace(
                     "Created at": item.created_at.isoformat(
                         timespec="minutes"
                     ),
-                    "Created by": item.created_by,
                     "Reviewed at": _display(item.reviewed_at),
                     "Approved at": _display(item.approved_at),
                 }
@@ -1841,6 +1840,7 @@ def _render_draft_work_product_workspace(
                                 item.parent_draft_version_id
                             ),
                             "review_status": item.review_status.value,
+                            "created_by": item.created_by,
                             "reviewed_by": _display(item.reviewed_by),
                             "approved_by": _display(item.approved_by),
                         }
@@ -1849,7 +1849,7 @@ def _render_draft_work_product_workspace(
                     hide_index=True,
                 )
     else:
-        st.write("No durable draft work-product versions yet.")
+        st.write("No saved draft versions yet.")
 
     if AccessPermission.CASE_UPDATE in active_firm.permissions:
         try:
@@ -2182,7 +2182,7 @@ def _render_filing_workspace(
     st.header("Filing & acknowledgement")
     st.caption(
         "Filing records describe what was actually submitted to the portal. "
-        "The selected APPROVED draft is recorded as the filing basis; Dwaar "
+        "The selected approved draft is recorded as the filing basis; Dwaar "
         "does not claim the uploaded filed PDF is textually identical to "
         "that draft."
     )
@@ -2215,7 +2215,6 @@ def _render_filing_workspace(
                 {
                     "Filing reference": item.filing_reference,
                     "Filed at": item.filed_at.isoformat(timespec="minutes"),
-                    "Filed by": item.filed_by,
                     "Acknowledgement": (
                         "Attached"
                         if item.acknowledgement_document_id is not None
@@ -2242,6 +2241,7 @@ def _render_filing_workspace(
                                 item.acknowledgement_document_id
                             ),
                             "recorded_at": item.recorded_at.isoformat(),
+                            "filed_by": item.filed_by,
                         }
                         for item in filings
                     ],
@@ -2533,6 +2533,7 @@ def _render_persisted_evidence_workspace(
                     [
                         {
                             "document_id": item.document_id,
+                        "reviewed_by": item.reviewed_by,
                             "sha256": item.sha256_hex,
                         }
                         for item in attached
@@ -2996,7 +2997,6 @@ def _render_persisted_evidence_workspace(
                 "Reviewed at": item.reviewed_at.isoformat(
                     timespec="minutes"
                 ),
-                "Reviewed by": item.reviewed_by,
             }
             for item in durable_reviews
         ],
@@ -3059,8 +3059,6 @@ def _render_persisted_evidence_workspace(
                 + str(loaded_review.metadata.source_page)
                 + " · Reviewed "
                 + str(loaded_review.payload["reviewed_at"])
-                + " by "
-                + str(loaded_review.payload["reviewed_by"])
             )
             reviewer_note = loaded_review.payload["reviewer_note"]
             if reviewer_note:
@@ -3083,6 +3081,9 @@ def _render_persisted_evidence_workspace(
                                     "source_verification"
                                 ]
                             ),
+                            "reviewed_by": loaded_review.payload[
+                                "reviewed_by"
+                            ],
                         }
                     )
 
