@@ -110,7 +110,9 @@ class RuntimeRestoreTests(RuntimeRestoreFixture):
         firm = repo.get_firm("F-1")
         client = repo.get_client("C-1")
         case = repo.get_case("CASE-1")
-        document = repo.get_document_ref("DOC-1")
+        documents = repo.list_document_refs("CASE-1")
+        self.assertEqual(len(documents), 1)
+        document = documents[0]
 
         self.assertEqual(firm.display_name, "Recovery Firm")
         self.assertEqual(client.display_name, "Recovery Client")
