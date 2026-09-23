@@ -21,6 +21,8 @@ APPROVED_OFFICIAL_DOMAINS = frozenset({
     "www.indiacode.nic.in",
     "cbic-gst.gov.in",
     "www.cbic-gst.gov.in",
+    "gstcouncil.gov.in",
+    "www.gstcouncil.gov.in",
 })
 
 
