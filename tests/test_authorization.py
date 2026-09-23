@@ -68,6 +68,7 @@ class AuthorizationContractTests(unittest.TestCase):
                 "document_read",
                 "document_add",
                 "evidence_review",
+                "fact_review",
                 "draft_review",
                 "filing_record",
                 "firm_admin",
