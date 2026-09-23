@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
+
+import fitz
 from typing import Mapping, Optional
 
 from domain.runtime_readiness_models import (
@@ -63,6 +65,35 @@ def _document_key_from_environment(
         return decode_document_master_key(value)
     except RuntimeSecurityConfigurationError as error:
         raise ValueError("document key is invalid") from error
+
+
+def _ocr_runtime_available() -> bool:
+    """Exercise the same PyMuPDF/Tesseract path used for scanned notices.
+
+    The probe document is generated in memory and contains no user data.
+    Exception details are deliberately discarded because readiness output is
+    operator-safe and must not leak runtime paths or library internals.
+    """
+    document = None
+    try:
+        document = fitz.open()
+        page = document.new_page(width=300, height=120)
+        page.insert_text(
+            fitz.Point(24, 64),
+            "Dwaar OCR readiness probe",
+            fontsize=18,
+        )
+        text_page = page.get_textpage_ocr(
+            language="eng",
+            dpi=150,
+            full=True,
+        )
+        return text_page is not None
+    except Exception:
+        return False
+    finally:
+        if document is not None:
+            document.close()
 
 
 def _check(
@@ -145,6 +176,20 @@ def evaluate_runtime_readiness(
             document_key_id is not None,
             "Document key identity configuration is valid.",
             "Document key identity configuration is missing or invalid.",
+        )
+    )
+
+    ocr_runtime_ok = _ocr_runtime_available()
+    checks.append(
+        _check(
+            RuntimeReadinessCode.OCR_RUNTIME,
+            ocr_runtime_ok,
+            "Scanned-PDF OCR runtime is available.",
+            (
+                "Scanned-PDF OCR runtime is unavailable. "
+                "Install/configure Tesseract English OCR before serving "
+                "professional traffic."
+            ),
         )
     )
 
