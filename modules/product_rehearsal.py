@@ -350,6 +350,7 @@ def run_product_rehearsal(root_dir: str) -> ProductRehearsalReport:
     root = Path(root_dir).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     live = root / "live"
+    live.mkdir(parents=True, exist_ok=True)
     db_path = live / "dwaar.db"
     object_root = live / "objects"
     backup_root = root / "backups"
