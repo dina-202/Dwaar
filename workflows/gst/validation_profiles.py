@@ -31,6 +31,59 @@ from domain.models import (
     WorkflowValidationProfile,
 )
 
+# --- GST_SEC61_SCRUTINY -----------------------------------------------------
+
+SEC61_SCRUTINY_VALIDATION_PROFILE = WorkflowValidationProfile(
+    proceeding_type=ProceedingType.GST_SEC61_SCRUTINY,
+    requirement_specs=[
+        WorkflowRequirementSpec(
+            requirement_id="sec61_scrutiny.r1",
+            requirement_text=(
+                "Discrepancy / issue stated by the department in "
+                "FORM GST ASMT-10"
+            ),
+            kind=RequirementKind.FACT,
+            fact_type=FactType.DEPARTMENT_ALLEGATION,
+            fact_role=FactRole.NONE,
+            accepted_fact_statuses=(FactStatus.ALLEGED,),
+        ),
+        WorkflowRequirementSpec(
+            requirement_id="sec61_scrutiny.r2",
+            requirement_text="FY / tax period under scrutiny",
+            kind=RequirementKind.FACT,
+            fact_type=FactType.TAX_PERIOD,
+            fact_role=FactRole.NONE,
+            absent_on_success=RequirementStatus.REQUIRES_VERIFICATION,
+        ),
+        WorkflowRequirementSpec(
+            requirement_id="sec61_scrutiny.r3",
+            requirement_text=(
+                "Response period stated in the notice, where stated"
+            ),
+            kind=RequirementKind.FACT,
+            fact_type=FactType.DOCUMENT_DETAIL,
+            fact_role=FactRole.RESPONSE_PERIOD,
+            absent_on_success=RequirementStatus.REQUIRES_VERIFICATION,
+        ),
+    ],
+    special_rule_handling={
+        0: (SpecialRuleHandling.UPSTREAM_INVARIANT,),
+        1: (SpecialRuleHandling.REVIEW_GATE,),
+        2: (
+            SpecialRuleHandling.UPSTREAM_INVARIANT,
+            SpecialRuleHandling.REVIEW_GATE,
+        ),
+        3: (SpecialRuleHandling.REVIEW_GATE,),
+        4: (SpecialRuleHandling.REVIEW_GATE,),
+    },
+    review_rules={
+        1: ReviewLevel.CA_REVIEW,
+        2: ReviewLevel.CA_REVIEW,
+        3: ReviewLevel.CA_REVIEW,
+        4: ReviewLevel.CA_REVIEW,
+    },
+)
+
 # --- GST_SEC73_ITC (§19.16, §19.35) -----------------------------------------
 
 SEC73_ITC_VALIDATION_PROFILE = WorkflowValidationProfile(
@@ -347,6 +400,7 @@ SEC129_VALIDATION_PROFILE = WorkflowValidationProfile(
 # --- Deterministic lookup (§19.34) ------------------------------------------
 
 VALIDATION_PROFILE_REGISTRY: Dict[ProceedingType, WorkflowValidationProfile] = {
+    ProceedingType.GST_SEC61_SCRUTINY: SEC61_SCRUTINY_VALIDATION_PROFILE,
     ProceedingType.GST_SEC73_ITC: SEC73_ITC_VALIDATION_PROFILE,
     ProceedingType.GST_SEC73_GENERAL: SEC73_GENERAL_VALIDATION_PROFILE,
     ProceedingType.GST_SEC73_RCM: SEC73_RCM_VALIDATION_PROFILE,
