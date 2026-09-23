@@ -2454,6 +2454,7 @@ def _render_filing_workspace(
     principal,
     active_firm,
     reopened,
+    case_service,
 ):
     st.header("Filing & acknowledgement")
     st.caption(
@@ -2539,9 +2540,8 @@ def _render_filing_workspace(
         selected_filing_source = filing_source_labels[
             selected_filing_source_label
         ]
-        case_document_service = build_authorized_case_service()
         _render_verified_case_pdf_download(
-            case_document_service,
+            case_service,
             principal,
             active_firm,
             case_id=reopened.case.case_id,
@@ -2557,7 +2557,7 @@ def _render_filing_workspace(
         )
         if selected_filing_source.acknowledgement_document_id is not None:
             _render_verified_case_pdf_download(
-                case_document_service,
+                case_service,
                 principal,
                 active_firm,
                 case_id=reopened.case.case_id,
@@ -4264,6 +4264,7 @@ def _render_saved_cases_workspace(principal, active_firm):
         principal,
         active_firm,
         reopened,
+        service,
     )
     with st.expander("Extracted saved notice text"):
         st.text(reopened.raw_text)
