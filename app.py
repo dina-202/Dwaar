@@ -4256,8 +4256,11 @@ _render_saved_cases_workspace(_principal, _active_firm)
 
 if AccessPermission.CASE_CREATE in _active_firm.permissions:
     st.header("New notice intake")
-    st.write("Upload a GST notice PDF for structured Phase-2 analysis.")
-    st.caption("Phase-2 outputs require professional review before use.")
+    st.write("Upload a GST notice PDF for structured professional review.")
+    st.caption(
+        "Dwaar prepares a source-grounded working analysis. "
+        "Professional review is required before use."
+    )
 
     uploaded = st.file_uploader(
         "Upload notice PDF",
