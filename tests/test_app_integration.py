@@ -1263,10 +1263,11 @@ class SourceBoundaryTests(unittest.TestCase):
         ):
             self.assertNotIn(prohibited, lowered, prohibited)
 
-    def test_download_surfaces_are_source_document_or_reviewed_draft_only(self):
+    def test_download_surfaces_are_verified_source_or_reviewed_draft_only(self):
         lowered = SOURCE.lower()
-        self.assertEqual(lowered.count("download_button"), 2)
+        self.assertEqual(lowered.count("download_button"), 3)
         self.assertIn("download original notice pdf", lowered)
+        self.assertIn("download selected evidence pdf", lowered)
         self.assertIn("download reviewed draft docx", lowered)
         self.assertIn("draftreviewstatus.reviewed", lowered)
         self.assertIn("draftreviewstatus.approved", lowered)
@@ -4240,6 +4241,74 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
         self.assertNotIn("_dwaar_evidence_workspace_key", shared_state)
         self.assertNotIn("_dwaar_evidence_intake_result", shared_state)
         self.assertNotIn("_dwaar_evidence_reviews", shared_state)
+
+    def test_attached_evidence_can_be_downloaded_through_verified_document_read(self):
+        evidence_ref = self._evidence_ref()
+        service = self._case_service([self._notice(), evidence_ref])
+        verified_payload = b"%PDF verified supporting evidence"
+        service.read_document.return_value = (
+            evidence_ref,
+            verified_payload,
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm()],
+            persistence_service=service,
+            reopen_result=self._reopened(),
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "prepare_evidence_download_DOC-EVIDENCE-1": True,
+            },
+        )
+
+        service.read_document.assert_called_once_with(
+            ANY,
+            "F-TEST",
+            case_id="CASE-1",
+            document_id="DOC-EVIDENCE-1",
+        )
+        downloads = download_calls_labeled(
+            fake,
+            "Download selected evidence PDF",
+        )
+        self.assertEqual(len(downloads), 1)
+        self.assertEqual(downloads[0][2]["data"], verified_payload)
+        self.assertEqual(downloads[0][2]["file_name"], "gstr2b.pdf")
+        self.assertEqual(downloads[0][2]["mime"], "application/pdf")
+
+    def test_evidence_download_failure_is_generic_and_leaks_no_storage_detail(self):
+        evidence_ref = self._evidence_ref()
+        service = self._case_service([self._notice(), evidence_ref])
+        service.read_document.side_effect = RuntimeError(
+            "private object path / secret hash mismatch detail"
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm()],
+            persistence_service=service,
+            reopen_result=self._reopened(),
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "prepare_evidence_download_DOC-EVIDENCE-1": True,
+            },
+        )
+
+        text = log_text(fake)
+        self.assertIn(
+            "selected supporting evidence could not be opened safely",
+            text.lower(),
+        )
+        self.assertNotIn("private object path", text)
+        self.assertNotIn("secret hash mismatch detail", text)
+        self.assertEqual(
+            download_calls_labeled(
+                fake,
+                "Download selected evidence PDF",
+            ),
+            [],
+        )
 
     def test_without_document_add_attachment_control_is_hidden(self):
         evidence_ref = self._evidence_ref()
