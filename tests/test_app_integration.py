@@ -1268,6 +1268,8 @@ class SourceBoundaryTests(unittest.TestCase):
         self.assertEqual(lowered.count("download_button"), 3)
         self.assertIn("download original notice pdf", lowered)
         self.assertIn("download selected evidence pdf", lowered)
+        self.assertIn("download filed response pdf", lowered)
+        self.assertIn("download acknowledgement pdf", lowered)
         self.assertIn("download reviewed draft docx", lowered)
         self.assertIn("draftreviewstatus.reviewed", lowered)
         self.assertIn("draftreviewstatus.approved", lowered)
@@ -3755,6 +3757,89 @@ class FilingWorkspaceUiTests(unittest.TestCase):
         )
         filing_service.record_filing.assert_not_called()
 
+    def test_read_only_user_can_download_verified_filing_artifacts(self):
+        filing = self._filing(with_ack=True)
+        filing_service = Mock()
+        filing_service.list_filings.return_value = [filing]
+        case_service = self._case_service()
+        filed_ref = StoredDocumentRef(
+            document_id="DOC-FILED",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.FILED_RESPONSE,
+            original_filename="filed-response.pdf",
+            media_type="application/pdf",
+            byte_size=111,
+            sha256_hex="e" * 64,
+            storage_key="objects/" + "e" * 32,
+            created_at=datetime(2026, 9, 22, 17, 0, tzinfo=timezone.utc),
+        )
+        ack_ref = StoredDocumentRef(
+            document_id="DOC-ACK",
+            case_id="CASE-1",
+            kind=CaseDocumentKind.ACKNOWLEDGEMENT,
+            original_filename="acknowledgement.pdf",
+            media_type="application/pdf",
+            byte_size=99,
+            sha256_hex="f" * 64,
+            storage_key="objects/" + "f" * 32,
+            created_at=datetime(2026, 9, 22, 18, 0, tzinfo=timezone.utc),
+        )
+
+        def read_document(_principal, _firm_id, *, case_id, document_id):
+            self.assertEqual(case_id, "CASE-1")
+            if document_id == "DOC-FILED":
+                return filed_ref, b"%PDF filed response verified"
+            if document_id == "DOC-ACK":
+                return ack_ref, b"%PDF acknowledgement verified"
+            raise AssertionError(document_id)
+
+        case_service.read_document.side_effect = read_document
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm(can_file=False)],
+            persistence_service=case_service,
+            filing_service=filing_service,
+            draft_service=self._draft_service(),
+            reopen_result=self._reopened(),
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "filed_response_prepare_DOC-FILED": True,
+                "filing_ack_prepare_DOC-ACK": True,
+            },
+        )
+
+        self.assertEqual(case_service.read_document.call_count, 2)
+
+        filed_downloads = download_calls_labeled(
+            fake,
+            "Download filed response PDF",
+        )
+        self.assertEqual(len(filed_downloads), 1)
+        self.assertEqual(
+            filed_downloads[0][2]["data"],
+            b"%PDF filed response verified",
+        )
+        self.assertEqual(
+            filed_downloads[0][2]["file_name"],
+            "filed-response.pdf",
+        )
+
+        ack_downloads = download_calls_labeled(
+            fake,
+            "Download acknowledgement PDF",
+        )
+        self.assertEqual(len(ack_downloads), 1)
+        self.assertEqual(
+            ack_downloads[0][2]["data"],
+            b"%PDF acknowledgement verified",
+        )
+        self.assertEqual(
+            ack_downloads[0][2]["file_name"],
+            "acknowledgement.pdf",
+        )
+
     def test_filing_requires_approved_draft_version(self):
         draft_service = self._draft_service()
         working = DraftVersionRef(
@@ -4258,7 +4343,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
             reopen_result=self._reopened(),
             button_values={
                 "open_saved_case_CASE-1": True,
-                "prepare_evidence_download_DOC-EVIDENCE-1": True,
+                "evidence_prepare_DOC-EVIDENCE-1": True,
             },
         )
 
@@ -4291,7 +4376,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
             reopen_result=self._reopened(),
             button_values={
                 "open_saved_case_CASE-1": True,
-                "prepare_evidence_download_DOC-EVIDENCE-1": True,
+                "evidence_prepare_DOC-EVIDENCE-1": True,
             },
         )
 
