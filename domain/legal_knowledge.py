@@ -5,6 +5,7 @@ from typing import Dict, Iterable, Tuple
 from urllib.parse import urlparse
 
 from domain.legal_knowledge_models import (
+    LegalKnowledgeIntervalQuery,
     LegalKnowledgeQuery,
     LegalKnowledgeResult,
     LegalRule,
@@ -179,6 +180,82 @@ def resolve_legal_knowledge(
         topic for topic in requested_topics if topic not in resolved_topics
     )
 
+    return LegalKnowledgeResult(
+        matches=tuple(matches),
+        unresolved_topics=unresolved,
+        catalog_valid=True,
+        catalog_version=catalog_version,
+    )
+
+
+
+def resolve_legal_knowledge_interval(
+    query: LegalKnowledgeIntervalQuery,
+    *,
+    catalog_version: str,
+    sources: Iterable[LegalSourceRef],
+    rules: Iterable[LegalRule],
+) -> LegalKnowledgeResult:
+    """Resolve only rules whose one version covers the complete period.
+
+    A rule that starts after period_start or ends before period_end does not
+    qualify. This deliberately refuses to use a period-end rule as a proxy
+    for an earlier part of the same tax period.
+    """
+    if not isinstance(query, LegalKnowledgeIntervalQuery):
+        raise TypeError("query must be a LegalKnowledgeIntervalQuery")
+    if query.period_end < query.period_start:
+        raise ValueError("period_end must not precede period_start")
+
+    source_list = tuple(sources)
+    rule_list = tuple(rules)
+    requested_topics = tuple(dict.fromkeys(query.topics))
+
+    if not _nonempty(catalog_version):
+        return LegalKnowledgeResult(
+            matches=(),
+            unresolved_topics=requested_topics,
+            catalog_valid=False,
+            catalog_version=catalog_version,
+        )
+    if not validate_catalog(source_list, rule_list):
+        return LegalKnowledgeResult(
+            matches=(),
+            unresolved_topics=requested_topics,
+            catalog_valid=False,
+            catalog_version=catalog_version,
+        )
+
+    source_by_id = {source.source_id: source for source in source_list}
+    matches = []
+    for rule in rule_list:
+        if rule.verification_status is not LegalVerificationStatus.SOURCE_VERIFIED:
+            continue
+        source = source_by_id[rule.source_id]
+        if source.verification_status is not LegalVerificationStatus.SOURCE_VERIFIED:
+            continue
+        if query.proceeding_type not in rule.proceeding_types:
+            continue
+        if rule.topic not in requested_topics:
+            continue
+        if rule.effective_from > query.period_start:
+            continue
+        if rule.effective_to is not None and rule.effective_to < query.period_end:
+            continue
+        matches.append(LegalRuleMatch(rule=rule, source=source))
+
+    matches.sort(
+        key=lambda item: (
+            requested_topics.index(item.rule.topic),
+            item.rule.rule_key,
+            item.rule.effective_from,
+            item.rule.rule_id,
+        )
+    )
+    resolved_topics = {match.rule.topic for match in matches}
+    unresolved = tuple(
+        topic for topic in requested_topics if topic not in resolved_topics
+    )
     return LegalKnowledgeResult(
         matches=tuple(matches),
         unresolved_topics=unresolved,
