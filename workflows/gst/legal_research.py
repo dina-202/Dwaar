@@ -65,6 +65,17 @@ def _r(
 GST_LEGAL_RESEARCH_PROFILES: Dict[
     ProceedingType, GstLegalResearchProfile
 ] = {
+    ProceedingType.GST_SEC61_SCRUTINY: GstLegalResearchProfile(
+        proceeding_type=ProceedingType.GST_SEC61_SCRUTINY,
+        requirements=(
+            _r(
+                LegalTopic.SCRUTINY_PROCESS,
+                LegalDateBasis.NOTICE_DATE,
+                "cgst.s61.scrutiny_process",
+                "cgst.r99.asmt_forms",
+            ),
+        ),
+    ),
     ProceedingType.GST_SEC73_GENERAL: GstLegalResearchProfile(
         proceeding_type=ProceedingType.GST_SEC73_GENERAL,
         requirements=(
