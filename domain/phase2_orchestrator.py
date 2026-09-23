@@ -103,13 +103,6 @@ _TRIAGE_ONLY_MESSAGE = (
 )
 
 
-def classification_execution_failed(
-    classification: _NoticeClassification,
-) -> bool:
-    """UI-safe view of the classifier execution-failure signal."""
-    return _classifier_failed(classification)
-
-
 def _deadline_candidates(
     facts: _List[_ExtractedFact],
     fact_type: _FactType,
