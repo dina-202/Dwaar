@@ -7,6 +7,7 @@ from typing import Dict, Iterable
 
 
 FACT_REVIEW_SCHEMA_VERSION = 1
+FACT_REVIEW_NOTE_MAX_CHARS = 4000
 
 
 class FactReviewDecision(Enum):
