@@ -60,10 +60,11 @@ def tax_period():
 
 
 class LegalQuestionPlanTests(unittest.TestCase):
-    def test_all_five_deep_workflows_have_closed_question_plans(self):
+    def test_all_six_deep_workflows_have_closed_question_plans(self):
         self.assertEqual(
             set(GST_LEGAL_QUESTION_PLANS),
             {
+                ProceedingType.GST_SEC61_SCRUTINY,
                 ProceedingType.GST_SEC73_GENERAL,
                 ProceedingType.GST_SEC73_ITC,
                 ProceedingType.GST_SEC73_RCM,
@@ -77,6 +78,43 @@ class LegalQuestionPlanTests(unittest.TestCase):
             for spec in specs
         ]
         self.assertEqual(len(question_ids), len(set(question_ids)))
+
+    def test_section61_scrutiny_process_question_is_research_ready(self):
+        facts = [notice_date()]
+        plan = build_gst_legal_question_plan(
+            ProceedingType.GST_SEC61_SCRUTINY,
+            facts,
+            build_legal_date_context(facts),
+        )
+        self.assertEqual(len(plan.questions), 1)
+        item = plan.questions[0]
+        self.assertEqual(
+            item.question_id,
+            "gst_sec61_scrutiny.process",
+        )
+        self.assertIs(
+            item.status,
+            LegalQuestionStatus.SOURCE_VERIFIED_RESEARCH_READY,
+        )
+        self.assertEqual(
+            item.matched_rule_ids,
+            (
+                "cgst.s61.scrutiny_process.v1",
+                "cgst.r99.asmt_forms.v1",
+            ),
+        )
+
+    def test_section61_question_requires_verified_notice_date(self):
+        plan = build_gst_legal_question_plan(
+            ProceedingType.GST_SEC61_SCRUTINY,
+            [],
+            build_legal_date_context([]),
+        )
+        self.assertEqual(len(plan.questions), 1)
+        self.assertIs(
+            plan.questions[0].status,
+            LegalQuestionStatus.MISSING_DATE,
+        )
 
     def test_general_hearing_and_demand_questions_are_research_ready(self):
         facts = [notice_date()]
