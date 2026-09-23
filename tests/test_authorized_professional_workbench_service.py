@@ -237,6 +237,109 @@ class AuthorizedProfessionalWorkbenchTests(unittest.TestCase):
         )
         self.assertEqual(resolved.items, ())
 
+    def test_section61_itemized_notice_evidence_remains_queue_attention(self):
+        cases = mock.Mock()
+        snapshots = mock.Mock()
+        legal = mock.Mock()
+        drafts = mock.Mock()
+        filings = mock.Mock()
+        evidence = mock.Mock()
+        cases.get_case.return_value = case()
+        snapshots.list_snapshot_history.return_value = [snapshot()]
+        snapshots.load_snapshot.return_value = mock.Mock(
+            payload={
+                "classification": {
+                    "support_level": "deep_workflow",
+                    "proceeding_type": "gst_sec61_scrutiny",
+                }
+            }
+        )
+        legal.list_for_snapshot.return_value = []
+        drafts.list_versions.return_value = []
+        filings.list_filings.return_value = []
+        evidence.legal_evidence_readiness.return_value = []
+
+        static_item = mock.Mock(evidence_id="sec61_scrutiny.e1")
+        first = mock.Mock(
+            evidence_id=(
+                "sec61_scrutiny.notice.requested_document.F-REQ-1"
+            )
+        )
+        second = mock.Mock(
+            evidence_id=(
+                "sec61_scrutiny.notice.referenced_annexure.F-ANN"
+            )
+        )
+        evidence.snapshot_evidence_checklist.return_value = [
+            static_item,
+            first,
+            second,
+        ]
+        evidence.list_reviews.return_value = [
+            mock.Mock(
+                evidence_id=first.evidence_id,
+                decision=EvidenceReviewStatus.CONFIRMED,
+            ),
+            mock.Mock(
+                evidence_id=second.evidence_id,
+                decision=EvidenceReviewStatus.REJECTED,
+            ),
+        ]
+
+        service = AuthorizedProfessionalWorkbenchService(
+            cases, snapshots, legal, drafts, filings, evidence
+        )
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        self.assertIn(
+            CaseAttentionCode.NOTICE_EVIDENCE_REVIEW_PENDING,
+            tuple(item.code for item in result.items),
+        )
+        evidence.legal_evidence_readiness.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+        evidence.snapshot_evidence_checklist.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+
+        evidence.list_reviews.return_value = [
+            mock.Mock(
+                evidence_id=first.evidence_id,
+                decision=EvidenceReviewStatus.CONFIRMED,
+            ),
+            mock.Mock(
+                evidence_id=second.evidence_id,
+                decision=EvidenceReviewStatus.CONFIRMED,
+            ),
+        ]
+        resolved = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        self.assertNotIn(
+            CaseAttentionCode.NOTICE_EVIDENCE_REVIEW_PENDING,
+            tuple(item.code for item in resolved.items),
+        )
+        # The unreviewed static workflow category must not by itself keep
+        # the itemized notice-evidence alert open.
+        self.assertNotIn(
+            static_item.evidence_id,
+            {
+                item.evidence_id
+                for item in evidence.list_reviews.return_value
+            },
+        )
+
     def test_missing_case_stops_before_artifact_reads(self):
         service, cases, snapshots, legal, drafts, filings = self.build()
         cases.get_case.return_value = None
