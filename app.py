@@ -1216,9 +1216,9 @@ def _render_historical_snapshot(snapshot):
     payload = snapshot.payload
     metadata = snapshot.metadata
 
-    st.subheader("Historical analysis snapshot")
+    st.subheader("Historical analysis version")
     st.warning(
-        "Historical record only. This snapshot is not the current live "
+        "Historical record only. This saved analysis is not the current live "
         "analysis and must not be used as a substitute for recomputation "
         "with the current analysis rules."
     )
@@ -1298,7 +1298,7 @@ def _render_historical_snapshot(snapshot):
             with st.expander("Technical details — historical facts"):
                 st.dataframe(historical_facts, hide_index=True)
     else:
-        st.write("Historical snapshot contains no extracted facts.")
+        st.write("Historical analysis contains no extracted facts.")
 
     deadline = payload["deadline"]
     st.write(
@@ -1376,7 +1376,7 @@ def _render_snapshot_history(
 
     if AccessPermission.CASE_UPDATE in active_firm.permissions:
         if st.button(
-            "Save current analysis snapshot",
+            "Save current analysis",
             key=f"save_snapshot_{reopened.case.case_id}",
         ):
             try:
@@ -1393,9 +1393,9 @@ def _render_snapshot_history(
                     "analysis history for this case."
                 )
             except Exception:
-                st.error("The analysis snapshot could not be saved.")
+                st.error("The current analysis could not be saved.")
             else:
-                st.write("Current analysis snapshot saved.")
+                st.write("Current analysis saved.")
                 if _engineering_diagnostics_enabled():
                     with st.expander("Technical details — saved snapshot"):
                         st.write(
@@ -1412,13 +1412,13 @@ def _render_snapshot_history(
                     )
                 except Exception:
                     st.error(
-                        "The snapshot was saved, but analysis history "
+                        "The analysis was saved, but analysis history "
                         "could not be refreshed."
                     )
                     return
 
     if not history:
-        st.write("No saved analysis snapshots yet.")
+        st.write("No saved analyses yet.")
         return
 
     st.dataframe(
@@ -1453,7 +1453,7 @@ def _render_snapshot_history(
         for index, item in enumerate(history, start=1)
     }
     selected_label = st.selectbox(
-        "Historical snapshot",
+        "Saved analysis version",
         list(labels),
         key=f"snapshot_selector_{reopened.case.case_id}",
     )
@@ -1487,7 +1487,7 @@ def _render_snapshot_history(
     if legal_briefs is not None:
         if AccessPermission.CASE_UPDATE in active_firm.permissions:
             if st.button(
-                "Save verified legal brief for snapshot",
+                "Save verified legal brief for this analysis",
                 key=f"save_legal_brief_{selected.snapshot_id}",
             ):
                 try:
@@ -1648,11 +1648,11 @@ def _render_snapshot_history(
                         )
         elif legal_briefs == []:
             st.write(
-                "No saved legal brief for this analysis snapshot yet."
+                "No saved legal brief for this analysis yet."
             )
 
     if st.button(
-        "View historical snapshot",
+        "View saved analysis",
         key=f"view_snapshot_{selected.snapshot_id}",
     ):
         try:
@@ -1669,10 +1669,10 @@ def _render_snapshot_history(
             )
             return
         except LookupError:
-            st.error("The selected analysis snapshot is no longer available.")
+            st.error("The selected saved analysis is no longer available.")
             return
         except Exception:
-            st.error("The historical analysis snapshot could not be loaded.")
+            st.error("The saved analysis could not be loaded.")
             return
         st.session_state[_OPENED_SNAPSHOT_ID] = selected.snapshot_id
         st.session_state[_OPENED_SNAPSHOT] = loaded
@@ -1693,8 +1693,8 @@ def _render_draft_work_product_workspace(
 ):
     st.header("Draft work product")
     st.caption(
-        "Draft content is stored as immutable encrypted versions. "
-        "Generated baselines are bound to saved analysis snapshots; "
+        "Draft history is versioned and stored securely. Generated "
+        "baselines stay linked to the saved analysis used to create them; "
         "professional edits create new versions. Approval does not "
         "record filing."
     )
@@ -1803,7 +1803,7 @@ def _render_draft_work_product_workspace(
                 )
             }
             selected_snapshot_label = st.selectbox(
-                "Draft baseline analysis snapshot",
+                "Analysis version for draft baseline",
                 list(snapshot_labels),
                 key=f"draft_baseline_snapshot_{reopened.case.case_id}",
             )
@@ -1818,7 +1818,7 @@ def _render_draft_work_product_workspace(
             )
             if already_seeded:
                 st.caption(
-                    "This analysis snapshot already has a generated "
+                    "This saved analysis already has a generated "
                     "draft baseline."
                 )
             elif st.button(
@@ -1839,7 +1839,7 @@ def _render_draft_work_product_workspace(
                     )
                 except ValueError:
                     st.error(
-                        "The selected snapshot cannot seed a professional "
+                        "The selected analysis cannot seed a professional "
                         "draft baseline. Its generated draft may be absent, "
                         "failed, or not post-validated."
                     )
@@ -1878,7 +1878,7 @@ def _render_draft_work_product_workspace(
                             )
         else:
             st.warning(
-                "Save an analysis snapshot before creating a durable "
+                "Save the current analysis before creating a saved "
                 "draft work product."
             )
 
@@ -1997,7 +1997,7 @@ def _render_draft_work_product_workspace(
         )
         if not is_latest:
             st.caption(
-                "Historical draft versions are immutable. Select the "
+                "Saved draft versions cannot be overwritten. Select the "
                 "latest version to create a new edit."
             )
 
@@ -2587,7 +2587,7 @@ def _render_persisted_evidence_workspace(
     except PermissionError:
         st.error(
             "Your account is no longer authorized to review evidence "
-            "for this snapshot."
+            "for this analysis."
         )
         return
     except Exception:
@@ -2630,7 +2630,7 @@ def _render_persisted_evidence_workspace(
         try:
             evidence_service = build_authorized_evidence_workspace_service()
             with st.spinner(
-                "Matching persisted evidence to snapshot checklist..."
+                "Matching attached evidence to analysis requirements..."
             ):
                 workspace = evidence_service.analyze_case_evidence(
                     principal,
@@ -2650,7 +2650,7 @@ def _render_persisted_evidence_workspace(
             )
             return
         except Exception:
-            st.error("Persisted evidence could not be analyzed.")
+            st.error("Attached evidence could not be analyzed.")
             return
 
         st.session_state[_EVIDENCE_KEY] = (
@@ -2802,7 +2802,7 @@ def _render_persisted_evidence_workspace(
                 except Exception:
                     st.error(
                         "This evidence review could not be saved. It may "
-                        "already have been reviewed for this snapshot."
+                        "already have been reviewed for this analysis."
                     )
                 else:
                     st.write(
@@ -2843,7 +2843,7 @@ def _render_persisted_evidence_workspace(
         )
     except ValueError:
         st.caption(
-            "This snapshot predates or does not match the current closed "
+            "This saved analysis predates or does not match the current "
             "legal-evidence requirement set."
         )
     except Exception:
@@ -3751,9 +3751,9 @@ def _render_saved_cases_workspace(principal, active_firm):
                 }
             )
     st.caption(
-        "The persisted notice was decrypted and integrity-checked, then "
-        "the current analysis rules recomputed this live result. Saved "
-        "historical snapshots, when present, are shown separately below."
+        "The saved notice was integrity-checked and reanalyzed using the "
+        "current analysis rules. Earlier saved analyses, when present, "
+        "are shown separately below."
     )
 
     ocr_pages = [
@@ -4148,7 +4148,7 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
     if intake_result.rejected_candidate_count:
         st.warning(
             f"{intake_result.rejected_candidate_count} candidate(s) were "
-            "rejected by Dwaar's deterministic validation."
+            "rejected by Dwaar's safety checks."
         )
 
     if intake_result.candidates:
@@ -4358,6 +4358,6 @@ if AccessPermission.CASE_CREATE in _active_firm.permissions:
                 st.text(raw_text)
 else:
     st.caption(
-        "This firm access is read-only for case intake; new notice upload "
-        "requires CASE_CREATE."
+        "This firm access is read-only for case intake and does not allow "
+        "creating a new notice intake."
     )
