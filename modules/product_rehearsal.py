@@ -281,7 +281,7 @@ def _analysis_fixture() -> Phase2AnalysisResult:
             stated_due_date_fact_ids=[],
             parsed_stated_due_dates=[],
             unparsed_stated_due_date_fact_ids=[],
-            deadline_conflict_status=DeadlineConflictStatus.NOT_APPLICABLE,
+            deadline_conflict_status=DeadlineConflictStatus.CANNOT_COMPARE,
             hearing_fact_ids=[],
             requested_document_fact_ids=[],
             referenced_annexure_fact_ids=[],
