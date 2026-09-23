@@ -695,8 +695,15 @@ def run_app(
     if evidence_review_service is None:
         evidence_review_service = Mock()
         evidence_review_service.list_reviews.return_value = []
-    elif isinstance(evidence_review_service.list_reviews.return_value, Mock):
-        evidence_review_service.list_reviews.return_value = []
+        evidence_review_service.legal_evidence_readiness.return_value = []
+    else:
+        if isinstance(evidence_review_service.list_reviews.return_value, Mock):
+            evidence_review_service.list_reviews.return_value = []
+        if isinstance(
+            evidence_review_service.legal_evidence_readiness.return_value,
+            Mock,
+        ):
+            evidence_review_service.legal_evidence_readiness.return_value = []
     evidence_review_service_mock = Mock(
         return_value=evidence_review_service
     )
