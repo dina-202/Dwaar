@@ -16,6 +16,7 @@ from domain.evidence_review_models import (
     EvidenceReviewRef,
     LoadedEvidenceReview,
 )
+from domain.legal_evidence_models import LegalEvidenceReadiness
 from domain.models import (
     EvidenceCandidate,
     EvidenceChecklistItem,
@@ -37,6 +38,10 @@ from modules.evidence_review_persistence_service import (
     persist_evidence_review,
 )
 from modules.pdf_reader import extract_document_pages
+from workflows.gst.legal_evidence import (
+    GST_LEGAL_EVIDENCE_REQUIREMENTS,
+    build_legal_evidence_readiness,
+)
 
 
 class AuthorizedEvidenceReviewService:
@@ -259,6 +264,57 @@ class AuthorizedEvidenceReviewService:
         return list_evidence_review_refs(
             self._reviews,
             snapshot_id=snapshot.metadata.snapshot_id,
+        )
+
+    def legal_evidence_readiness(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        case_id: str,
+        snapshot_id: str,
+    ) -> List[LegalEvidenceReadiness]:
+        """Return snapshot-scoped legal evidence readiness.
+
+        The projection uses only persisted human review metadata. Closed
+        legal evidence IDs must also exist in the selected snapshot's
+        historical evidence checklist; architecture drift fails closed.
+        """
+        self._require_review(principal, firm_id)
+        case = self._cases.get_case(principal, firm_id, case_id)
+        if case is None:
+            raise LookupError("case does not exist")
+        snapshot = self._snapshots.load_snapshot(
+            principal,
+            firm_id,
+            case_id=case.case_id,
+            snapshot_id=snapshot_id,
+        )
+
+        required_ids = {
+            evidence_id
+            for requirement in GST_LEGAL_EVIDENCE_REQUIREMENTS.get(
+                case.proceeding_type, ()
+            )
+            for evidence_id in requirement.required_evidence_ids
+        }
+        snapshot_ids = self._snapshot_evidence_ids(snapshot.payload)
+        if not required_ids.issubset(snapshot_ids):
+            raise ValueError(
+                "legal evidence requirements are not present in the "
+                "selected analysis snapshot"
+            )
+
+        refs = list_evidence_review_refs(
+            self._reviews,
+            snapshot_id=snapshot.metadata.snapshot_id,
+        )
+        return list(
+            build_legal_evidence_readiness(
+                case.proceeding_type,
+                snapshot_id=snapshot.metadata.snapshot_id,
+                reviews=refs,
+            )
         )
 
     def load_review(

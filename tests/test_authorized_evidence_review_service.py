@@ -84,7 +84,7 @@ def candidate(
     )
 
 
-def snapshot(evidence_id="evidence.one"):
+def snapshot(evidence_id="evidence.one", evidence_ids=None):
     metadata = AnalysisSnapshotRef(
         snapshot_id="SNAP-1",
         case_id="CASE-1",
@@ -98,19 +98,26 @@ def snapshot(evidence_id="evidence.one"):
         created_at=NOW,
         created_by=PRINCIPAL.user_id,
     )
+    if evidence_ids is None:
+        checklist = [
+            {
+                "evidence_id": evidence_id,
+                "requirement_text": "GSTR-2B",
+                "status": "unknown",
+            }
+        ]
+    else:
+        checklist = [
+            {
+                "evidence_id": value,
+                "requirement_text": value,
+                "status": "unknown",
+            }
+            for value in evidence_ids
+        ]
     return LoadedAnalysisSnapshot(
         metadata=metadata,
-        payload={
-            "draft": {
-                "evidence_checklist": [
-                    {
-                        "evidence_id": evidence_id,
-                        "requirement_text": "GSTR-2B",
-                        "status": "unknown",
-                    }
-                ]
-            }
-        },
+        payload={"draft": {"evidence_checklist": checklist}},
     )
 
 
@@ -384,6 +391,68 @@ class AuthorizedEvidenceReviewTests(unittest.TestCase):
         case_service.get_case.assert_called_once()
         snapshot_service.load_snapshot.assert_called_once()
         reviews.list_review_refs.assert_called_once_with("SNAP-1")
+
+    def test_legal_evidence_readiness_uses_snapshot_scoped_reviews(self):
+        service, _, snapshot_service, _, reviews, _ = self.build()
+        snapshot_service.load_snapshot.return_value = snapshot(
+            evidence_ids=[
+                "sec73_itc.e1",
+                "sec73_itc.e2",
+                "sec73_itc.e3",
+                "sec73_itc.e4",
+                "sec73_itc.e5",
+            ]
+        )
+        reviews.list_review_refs.return_value = [
+            EvidenceReviewRef(
+                review_id="EREV-3",
+                case_id="CASE-1",
+                snapshot_id="SNAP-1",
+                evidence_id="sec73_itc.e3",
+                document_id="DOC-EVIDENCE",
+                source_page=2,
+                source_text_sha256="d" * 64,
+                candidate_fingerprint="e" * 64,
+                decision=EvidenceReviewStatus.CONFIRMED,
+                byte_size=10,
+                sha256_hex="f" * 64,
+                storage_key="objects/" + "f" * 32,
+                reviewed_at=NOW,
+                reviewed_by=PRINCIPAL.user_id,
+            ),
+        ]
+        result = service.legal_evidence_readiness(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+        self.assertEqual(len(result), 1)
+        self.assertEqual(
+            result[0].confirmed_evidence_ids,
+            ("sec73_itc.e3",),
+        )
+        self.assertEqual(
+            result[0].missing_evidence_ids,
+            ("sec73_itc.e4", "sec73_itc.e5"),
+        )
+        reviews.list_review_refs.assert_called_once_with("SNAP-1")
+
+    def test_legal_evidence_readiness_fails_on_snapshot_contract_drift(self):
+        service, _, snapshot_service, _, reviews, _ = self.build()
+        snapshot_service.load_snapshot.return_value = snapshot(
+            evidence_ids=["sec73_itc.e3", "sec73_itc.e4"]
+        )
+        with self.assertRaisesRegex(
+            ValueError, "requirements are not present"
+        ):
+            service.legal_evidence_readiness(
+                PRINCIPAL,
+                "F-1",
+                case_id="CASE-1",
+                snapshot_id="SNAP-1",
+            )
+        reviews.list_review_refs.assert_not_called()
 
     @mock.patch(
         "modules.authorized_evidence_review_service.load_evidence_review"
