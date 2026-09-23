@@ -61,8 +61,8 @@ class LegalKnowledgeTests(unittest.TestCase):
         self.assertEqual(
             [match.rule.rule_id for match in result.matches],
             [
-                "cgst.s61.scrutiny_process.v1",
                 "cgst.r99.asmt_forms.v1",
+                "cgst.s61.scrutiny_process.v1",
             ],
         )
         combined = " ".join(
