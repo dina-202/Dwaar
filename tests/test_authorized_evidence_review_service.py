@@ -98,21 +98,26 @@ def snapshot(evidence_id="evidence.one", evidence_ids=None):
         created_at=NOW,
         created_by=PRINCIPAL.user_id,
     )
-    ids = [evidence_id] if evidence_ids is None else list(evidence_ids)
+    if evidence_ids is None:
+        checklist = [
+            {
+                "evidence_id": evidence_id,
+                "requirement_text": "GSTR-2B",
+                "status": "unknown",
+            }
+        ]
+    else:
+        checklist = [
+            {
+                "evidence_id": value,
+                "requirement_text": value,
+                "status": "unknown",
+            }
+            for value in evidence_ids
+        ]
     return LoadedAnalysisSnapshot(
         metadata=metadata,
-        payload={
-            "draft": {
-                "evidence_checklist": [
-                    {
-                        "evidence_id": value,
-                        "requirement_text": value,
-                        "status": "unknown",
-                    }
-                    for value in ids
-                ]
-            }
-        },
+        payload={"draft": {"evidence_checklist": checklist}},
     )
 
 
