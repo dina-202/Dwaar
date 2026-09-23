@@ -44,6 +44,7 @@ from domain.models import (
     FactExtractionResult,
     FactDraftBlock,
     FactStatus,
+    FactType,
     HearingStatus,
     HearingDraftBlock,
     NoticeClassification,
@@ -1167,6 +1168,60 @@ def _block_schema_ok(block):
     return True
 
 
+def _required_workflow_fact_coverage(
+    candidate_sections,
+    drafting_profile,
+    extraction_result,
+):
+    """Return deterministic workflow-specific fact coverage.
+
+    Section 61 scrutiny has one non-negotiable content rule: every
+    source-grounded department discrepancy must appear in the
+    discrepancy-by-discrepancy response matrix. This does not infer a
+    taxpayer answer; it only prevents the model from silently omitting a
+    notice allegation that Dwaar already extracted.
+    """
+    if (
+        drafting_profile.proceeding_type
+        is not ProceedingType.GST_SEC61_SCRUTINY
+    ):
+        return True, []
+
+    required_ids = [
+        fact.fact_id
+        for fact in extraction_result.facts
+        if (
+            fact.fact_type is FactType.DEPARTMENT_ALLEGATION
+            and fact.status is FactStatus.ALLEGED
+            and fact.allowed_in_draft is DraftPermission.CONDITIONAL
+        )
+    ]
+    if not required_ids:
+        return True, []
+
+    matrix_sections = [
+        section
+        for section in candidate_sections
+        if (
+            type(section) is DraftCandidateSection
+            and section.section_id == "sec61_scrutiny.s2"
+            and isinstance(section.blocks, tuple)
+        )
+    ]
+    if len(matrix_sections) != 1:
+        return False, list(required_ids)
+
+    selected_ids = {
+        block.fact_id
+        for block in matrix_sections[0].blocks
+        if type(block) is FactDraftBlock and _block_schema_ok(block)
+    }
+    missing = [
+        fact_id for fact_id in required_ids if fact_id not in selected_ids
+    ]
+    return not missing, missing
+
+
 def _run_provenance_pre_render_validation(
     candidate_sections,
     drafting_profile,
@@ -1234,9 +1289,20 @@ def _run_provenance_pre_render_validation(
         for block in fact_blocks
         if _block_schema_ok(block)
     }
-    fact_resolution_ok = all(
-        _block_schema_ok(block) and resolved_facts.get(block.fact_id) is not None
-        for block in fact_blocks
+    workflow_fact_coverage_ok, missing_workflow_fact_ids = (
+        _required_workflow_fact_coverage(
+            candidate_sections,
+            drafting_profile,
+            extraction_result,
+        )
+    )
+    fact_resolution_ok = (
+        all(
+            _block_schema_ok(block)
+            and resolved_facts.get(block.fact_id) is not None
+            for block in fact_blocks
+        )
+        and workflow_fact_coverage_ok
     )
     fact_permission_ok = True
     for block in fact_blocks:
@@ -1349,7 +1415,12 @@ def _run_provenance_pre_render_validation(
     )
 
     fact_ids = _dedup_first_occurrence(
-        block.fact_id for block in fact_blocks if _block_schema_ok(block)
+        [
+            block.fact_id
+            for block in fact_blocks
+            if _block_schema_ok(block)
+        ]
+        + list(missing_workflow_fact_ids)
     )
     calculation_types = _dedup_first_occurrence(
         arithmetic_results[block.arithmetic_index - 1].calculation_type
@@ -1367,7 +1438,17 @@ def _run_provenance_pre_render_validation(
         _provenance_item(_PROVENANCE_CHECK_IDS[5], kind_ok),
         _provenance_item(_PROVENANCE_CHECK_IDS[6], block_schema_ok),
         _provenance_item(_PROVENANCE_CHECK_IDS[7], static_ok),
-        _provenance_item(_PROVENANCE_CHECK_IDS[8], fact_resolution_ok, fact_ids),
+        _provenance_item(
+            _PROVENANCE_CHECK_IDS[8],
+            fact_resolution_ok,
+            fact_ids,
+            fail_message=(
+                "One or more source-grounded ASMT-10 discrepancies are "
+                "missing from the discrepancy-by-discrepancy response matrix."
+                if missing_workflow_fact_ids
+                else None
+            ),
+        ),
         _provenance_item(_PROVENANCE_CHECK_IDS[9], fact_permission_ok, fact_ids),
         _provenance_item(
             _PROVENANCE_CHECK_IDS[10],
