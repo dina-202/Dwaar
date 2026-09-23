@@ -1264,6 +1264,51 @@ class StructuredRenderingTests(unittest.TestCase):
         ):
             self.assertIn(expected, text)
 
+    def test_notice_stated_due_date_is_separate_from_calculated_deadline(self):
+        result = make_result()
+        result.extraction_result.facts.extend(
+            [
+                ExtractedFact(
+                    fact_id="F-DUE",
+                    claim="MODEL DUE-DATE CLAIM MUST NOT RENDER",
+                    status=FactStatus.CONFIRMED,
+                    source_text="Reply on or before 15-10-2026",
+                    source_page=1,
+                    allowed_in_draft=DraftPermission.YES,
+                    fact_type=FactType.STATED_DUE_DATE,
+                    fact_role=FactRole.NONE,
+                ),
+                ExtractedFact(
+                    fact_id="F-SERVICE",
+                    claim="MODEL SERVICE CLAIM MUST NOT RENDER",
+                    status=FactStatus.CONFIRMED,
+                    source_text="Notice received on 15-09-2026",
+                    source_page=1,
+                    allowed_in_draft=DraftPermission.YES,
+                    fact_type=FactType.DOCUMENT_DETAIL,
+                    fact_role=FactRole.NOTICE_SERVICE_DATE,
+                ),
+            ]
+        )
+        result.deadline_result.response_period_days = 30
+        result.deadline_result.response_deadline = date(2026, 10, 16)
+        result.deadline_result.deadline_status = DeadlineStatus.UPCOMING
+        result.preflight_result.deadline_conflict_status = (
+            DeadlineConflictStatus.CONFLICT
+        )
+
+        fake, *_ = run_app(result=result)
+        text = log_text(fake)
+        self.assertIn("Deadline basis", text)
+        self.assertIn("Service / receipt date", text)
+        self.assertIn("Notice received on 15-09-2026", text)
+        self.assertIn("Due date stated in notice", text)
+        self.assertIn("Reply on or before 15-10-2026", text)
+        self.assertIn("Deadline conflict", text)
+        self.assertIn("does not match Dwaar's calculated deadline", text)
+        self.assertNotIn("MODEL DUE-DATE CLAIM MUST NOT RENDER", text)
+        self.assertNotIn("MODEL SERVICE CLAIM MUST NOT RENDER", text)
+
     def test_arithmetic_pass_mismatch_and_insufficient_are_not_hidden(self):
         for status in (
             ArithmeticStatus.PASS,
