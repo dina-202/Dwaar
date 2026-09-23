@@ -349,6 +349,38 @@ def _render_triage_working_summary(result):
                 "calendar deadline."
             )
 
+    legal_citation_rows = []
+    for label, fact_type in (
+        ("Section cited", "statutory_section"),
+        ("Rule cited", "statutory_rule"),
+        ("Notification cited", "statutory_notification"),
+    ):
+        legal_citation_rows.extend(
+            _triage_rows(
+                _matching_source_facts(extraction, fact_type=fact_type),
+                label,
+            )
+        )
+    if legal_citation_rows:
+        st.subheader("Law cited in the notice")
+        st.caption(
+            "These are citations extracted from the notice itself. Their "
+            "applicability has not been independently concluded by this "
+            "triage view."
+        )
+        st.dataframe(legal_citation_rows, hide_index=True)
+
+    annexure_facts = _matching_source_facts(
+        extraction,
+        fact_type="referenced_annexure",
+    )
+    if annexure_facts:
+        st.subheader("Annexures referenced in the notice")
+        st.dataframe(
+            _triage_rows(annexure_facts, "Referenced annexure"),
+            hide_index=True,
+        )
+
     allegation_facts = _matching_source_facts(
         extraction,
         fact_type="department_allegation",
