@@ -2794,6 +2794,12 @@ def _render_professional_case_attention(
             ],
             hide_index=True,
         )
+    else:
+        st.write(
+            "No operational attention item is currently identified by "
+            "the deterministic workbench projection."
+        )
+
     with st.expander("Technical details — case attention"):
         st.write(
             {
@@ -2823,11 +2829,6 @@ def _render_professional_case_attention(
                 ],
                 hide_index=True,
             )
-    else:
-        st.write(
-            "No operational attention item is currently identified by "
-            "the deterministic workbench projection."
-        )
 
 
 def _render_case_timeline(
