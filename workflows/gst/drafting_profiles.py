@@ -1,4 +1,4 @@
-"""Drafting profiles for the five deep GST workflows
+"""Drafting profiles for approved deep GST workflows
 (ARCHITECTURE_SPEC_v1_1 §20.19, §20.21, §20.22).
 
 Deterministic static registry mapping each approved deep ProceedingType to
@@ -25,6 +25,24 @@ from domain.models import (
 )
 
 DRAFTING_PROFILE_REGISTRY: Dict[ProceedingType, WorkflowDraftingProfile] = {
+    ProceedingType.GST_SEC61_SCRUTINY: WorkflowDraftingProfile(
+        proceeding_type=ProceedingType.GST_SEC61_SCRUTINY,
+        sections=(
+            DraftSectionSpec(
+                section_id="sec61_scrutiny.s1",
+                title="Scrutiny working paper",
+            ),
+            DraftSectionSpec(
+                section_id="sec61_scrutiny.s2",
+                title="Discrepancy-by-discrepancy response matrix",
+            ),
+            DraftSectionSpec(
+                section_id="sec61_scrutiny.s3",
+                title="Reviewable ASMT-11 explanation",
+            ),
+        ),
+        prompt_key="sec61_scrutiny",
+    ),
     ProceedingType.GST_SEC73_ITC: WorkflowDraftingProfile(
         proceeding_type=ProceedingType.GST_SEC73_ITC,
         sections=(
