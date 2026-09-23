@@ -9,6 +9,7 @@ from typing import List, Optional, Protocol
 
 from domain.analysis_snapshot_models import AnalysisSnapshotRef
 from domain.evidence_review_models import EvidenceReviewRef
+from domain.fact_review_models import FactReviewRef
 from domain.draft_work_product_models import DraftVersionRef
 from domain.filing_models import FilingRecord
 from domain.legal_brief_models import LegalBriefRef
@@ -248,6 +249,29 @@ class EvidenceReviewRepository(Protocol):
         self,
         snapshot_id: str,
     ) -> List[EvidenceReviewRef]:
+        ...
+
+
+class FactReviewRepository(Protocol):
+    """Persistent metadata/audit boundary for encrypted fact reviews."""
+
+    def save_review(
+        self,
+        review: FactReviewRef,
+        event: CaseEvent,
+    ) -> None:
+        ...
+
+    def get_review_ref(
+        self,
+        review_id: str,
+    ) -> Optional[FactReviewRef]:
+        ...
+
+    def list_review_refs(
+        self,
+        snapshot_id: str,
+    ) -> List[FactReviewRef]:
         ...
 
 
