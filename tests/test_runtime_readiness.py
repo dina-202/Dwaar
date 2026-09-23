@@ -4,6 +4,7 @@ import base64
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from domain.runtime_readiness_models import (
     RuntimeReadinessCode,
@@ -23,6 +24,14 @@ def env(root: Path):
 
 
 class RuntimeReadinessTests(unittest.TestCase):
+    def setUp(self):
+        self.ocr_patcher = patch(
+            "modules.runtime_readiness._ocr_runtime_available",
+            return_value=True,
+        )
+        self.ocr_patcher.start()
+        self.addCleanup(self.ocr_patcher.stop)
+
     def test_fresh_valid_runtime_is_ready_and_creates_no_probe_artifact(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -30,7 +39,7 @@ class RuntimeReadinessTests(unittest.TestCase):
             self.assertTrue(report.ready)
             self.assertEqual(
                 [item.status for item in report.checks],
-                [RuntimeReadinessStatus.PASS] * 7,
+                [RuntimeReadinessStatus.PASS] * 8,
             )
             object_root = root / "objects"
             self.assertTrue((root / "dwaar.db").is_file())
@@ -148,6 +157,30 @@ class RuntimeReadinessTests(unittest.TestCase):
                 RuntimeReadinessStatus.BLOCKED,
             )
 
+    def test_missing_ocr_runtime_blocks_readiness_without_details(self):
+        with tempfile.TemporaryDirectory() as temp:
+            self.ocr_patcher.stop()
+            self.addCleanup(lambda: None)
+            with patch(
+                "modules.runtime_readiness._ocr_runtime_available",
+                return_value=False,
+            ):
+                report = evaluate_runtime_readiness(env(Path(temp)))
+            by_code = {item.code: item for item in report.checks}
+            item = by_code[RuntimeReadinessCode.OCR_RUNTIME]
+            self.assertIs(item.status, RuntimeReadinessStatus.BLOCKED)
+            self.assertFalse(report.ready)
+            self.assertEqual(
+                item.message,
+                (
+                    "Scanned-PDF OCR runtime is unavailable. "
+                    "Install/configure Tesseract English OCR before serving "
+                    "professional traffic."
+                ),
+            )
+            self.assertNotIn("path", item.message.lower())
+            self.assertNotIn("exception", item.message.lower())
+
     def test_check_codes_are_unique_and_stable(self):
         with tempfile.TemporaryDirectory() as temp:
             report = evaluate_runtime_readiness(env(Path(temp)))
@@ -160,6 +193,7 @@ class RuntimeReadinessTests(unittest.TestCase):
                     RuntimeReadinessCode.OBJECT_STORE_CONFIGURATION,
                     RuntimeReadinessCode.DOCUMENT_KEY_CONFIGURATION,
                     RuntimeReadinessCode.DOCUMENT_KEY_ID_CONFIGURATION,
+                    RuntimeReadinessCode.OCR_RUNTIME,
                     RuntimeReadinessCode.DB_OPEN_AND_MIGRATION,
                     RuntimeReadinessCode.DB_INTEGRITY,
                     RuntimeReadinessCode.OBJECT_STORE_ROUND_TRIP,
