@@ -286,7 +286,7 @@ def _deep_markers_satisfied(
     return False
 
 
-def classifier_failed(classification: NoticeClassification) -> bool:
+def _classifier_failed(classification: NoticeClassification) -> bool:
     """Return True only for the classifier's safe execution-failure fallback.
 
     Legitimately unknown/unsupported notices remain distinguishable because
