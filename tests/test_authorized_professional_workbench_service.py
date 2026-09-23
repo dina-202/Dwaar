@@ -1,11 +1,15 @@
 """Tests for authorized professional case cockpit."""
 
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest import mock
 
 from domain.analysis_snapshot_models import AnalysisSnapshotRef
 from domain.case_models import CaseRecord, CaseStatus
+from domain.case_operations_models import (
+    CaseWorkItem,
+    WorkQueueDeadlineStatus,
+)
 from domain.legal_evidence_models import (
     LegalEvidenceReadiness,
     LegalEvidenceReadinessStatus,
@@ -66,6 +70,35 @@ class AuthorizedProfessionalWorkbenchTests(unittest.TestCase):
             cases, snapshots, legal, drafts, filings
         )
         return service, cases, snapshots, legal, drafts, filings
+
+    def test_attention_queue_preserves_authorized_work_queue_order(self):
+        service, cases, *_ = self.build()
+        cases.list_case_work_queue.return_value = [
+            CaseWorkItem(
+                case_id="CASE-1",
+                client_id="C-1",
+                client_name="Client",
+                title="Matter",
+                status=CaseStatus.ANALYZED,
+                response_deadline=date(2026, 9, 24),
+                days_remaining=1,
+                deadline_status=WorkQueueDeadlineStatus.DUE_SOON,
+                assigned_to=None,
+                reviewer_id=None,
+            )
+        ]
+        result = service.list_case_attention_queue(
+            mock.sentinel.principal,
+            "F-1",
+            today=date(2026, 9, 23),
+        )
+        self.assertEqual([item.work_item.case_id for item in result], ["CASE-1"])
+        self.assertEqual(result[0].attention_count, 2)
+        cases.list_case_work_queue.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            today=date(2026, 9, 23),
+        )
 
     def test_reads_all_artifacts_through_authorized_services(self):
         service, cases, snapshots, legal, drafts, filings = self.build()

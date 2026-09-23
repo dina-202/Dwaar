@@ -2108,7 +2108,8 @@ def _render_case_work_queue(principal, active_firm):
     st.header("Case work queue")
     try:
         service = build_authorized_case_service()
-        queue = service.list_case_work_queue(
+        workbench_service = build_authorized_professional_workbench_service()
+        professional_queue = workbench_service.list_case_attention_queue(
             principal,
             active_firm.firm_id,
             today=date.today(),
@@ -2128,41 +2129,77 @@ def _render_case_work_queue(principal, active_firm):
         st.error("The case work queue could not be loaded.")
         return
 
-    if not queue:
+    if not professional_queue:
         st.write("No saved cases in the work queue yet.")
         return
 
+    st.caption(
+        "Deadline ordering is preserved from the case work queue. "
+        "Attention shows deterministic unresolved workflow state and its "
+        "owning workspace; it is not a priority score or legal verdict."
+    )
     st.dataframe(
         [
             {
-                "case_id": item.case_id,
-                "client": item.client_name,
-                "title": item.title,
-                "status": item.status.value,
-                "deadline_status": item.deadline_status.value,
-                "response_deadline": _display(item.response_deadline),
-                "days_remaining": _display(item.days_remaining),
-                "assigned_to": _display(item.assigned_to),
-                "reviewer_id": _display(item.reviewer_id),
+                "case_id": row.work_item.case_id,
+                "client": row.work_item.client_name,
+                "title": row.work_item.title,
+                "status": row.work_item.status.value,
+                "deadline_status": row.work_item.deadline_status.value,
+                "response_deadline": _display(
+                    row.work_item.response_deadline
+                ),
+                "days_remaining": _display(row.work_item.days_remaining),
+                "assigned_to": _display(row.work_item.assigned_to),
+                "reviewer_id": _display(row.work_item.reviewer_id),
+                "attention_count": row.attention_count,
+                "attention_codes": [
+                    code.value for code in row.attention_codes
+                ],
+                "attention_workspaces": [
+                    workspace.value
+                    for workspace in row.attention_workspaces
+                ],
             }
-            for item in queue
+            for row in professional_queue
         ],
         hide_index=True,
     )
 
     labels = {
         (
-            f"{item.deadline_status.value} — {item.client_name} — "
-            f"{item.title} — {item.case_id}"
-        ): item
-        for item in queue
+            f"{row.work_item.deadline_status.value} — "
+            f"{row.work_item.client_name} — "
+            f"{row.work_item.title} — {row.work_item.case_id}"
+        ): row
+        for row in professional_queue
     }
     selected_label = st.selectbox(
         "Queue case",
         list(labels),
         key="dwaar_case_work_queue_selector",
     )
-    selected = labels[selected_label]
+    selected_row = labels[selected_label]
+    selected = selected_row.work_item
+
+    if selected_row.attention_codes:
+        st.write(
+            {
+                "selected_case_attention": [
+                    code.value
+                    for code in selected_row.attention_codes
+                ],
+                "owning_workspaces": [
+                    workspace.value
+                    for workspace in selected_row.attention_workspaces
+                ],
+            }
+        )
+    else:
+        st.caption(
+            "No closed professional-attention condition is currently "
+            "emitted for the selected case."
+        )
 
     if st.button(
         "Focus queue case in Saved cases",

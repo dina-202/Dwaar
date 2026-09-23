@@ -1,5 +1,6 @@
 """Authorized read-only professional case cockpit for Phase 3O."""
 
+from datetime import date
 from typing import Optional
 
 from domain.auth_models import AuthenticatedPrincipal
@@ -15,6 +16,7 @@ from modules.authorized_evidence_review_service import (
 )
 from modules.authorized_filing_service import AuthorizedFilingService
 from modules.authorized_legal_brief_service import AuthorizedLegalBriefService
+from modules.professional_queue import build_professional_case_queue
 from modules.professional_workbench import build_professional_case_attention
 
 
@@ -36,6 +38,32 @@ class AuthorizedProfessionalWorkbenchService:
         self._drafts = draft_service
         self._filings = filing_service
         self._evidence = evidence_review_service
+
+    def list_case_attention_queue(
+        self,
+        principal: AuthenticatedPrincipal,
+        firm_id: str,
+        *,
+        today: date,
+    ):
+        """Return the existing deadline-ordered queue enriched with attention."""
+        work_items = self._cases.list_case_work_queue(
+            principal,
+            firm_id,
+            today=today,
+        )
+        attentions = [
+            self.get_case_attention(
+                principal,
+                firm_id,
+                case_id=item.case_id,
+            )
+            for item in work_items
+        ]
+        return build_professional_case_queue(
+            work_items,
+            attentions,
+        )
 
     def get_case_attention(
         self,
