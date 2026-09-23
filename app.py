@@ -285,6 +285,19 @@ def _friendly_enum(value):
     return raw.replace("_", " ").strip().title()
 
 
+def _numbered_labels(items, labeler):
+    """Build unique professional selector labels without exposing storage IDs."""
+    values = list(items)
+    return {
+        (
+            f"{index}. {labeler(item)}"
+            if len(values) > 1
+            else labeler(item)
+        ): item
+        for index, item in enumerate(values, start=1)
+    }
+
+
 def _notice_form_label(notice_form):
     raw = notice_form.value
     if raw == "unknown":
@@ -1089,10 +1102,10 @@ def _select_active_firm(firms):
     if len(firms) == 1:
         return firms[0]
 
-    labels = {
-        f"{firm.display_name} ({firm.firm_id})": firm
-        for firm in firms
-    }
+    labels = _numbered_labels(
+        firms,
+        lambda firm: firm.display_name,
+    )
     selected_label = st.selectbox(
         "Firm",
         list(labels),
@@ -1174,7 +1187,8 @@ def _require_app_access():
             "Your account is signed in but is not provisioned to access "
             "cases in Dwaar."
         )
-        st.caption(f"Account ID: {principal.user_id}")
+        if _engineering_diagnostics_enabled():
+            st.caption(f"Account ID: {principal.user_id}")
         if st.button("Log out", key="dwaar_logout_unprovisioned"):
             st.logout()
         st.stop()
@@ -1191,10 +1205,7 @@ def _require_app_access():
         st.logout()
         st.stop()
 
-    st.caption(
-        f"Active firm: {active_firm.display_name} "
-        f"({active_firm.firm_id})"
-    )
+    st.caption(f"Active firm: {active_firm.display_name}")
     return principal, active_firm
 
 
@@ -1507,13 +1518,13 @@ def _render_snapshot_history(
                         ],
                         hide_index=True,
                     )
-            brief_labels = {
-                (
-                    f"{item.created_at.isoformat()} — "
-                    f"{item.catalog_version} — {item.legal_brief_id}"
-                ): item
-                for item in legal_briefs
-            }
+            brief_labels = _numbered_labels(
+                legal_briefs,
+                lambda item: (
+                    f"Saved {item.created_at.isoformat(timespec='minutes')} · "
+                    f"Legal as of {item.as_of_date.isoformat()}"
+                ),
+            )
             brief_label = st.selectbox(
                 "Saved legal brief",
                 list(brief_labels),
@@ -1829,13 +1840,13 @@ def _render_draft_work_product_workspace(
     if not versions:
         return
 
-    labels = {
-        (
-            f"v{item.version_number} — "
-            f"{item.review_status.value} — {item.draft_version_id}"
-        ): item
-        for item in reversed(versions)
-    }
+    labels = _numbered_labels(
+        reversed(versions),
+        lambda item: (
+            f"Version {item.version_number} · "
+            f"{_friendly_enum(item.review_status)}"
+        ),
+    )
     selected_label = st.selectbox(
         "Draft version",
         list(labels),
@@ -2152,13 +2163,10 @@ def _render_filing_workspace(
                 "a filing can be recorded."
             )
         else:
-            draft_labels = {
-                (
-                    f"v{item.version_number} — "
-                    f"{item.draft_version_id}"
-                ): item
-                for item in reversed(approved_versions)
-            }
+            draft_labels = _numbered_labels(
+                reversed(approved_versions),
+                lambda item: f"Approved version {item.version_number}",
+            )
             draft_label = st.selectbox(
                 "Approved filing-basis draft",
                 list(draft_labels),
@@ -2285,13 +2293,10 @@ def _render_filing_workspace(
         return
 
     st.subheader("Attach acknowledgement later")
-    filing_labels = {
-        (
-            f"{item.filing_reference} — "
-            f"{item.filing_id}"
-        ): item
-        for item in missing_ack
-    }
+    filing_labels = _numbered_labels(
+        missing_ack,
+        lambda item: f"Reference {item.filing_reference}",
+    )
     selected_label = st.selectbox(
         "Filing awaiting acknowledgement",
         list(filing_labels),
@@ -2710,7 +2715,7 @@ def _render_persisted_evidence_workspace(
 
             decision = None
             if st.button(
-                f"Confirm {candidate.candidate_id}",
+                "Confirm match",
                 key=(
                     f"durable_confirm_{workspace_key}_"
                     f"{candidate.candidate_id}"
@@ -2718,7 +2723,7 @@ def _render_persisted_evidence_workspace(
             ):
                 decision = EvidenceReviewStatus.CONFIRMED
             elif st.button(
-                f"Reject {candidate.candidate_id}",
+                "Reject match",
                 key=(
                     f"durable_reject_{workspace_key}_"
                     f"{candidate.candidate_id}"
@@ -2879,13 +2884,13 @@ def _render_persisted_evidence_workspace(
                 hide_index=True,
             )
 
-    review_labels = {
-        (
-            f"{item.reviewed_at.isoformat()} — "
-            f"{item.decision.value} — {item.review_id}"
-        ): item
-        for item in durable_reviews
-    }
+    review_labels = _numbered_labels(
+        durable_reviews,
+        lambda item: (
+            f"{_friendly_enum(item.decision)} · "
+            f"{item.reviewed_at.isoformat(timespec='minutes')}"
+        ),
+    )
     selected_review_label = st.selectbox(
         "Evidence review record",
         list(review_labels),
@@ -3027,14 +3032,13 @@ def _render_case_work_queue(principal, active_firm):
                 hide_index=True,
             )
 
-    labels = {
-        (
-            f"{row.work_item.deadline_status.value} — "
-            f"{row.work_item.client_name} — "
-            f"{row.work_item.title} — {row.work_item.case_id}"
-        ): row
-        for row in professional_queue
-    }
+    labels = _numbered_labels(
+        professional_queue,
+        lambda row: (
+            f"{_friendly_enum(row.work_item.deadline_status)} · "
+            f"{row.work_item.client_name} · {row.work_item.title}"
+        ),
+    )
     selected_label = st.selectbox(
         "Queue case",
         list(labels),
@@ -3255,10 +3259,10 @@ def _render_client_workspace(principal, active_firm):
         st.write("No saved clients yet.")
         return
 
-    labels = {
-        f"{client.display_name} — {client.client_id}": client
-        for client in clients
-    }
+    labels = _numbered_labels(
+        clients,
+        lambda client: client.display_name,
+    )
     selected_label = st.selectbox(
         "Client",
         list(labels),
@@ -3354,10 +3358,12 @@ def _render_client_workspace(principal, active_firm):
                 hide_index=True,
             )
 
-    case_labels = {
-        f"{case.title} — {case.case_id}": case
-        for case in workspace.cases
-    }
+    case_labels = _numbered_labels(
+        workspace.cases,
+        lambda case: (
+            f"{case.title} · {_notice_form_label(case.notice_form)}"
+        ),
+    )
     selected_case_label = st.selectbox(
         "Client case",
         list(case_labels),
@@ -3581,10 +3587,12 @@ def _render_saved_cases_workspace(principal, active_firm):
                 hide_index=True,
             )
 
-    labels = {
-        f"{case.title} — {case.case_id}": case
-        for case in cases
-    }
+    labels = _numbered_labels(
+        cases,
+        lambda case: (
+            f"{case.title} · {_friendly_enum(case.status)}"
+        ),
+    )
     selected_label = st.selectbox(
         "Saved case",
         list(labels),
@@ -3844,10 +3852,10 @@ def _render_save_intake_workspace(
     gstin = None
 
     if client_mode == "Existing client":
-        client_labels = {
-            f"{client.display_name} — {client.client_id}": client
-            for client in existing_clients
-        }
+        client_labels = _numbered_labels(
+            existing_clients,
+            lambda client: client.display_name,
+        )
         selected_client_label = st.selectbox(
             "Existing client",
             list(client_labels),
@@ -3872,14 +3880,15 @@ def _render_save_intake_workspace(
             return
 
         registration_labels = {"No registration": None}
-        for registration in registrations:
-            registration_labels[
-                (
+        registration_labels.update(
+            _numbered_labels(
+                registrations,
+                lambda registration: (
                     f"{registration.identifier_type}: "
-                    f"{registration.identifier_value} — "
-                    f"{registration.registration_id}"
-                )
-            ] = registration
+                    f"{registration.identifier_value}"
+                ),
+            )
+        )
         selected_registration_label = st.selectbox(
             "Tax registration",
             list(registration_labels),
@@ -4171,7 +4180,7 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
             key=f"evidence_note_{workspace_key}_{candidate.candidate_id}",
         )
         if st.button(
-            f"Confirm {candidate.candidate_id}",
+            "Confirm match",
             key=f"confirm_{workspace_key}_{candidate.candidate_id}",
         ):
             reviews.append(
@@ -4187,7 +4196,7 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
         if (
             candidate.candidate_id not in reviewed_ids
             and st.button(
-                f"Reject {candidate.candidate_id}",
+                "Reject match",
                 key=f"reject_{workspace_key}_{candidate.candidate_id}",
             )
         ):
