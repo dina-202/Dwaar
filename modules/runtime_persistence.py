@@ -175,6 +175,7 @@ def build_authorized_filing_service(
         filing_repository,
         draft_repository,
         document_store,
+        fact_review_repository=LocalSQLiteFactReviewRepository(db_path),
     )
 
 
@@ -377,6 +378,7 @@ def build_authorized_professional_workbench_service(
         LocalSQLiteFilingRepository(db_path),
         LocalSQLiteDraftVersionRepository(db_path),
         document_store,
+        fact_review_repository=LocalSQLiteFactReviewRepository(db_path),
     )
     evidence_review_service = AuthorizedEvidenceReviewService(
         case_service,
