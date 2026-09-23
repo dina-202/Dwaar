@@ -1571,7 +1571,7 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
                 authority_details_status=AuthorityDetailsStatus.PARTIAL,
                 deadline_status=DeadlineStatus.UNKNOWN,
                 hearing_status=HearingStatus.NOT_SCHEDULED,
-                requested_document_fact_ids=["F-REQ"],
+                requested_document_fact_ids=["F-005"],
                 referenced_annexure_fact_ids=[],
                 message="This notice is recognized for triage.",
             ),
@@ -1675,6 +1675,32 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
             "calendar deadline cannot be calculated safely",
             text,
         )
+
+
+    def test_triage_requested_records_enable_supporting_evidence_workspace(self):
+        result = self._triage_result()
+        result.preflight_result.requested_document_fact_ids = ["F-005"]
+        fake, _, _, evidence_mock, _, _ = run_app(result=result)
+        text = log_text(fake)
+        self.assertIn("Supporting evidence workspace", text)
+        self.assertIn(
+            "Triage-only workspace based on records explicitly requested",
+            text,
+        )
+        self.assertIn("Upload supporting evidence PDFs", text)
+        evidence_mock.assert_not_called()
+
+    def test_triage_without_requested_records_does_not_open_evidence_workspace(self):
+        result = self._triage_result()
+        result.extraction_result.facts = [
+            fact
+            for fact in result.extraction_result.facts
+            if fact.fact_type is not FactType.REQUESTED_DOCUMENT
+        ]
+        result.triage_summary.requested_document_fact_ids = []
+        result.preflight_result.requested_document_fact_ids = []
+        fake, *_ = run_app(result=result)
+        self.assertNotIn("Supporting evidence workspace", log_text(fake))
 
 
 class RenderOrderAndRawTextTests(unittest.TestCase):
