@@ -80,6 +80,7 @@ class EnumContractTests(unittest.TestCase):
                 "legal_brief_saved",
                 "evidence_candidates_generated",
                 "evidence_reviewed",
+                "fact_reviewed",
                 "draft_created",
                 "draft_reviewed",
                 "filing_recorded",
