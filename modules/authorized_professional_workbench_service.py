@@ -4,6 +4,7 @@ from datetime import date
 from typing import Optional
 
 from domain.auth_models import AuthenticatedPrincipal
+from domain.models import EvidenceReviewStatus
 from modules.authorized_analysis_snapshot_service import (
     AuthorizedAnalysisSnapshotService,
 )
@@ -137,27 +138,55 @@ class AuthorizedProfessionalWorkbenchService:
 
         evidence_readiness = []
         evidence_contract_drift = False
-        if (
-            specialist_workflow_available
-            and latest_snapshot is not None
-            and self._evidence is not None
-        ):
-            try:
-                evidence_readiness = (
-                    self._evidence.legal_evidence_readiness(
+        triage_evidence_review_pending = False
+        if latest_snapshot is not None and self._evidence is not None:
+            if specialist_workflow_available:
+                try:
+                    evidence_readiness = (
+                        self._evidence.legal_evidence_readiness(
+                            principal,
+                            firm_id,
+                            case_id=case.case_id,
+                            snapshot_id=latest_snapshot.snapshot_id,
+                        )
+                    )
+                except PermissionError:
+                    # CASE_READ must not imply EVIDENCE_REVIEW access.
+                    evidence_readiness = []
+                except ValueError:
+                    # Historical specialist checklist contract drift.
+                    evidence_contract_drift = True
+            else:
+                try:
+                    triage_checklist = (
+                        self._evidence.snapshot_evidence_checklist(
+                            principal,
+                            firm_id,
+                            case_id=case.case_id,
+                            snapshot_id=latest_snapshot.snapshot_id,
+                        )
+                    )
+                    triage_reviews = self._evidence.list_reviews(
                         principal,
                         firm_id,
                         case_id=case.case_id,
                         snapshot_id=latest_snapshot.snapshot_id,
                     )
+                except (PermissionError, ValueError):
+                    # Do not weaken EVIDENCE_REVIEW permissions and do not
+                    # turn historical contract problems into legal claims.
+                    triage_checklist = []
+                    triage_reviews = []
+
+                confirmed_ids = {
+                    item.evidence_id
+                    for item in triage_reviews
+                    if item.decision is EvidenceReviewStatus.CONFIRMED
+                }
+                triage_evidence_review_pending = any(
+                    item.evidence_id not in confirmed_ids
+                    for item in triage_checklist
                 )
-            except PermissionError:
-                # CASE_READ must not imply EVIDENCE_REVIEW access.
-                evidence_readiness = []
-            except ValueError:
-                # The authorized evidence service uses ValueError for
-                # historical closed-checklist contract drift.
-                evidence_contract_drift = True
 
         drafts = self._drafts.list_versions(
             principal,
@@ -178,4 +207,5 @@ class AuthorizedProfessionalWorkbenchService:
             legal_evidence_readiness=evidence_readiness,
             legal_evidence_contract_drift=evidence_contract_drift,
             specialist_workflow_available=specialist_workflow_available,
+            triage_evidence_review_pending=triage_evidence_review_pending,
         )
