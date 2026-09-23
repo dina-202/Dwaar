@@ -162,9 +162,10 @@ def run_preflight(
     Behavior (§18.3–§18.15):
 
     - Absence-based conclusions (NEITHER_FOUND, MISSING) are derived only
-      when extraction_result.status is SUCCESS. PARTIAL / FAILED /
-      NO_INPUT yield UNKNOWN for both completeness statuses, even when
-      positive facts exist (§18.3).
+      when extraction_result.status is SUCCESS. Positively extracted
+      identifier/authority facts remain reportable under PARTIAL extraction;
+      when no positive fact is available, PARTIAL / FAILED / NO_INPUT yield
+      UNKNOWN (§18.3 pilot clarification).
     - Identifier and authority mappings inspect FactTypes only — never
       claim text (§18.5, §18.7).
     - portal_verification_required and authority_verification_required are
@@ -193,54 +194,50 @@ def run_preflight(
         if isinstance(fact, ExtractedFact)
     ]
 
-    if extraction_succeeded:
-        has_rfn = any(
-            fact.fact_type is FactType.RFN for fact in accepted_facts
-        )
-        has_din = any(
-            fact.fact_type is FactType.DIN for fact in accepted_facts
-        )
-        if has_rfn and has_din:
-            communication_identifier_status = (
-                CommunicationIdentifierStatus.BOTH_PRESENT
-            )
-        elif has_rfn:
-            communication_identifier_status = (
-                CommunicationIdentifierStatus.RFN_PRESENT
-            )
-        elif has_din:
-            communication_identifier_status = (
-                CommunicationIdentifierStatus.DIN_PRESENT
-            )
-        else:
-            communication_identifier_status = (
-                CommunicationIdentifierStatus.NEITHER_FOUND
-            )
-    else:
-        # §18.3: absence-based conclusions only on SUCCESS.
+    has_rfn = any(
+        fact.fact_type is FactType.RFN for fact in accepted_facts
+    )
+    has_din = any(
+        fact.fact_type is FactType.DIN for fact in accepted_facts
+    )
+    if has_rfn and has_din:
         communication_identifier_status = (
-            CommunicationIdentifierStatus.UNKNOWN
+            CommunicationIdentifierStatus.BOTH_PRESENT
         )
+    elif has_rfn:
+        communication_identifier_status = (
+            CommunicationIdentifierStatus.RFN_PRESENT
+        )
+    elif has_din:
+        communication_identifier_status = (
+            CommunicationIdentifierStatus.DIN_PRESENT
+        )
+    elif extraction_succeeded:
+        # Absence is safe only after a complete successful extraction.
+        communication_identifier_status = (
+            CommunicationIdentifierStatus.NEITHER_FOUND
+        )
+    else:
+        communication_identifier_status = CommunicationIdentifierStatus.UNKNOWN
 
-    if extraction_succeeded:
-        has_designation = any(
-            fact.fact_type is FactType.AUTHORITY_DESIGNATION
-            for fact in accepted_facts
-        )
-        has_office = any(
-            fact.fact_type is FactType.AUTHORITY_OFFICE
-            for fact in accepted_facts
-        )
-        has_any_authority = any(
-            fact.fact_type in _AUTHORITY_FACT_TYPES
-            for fact in accepted_facts
-        )
-        if has_designation and has_office:
-            authority_details_status = AuthorityDetailsStatus.PRESENT
-        elif has_any_authority:
-            authority_details_status = AuthorityDetailsStatus.PARTIAL
-        else:
-            authority_details_status = AuthorityDetailsStatus.MISSING
+    has_designation = any(
+        fact.fact_type is FactType.AUTHORITY_DESIGNATION
+        for fact in accepted_facts
+    )
+    has_office = any(
+        fact.fact_type is FactType.AUTHORITY_OFFICE
+        for fact in accepted_facts
+    )
+    has_any_authority = any(
+        fact.fact_type in _AUTHORITY_FACT_TYPES
+        for fact in accepted_facts
+    )
+    if has_designation and has_office:
+        authority_details_status = AuthorityDetailsStatus.PRESENT
+    elif has_any_authority:
+        authority_details_status = AuthorityDetailsStatus.PARTIAL
+    elif extraction_succeeded:
+        authority_details_status = AuthorityDetailsStatus.MISSING
     else:
         authority_details_status = AuthorityDetailsStatus.UNKNOWN
 
