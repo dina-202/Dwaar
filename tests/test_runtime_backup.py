@@ -96,7 +96,7 @@ class RuntimeBackupTests(RuntimeBackupFixture):
         self.assertEqual(loaded, manifest)
         self.assertEqual(manifest.object_count, 1)
         self.assertEqual(manifest.objects[0].storage_key, STORAGE_KEY)
-        self.assertEqual(manifest.source_schema_version, 6)
+        self.assertEqual(manifest.source_schema_version, 7)
         encrypted_db = backup_dir / "dwaar.sqlite3.enc"
         self.assertTrue(encrypted_db.is_file())
         self.assertNotIn(b"Client", encrypted_db.read_bytes())
