@@ -25,6 +25,10 @@ from domain.evidence_review_models import (
     LoadedEvidenceReview,
 )
 from domain.filing_models import FilingRecord
+from domain.fact_review_models import (
+    FactReviewDecision,
+    FactReviewRef,
+)
 from domain.draft_work_product_models import (
     DraftReviewStatus,
     DraftVersionRef,
@@ -547,6 +551,8 @@ def run_app(
     evidence_workspace_service_error=None,
     evidence_review_service=None,
     evidence_review_service_error=None,
+    fact_review_service=None,
+    fact_review_service_error=None,
     draft_service=None,
     draft_service_error=None,
     filing_service=None,
@@ -725,6 +731,28 @@ def run_app(
     if evidence_review_service_error is not None:
         evidence_review_service_mock.side_effect = evidence_review_service_error
 
+    if fact_review_service is None:
+        fact_review_service = Mock()
+        fact_review_service.list_reviewable_facts.return_value = []
+        fact_review_service.latest_reviews_by_fact.return_value = {}
+        fact_review_service.list_reviews.return_value = []
+    else:
+        if isinstance(
+            fact_review_service.list_reviewable_facts.return_value,
+            Mock,
+        ):
+            fact_review_service.list_reviewable_facts.return_value = []
+        if isinstance(
+            fact_review_service.latest_reviews_by_fact.return_value,
+            Mock,
+        ):
+            fact_review_service.latest_reviews_by_fact.return_value = {}
+        if isinstance(fact_review_service.list_reviews.return_value, Mock):
+            fact_review_service.list_reviews.return_value = []
+    fact_review_service_mock = Mock(return_value=fact_review_service)
+    if fact_review_service_error is not None:
+        fact_review_service_mock.side_effect = fact_review_service_error
+
     if draft_service is None:
         draft_service = Mock()
         draft_service.list_versions.return_value = []
@@ -805,6 +833,7 @@ def run_app(
     fake.snapshot_service_mock = snapshot_service_mock
     fake.evidence_workspace_service_mock = evidence_workspace_service_mock
     fake.evidence_review_service_mock = evidence_review_service_mock
+    fake.fact_review_service_mock = fact_review_service_mock
     fake.draft_service_mock = draft_service_mock
     fake.filing_service_mock = filing_service_mock
     fake.legal_brief_service_mock = legal_brief_service_mock
@@ -854,6 +883,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_evidence_review_service",
             evidence_review_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_fact_review_service",
+            fact_review_service_mock,
         ),
         patch.object(
             runtime_persistence_module,
