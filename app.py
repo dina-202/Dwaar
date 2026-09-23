@@ -4098,6 +4098,13 @@ def _render_saved_cases_workspace(principal, active_firm):
         "current analysis rules. Earlier saved analyses, when present, "
         "are shown separately below."
     )
+    st.download_button(
+        "Download original notice PDF",
+        data=reopened.notice_pdf_bytes,
+        file_name=reopened.notice_document.original_filename,
+        mime="application/pdf",
+        key=f"download_notice_{reopened.notice_document.document_id}",
+    )
 
     ocr_pages = [
         page.page_number
