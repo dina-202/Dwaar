@@ -340,6 +340,66 @@ class AuthorizedProfessionalWorkbenchTests(unittest.TestCase):
             },
         )
 
+    def test_authorized_rejected_fact_is_visible_in_case_attention(self):
+        service, cases, snapshots, legal, drafts, filings = self.build()
+        fact_reviews = mock.Mock()
+        fact_reviews.rejected_fact_ids.return_value = {"F-001"}
+        service = AuthorizedProfessionalWorkbenchService(
+            cases,
+            snapshots,
+            legal,
+            drafts,
+            filings,
+            fact_review_service=fact_reviews,
+        )
+
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+
+        self.assertIn(
+            CaseAttentionCode.FACT_REVIEW_REJECTED,
+            tuple(item.code for item in result.items),
+        )
+        fact_reviews.rejected_fact_ids.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+
+    def test_missing_fact_review_permission_does_not_leak_rejection_state(self):
+        service, cases, snapshots, legal, drafts, filings = self.build()
+        fact_reviews = mock.Mock()
+        fact_reviews.rejected_fact_ids.side_effect = PermissionError(
+            "access denied"
+        )
+        service = AuthorizedProfessionalWorkbenchService(
+            cases,
+            snapshots,
+            legal,
+            drafts,
+            filings,
+            fact_review_service=fact_reviews,
+        )
+
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+
+        self.assertNotIn(
+            CaseAttentionCode.FACT_REVIEW_REJECTED,
+            tuple(item.code for item in result.items),
+        )
+        self.assertIn(
+            CaseAttentionCode.LEGAL_BRIEF_NOT_SAVED,
+            tuple(item.code for item in result.items),
+        )
+
     def test_missing_case_stops_before_artifact_reads(self):
         service, cases, snapshots, legal, drafts, filings = self.build()
         cases.get_case.return_value = None
