@@ -255,16 +255,38 @@ class ExtractionStatusSafetyTests(unittest.TestCase):
             CommunicationIdentifierStatus.UNKNOWN,
         )
 
-    def test_partial_with_positive_rfn_still_unknown(self):
-        # Positive facts survive in extraction_result.facts, but the
-        # completeness status stays UNKNOWN (§18.3).
+    def test_partial_with_positive_rfn_reports_rfn_present(self):
+        # PARTIAL blocks absence conclusions, not positive observations.
         result = run_preflight_on(
             [make_fact("F-001", FactType.RFN)],
             status=FactExtractionStatus.PARTIAL,
         )
         self.assertIs(
             result.communication_identifier_status,
-            CommunicationIdentifierStatus.UNKNOWN,
+            CommunicationIdentifierStatus.RFN_PRESENT,
+        )
+
+    def test_partial_with_positive_din_reports_din_present(self):
+        result = run_preflight_on(
+            [make_fact("F-001", FactType.DIN)],
+            status=FactExtractionStatus.PARTIAL,
+        )
+        self.assertIs(
+            result.communication_identifier_status,
+            CommunicationIdentifierStatus.DIN_PRESENT,
+        )
+
+    def test_partial_with_both_identifiers_reports_both_present(self):
+        result = run_preflight_on(
+            [
+                make_fact("F-001", FactType.RFN),
+                make_fact("F-002", FactType.DIN),
+            ],
+            status=FactExtractionStatus.PARTIAL,
+        )
+        self.assertIs(
+            result.communication_identifier_status,
+            CommunicationIdentifierStatus.BOTH_PRESENT,
         )
 
 
@@ -398,7 +420,7 @@ class AuthorityMappingTests(unittest.TestCase):
 
 
 class AuthorityExtractionSafetyTests(unittest.TestCase):
-    """§18.3/§18.7: non-SUCCESS extraction yields authority UNKNOWN."""
+    """§18.3/§18.7: partial extraction preserves positive authority facts."""
 
     def test_partial_extraction_authority_unknown(self):
         result = run_preflight_on(
@@ -424,7 +446,7 @@ class AuthorityExtractionSafetyTests(unittest.TestCase):
             result.authority_details_status, AuthorityDetailsStatus.UNKNOWN
         )
 
-    def test_partial_with_core_facts_still_unknown(self):
+    def test_partial_with_core_facts_reports_present(self):
         result = run_preflight_on(
             [
                 make_fact("F-001", FactType.AUTHORITY_DESIGNATION),
@@ -433,7 +455,16 @@ class AuthorityExtractionSafetyTests(unittest.TestCase):
             status=FactExtractionStatus.PARTIAL,
         )
         self.assertIs(
-            result.authority_details_status, AuthorityDetailsStatus.UNKNOWN
+            result.authority_details_status, AuthorityDetailsStatus.PRESENT
+        )
+
+    def test_partial_with_one_authority_fact_reports_partial(self):
+        result = run_preflight_on(
+            [make_fact("F-001", FactType.AUTHORITY_DESIGNATION)],
+            status=FactExtractionStatus.PARTIAL,
+        )
+        self.assertIs(
+            result.authority_details_status, AuthorityDetailsStatus.PARTIAL
         )
 
 
