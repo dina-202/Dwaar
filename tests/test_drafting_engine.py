@@ -2226,7 +2226,7 @@ class WorkflowPromptTests(unittest.TestCase):
         )
         normalized = " ".join(prompt.split())
         self.assertIn(
-            "department-stated discrepancy as an allegation",
+            "Every ASMT-10 discrepancy remains a departmental allegation",
             normalized,
         )
 
@@ -2236,7 +2236,7 @@ class WorkflowPromptTests(unittest.TestCase):
         )
         normalized = " ".join(prompt.split())
         self.assertIn(
-            "Do not supply a generic Rule 99 response period",
+            "Do not inject a generic statutory reply period",
             normalized,
         )
 
