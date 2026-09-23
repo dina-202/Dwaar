@@ -30,6 +30,10 @@ from domain.runtime_backup_models import (
     RuntimeBackupObject,
 )
 from modules.encrypted_document_store import EncryptedLocalDocumentStore
+from modules.runtime_storage_audit import (
+    RuntimeStorageAuditError,
+    referenced_storage_keys,
+)
 from modules.runtime_security import (
     RuntimeSecurityConfigurationError,
     validate_document_key_id,
@@ -42,13 +46,6 @@ _SUPPORTED_SCHEMA_VERSION = 6
 _DB_BACKUP_MAGIC = b"DWAARBKP1\x00"
 _NONCE_BYTES = 12
 _BACKUP_KEY_INFO = b"DWAAR-RUNTIME-BACKUP-DB-V1"
-_STORAGE_TABLES = (
-    "case_documents",
-    "analysis_snapshots",
-    "evidence_reviews",
-    "draft_versions",
-    "legal_briefs",
-)
 _MANIFEST_KEYS_V1 = frozenset(
     {
         "manifest_version",
@@ -217,28 +214,12 @@ def _validate_database(connection: sqlite3.Connection) -> int:
 def _referenced_storage_keys(
     connection: sqlite3.Connection,
 ) -> Tuple[str, ...]:
-    keys = []
-    for table in _STORAGE_TABLES:
-        try:
-            rows = connection.execute(
-                f"SELECT storage_key FROM {table} ORDER BY storage_key ASC"
-            ).fetchall()
-        except sqlite3.Error as error:
-            raise RuntimeBackupError(
-                "required storage metadata table is unavailable"
-            ) from error
-        for row in rows:
-            value = row[0]
-            if not isinstance(value, str) or _STORAGE_KEY.fullmatch(value) is None:
-                raise RuntimeBackupError(
-                    "database contains an invalid encrypted storage key"
-                )
-            keys.append(value)
-    if len(keys) != len(set(keys)):
+    try:
+        return referenced_storage_keys(connection)
+    except RuntimeStorageAuditError as error:
         raise RuntimeBackupError(
-            "database contains duplicate encrypted storage keys"
-        )
-    return tuple(sorted(keys))
+            "database encrypted storage reference inventory is invalid"
+        ) from error
 
 
 def _object_path(root: Path, storage_key: str) -> Path:
