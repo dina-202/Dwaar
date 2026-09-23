@@ -17,6 +17,7 @@ from modules.sqlite_case_repository import LocalSQLiteCaseRepository
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "operator_health.py"
 KEY = b"o" * 32
+KEY_ID = "doc-key-operator-a"
 
 
 class OperatorHealthCliTests(unittest.TestCase):
@@ -33,7 +34,7 @@ class OperatorHealthCliTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def environment(self, key=KEY):
+    def environment(self, key=KEY, key_id=KEY_ID):
         values = dict(os.environ)
         values.update(
             {
@@ -42,6 +43,7 @@ class OperatorHealthCliTests(unittest.TestCase):
                 "DWAAR_DOCUMENT_KEY_B64": base64.b64encode(
                     key
                 ).decode("ascii"),
+                "DWAAR_DOCUMENT_KEY_ID": key_id,
             }
         )
         return values
@@ -54,6 +56,7 @@ class OperatorHealthCliTests(unittest.TestCase):
             backup_id=backup_id,
             created_at=created_at,
             document_key=KEY,
+            document_key_id=KEY_ID,
         )
         return self.backup_root / backup_id
 
@@ -94,7 +97,7 @@ class OperatorHealthCliTests(unittest.TestCase):
         self.assertTrue(payload["healthy"])
         self.assertEqual(
             [item["status"] for item in payload["checks"]],
-            ["pass", "pass", "pass"],
+            ["pass", "pass", "pass", "pass"],
         )
         rendered = completed.stdout
         self.assertNotIn(str(self.root), rendered)
@@ -117,6 +120,7 @@ class OperatorHealthCliTests(unittest.TestCase):
         checks = {item["code"]: item for item in payload["checks"]}
         self.assertEqual(checks["runtime_preflight"]["status"], "pass")
         self.assertEqual(checks["backup_verification"]["status"], "pass")
+        self.assertEqual(checks["backup_key_identity"]["status"], "pass")
         self.assertEqual(checks["backup_freshness"]["status"], "blocked")
 
     def test_wrong_backup_key_returns_one_with_no_secret_detail(self):
