@@ -1114,6 +1114,7 @@ _OPENED_CASE_ANALYSIS = "_dwaar_opened_case_analysis"
 _OPENED_SNAPSHOT_ID = "_dwaar_opened_snapshot_id"
 _OPENED_SNAPSHOT = "_dwaar_opened_snapshot"
 _FOCUSED_CASE_ID = "_dwaar_focused_case_id"
+_OPEN_CASE_REQUEST_ID = "_dwaar_open_case_request_id"
 
 
 def _uploaded_bytes(uploaded_file):
@@ -1140,6 +1141,7 @@ def _reset_notice_workspace():
         _OPENED_SNAPSHOT_ID,
         _OPENED_SNAPSHOT,
         _FOCUSED_CASE_ID,
+        _OPEN_CASE_REQUEST_ID,
     ):
         st.session_state.pop(key, None)
     _reset_evidence_workspace()
@@ -3572,11 +3574,12 @@ def _render_case_work_queue(principal, active_firm):
         )
 
     if st.button(
-        "Focus queue case in Saved cases",
+        "Open selected case",
         key=f"focus_queue_case_{selected.case_id}",
     ):
         st.session_state[_FOCUSED_CASE_ID] = selected.case_id
-        st.write("Case selected. Use **Open saved case** below.")
+        st.session_state[_OPEN_CASE_REQUEST_ID] = selected.case_id
+        st.write("Opening selected case.")
         if _engineering_diagnostics_enabled():
             with st.expander("Technical details — selected queue case"):
                 st.write({"focused_case_id": selected.case_id})
@@ -3875,11 +3878,12 @@ def _render_client_workspace(principal, active_firm):
     selected_case = case_labels[selected_case_label]
 
     if st.button(
-        "Focus this case in Saved cases",
+        "Open selected client case",
         key=f"focus_client_case_{selected_case.case_id}",
     ):
         st.session_state[_FOCUSED_CASE_ID] = selected_case.case_id
-        st.write("Case selected. Use **Open saved case** below.")
+        st.session_state[_OPEN_CASE_REQUEST_ID] = selected_case.case_id
+        st.write("Opening selected case.")
         if _engineering_diagnostics_enabled():
             with st.expander("Technical details — selected client case"):
                 st.write({"focused_case_id": selected_case.case_id})
@@ -4113,12 +4117,20 @@ def _render_saved_cases_workspace(principal, active_firm):
         )
         return
 
+    open_requested = (
+        st.session_state.get(_OPEN_CASE_REQUEST_ID)
+        == selected_case.case_id
+    )
     open_clicked = st.button(
         "Open saved case",
         key=f"open_saved_case_{selected_case.case_id}",
     )
     cached_case_id = st.session_state.get(_OPENED_CASE_ID)
-    if open_clicked and cached_case_id != selected_case.case_id:
+    if (
+        (open_clicked or open_requested)
+        and cached_case_id != selected_case.case_id
+    ):
+        st.session_state.pop(_OPEN_CASE_REQUEST_ID, None)
         try:
             with st.spinner("Opening saved case and reanalyzing notice..."):
                 reopened = reopen_case_analysis(
