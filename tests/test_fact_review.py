@@ -35,6 +35,7 @@ from domain.draft_work_product_models import (
     DraftVersionRef,
 )
 from domain.fact_review_models import (
+    FACT_REVIEW_NOTE_MAX_CHARS,
     FACT_REVIEW_SCHEMA_VERSION,
     FactReviewDecision,
     FactReviewRef,
@@ -134,6 +135,58 @@ class FactReviewPayloadTests(unittest.TestCase):
             encode_fact_review_payload(payload)
         )
         self.assertEqual(decoded, payload)
+
+    def test_reviewer_note_at_limit_is_accepted(self):
+        note = "x" * FACT_REVIEW_NOTE_MAX_CHARS
+        payload = build_fact_review_payload(
+            fact_row(),
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            decision=FactReviewDecision.CONFIRMED,
+            reviewer_note=note,
+            reviewed_at=NOW,
+            reviewed_by=PRINCIPAL.user_id,
+        )
+        self.assertEqual(payload["reviewer_note"], note)
+        self.assertEqual(
+            decode_fact_review_payload(
+                encode_fact_review_payload(payload)
+            )["reviewer_note"],
+            note,
+        )
+
+    def test_reviewer_note_over_limit_is_rejected_before_persistence(self):
+        with self.assertRaisesRegex(ValueError, "note limit"):
+            build_fact_review_payload(
+                fact_row(),
+                case_id="CASE-1",
+                snapshot_id="SNAP-1",
+                decision=FactReviewDecision.REJECTED,
+                reviewer_note=(
+                    "x" * (FACT_REVIEW_NOTE_MAX_CHARS + 1)
+                ),
+                reviewed_at=NOW,
+                reviewed_by=PRINCIPAL.user_id,
+            )
+
+    def test_encoded_payload_revalidates_reviewer_note_limit(self):
+        payload = build_fact_review_payload(
+            fact_row(),
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            decision=FactReviewDecision.CONFIRMED,
+            reviewer_note="ok",
+            reviewed_at=NOW,
+            reviewed_by=PRINCIPAL.user_id,
+        )
+        tampered = {
+            **payload,
+            "reviewer_note": (
+                "x" * (FACT_REVIEW_NOTE_MAX_CHARS + 1)
+            ),
+        }
+        with self.assertRaisesRegex(ValueError, "size limit"):
+            encode_fact_review_payload(tampered)
 
     def test_source_tamper_breaks_binding(self):
         payload = build_fact_review_payload(
