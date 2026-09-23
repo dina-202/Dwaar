@@ -167,6 +167,22 @@ class SafeLLMInterfaceTests(unittest.TestCase):
             SupportLevel.UNKNOWN,
         )
 
+    def test_valid_unknown_notice_is_not_classification_failure(self):
+        result, _ = run_classifier(
+            "Unrecognized GST communication",
+            candidate_json(
+                notice_form="UNKNOWN",
+                notice_family="UNKNOWN",
+                proceeding_type="UNKNOWN",
+                confidence="LOW",
+            ),
+        )
+        self.assertFalse(proceeding_classifier._classifier_failed(result))
+
+    def test_malformed_output_is_classifier_failure(self):
+        result, _ = run_classifier("some notice text", "not json")
+        self.assertTrue(proceeding_classifier._classifier_failed(result))
+
     def test_llm_supplied_support_level_is_ignored(self):
         # A malicious LLM JSON claiming DEEP_WORKFLOW cannot grant it.
         result, _ = run_classifier(

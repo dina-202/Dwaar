@@ -45,7 +45,7 @@ from domain.models import (
     TriageSummary as _TriageSummary,
 )
 from domain.preflight_engine import run_preflight
-from domain.proceeding_classifier import classify_notice
+from domain.proceeding_classifier import classify_notice, _classifier_failed
 from domain.validation_engine import run_validation
 from workflows.gst.validation_profiles import (
     get_validation_profile,
@@ -89,6 +89,10 @@ _NO_INPUT_MESSAGE = (
 )
 _FAILED_MESSAGE = (
     "Fact extraction failed, so specialist drafting is blocked."
+)
+_CLASSIFICATION_FAILED_MESSAGE = (
+    "Notice classification could not be completed because the AI "
+    "classification step did not return a usable result."
 )
 _UNKNOWN_MESSAGE = (
     "This notice could not be matched to an approved deep specialist workflow."
@@ -317,6 +321,8 @@ def _build_triage_summary(
 ) -> _Optional[_TriageSummary]:
     if extraction_result.status is _FactExtractionStatus.NO_INPUT:
         message = _NO_INPUT_MESSAGE
+    elif _classifier_failed(classification):
+        message = _CLASSIFICATION_FAILED_MESSAGE
     elif extraction_result.status is _FactExtractionStatus.FAILED:
         message = _FAILED_MESSAGE
     elif (

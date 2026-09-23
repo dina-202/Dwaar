@@ -286,6 +286,24 @@ def _deep_markers_satisfied(
     return False
 
 
+def _classifier_failed(classification: NoticeClassification) -> bool:
+    """Return True only for the classifier's safe execution-failure fallback.
+
+    Legitimately unknown/unsupported notices remain distinguishable because
+    they carry ordinary classification reasons rather than one of the two
+    closed execution-failure reasons below.
+    """
+    return (
+        classification.notice_form is NoticeForm.UNKNOWN
+        and classification.notice_family is NoticeFamily.UNKNOWN
+        and classification.proceeding_type is ProceedingType.UNKNOWN
+        and classification.support_level is SupportLevel.UNKNOWN
+        and classification.confidence is ClassificationConfidence.UNKNOWN
+        and classification.classification_reasons
+        in ([_MALFORMED_REASON], [_INVALID_FIELDS_REASON])
+    )
+
+
 def _safe_unknown_classification(reason: str) -> NoticeClassification:
     """Safe fallback when classifier output cannot be safely validated."""
     return NoticeClassification(
