@@ -1141,6 +1141,7 @@ class SourceBoundaryTests(unittest.TestCase):
                 "modules.runtime_access",
                 "modules.runtime_persistence",
                 "modules.runtime_security",
+                "modules.triage_workspace",
                 "workflows.gst.legal_questions",
                 "workflows.gst.legal_research",
             },
@@ -1333,7 +1334,12 @@ class TriageBranchTests(unittest.TestCase):
     def _assert_triage(self, result, expected_message):
         fake, *_ = run_app(result=result)
         text = log_text(fake)
-        self.assertIn("Triage summary", headers(fake))
+        expected_header = (
+            "Triage readiness"
+            if result.classification.support_level is SupportLevel.TRIAGE_ONLY
+            else "Triage summary"
+        )
+        self.assertIn(expected_header, headers(fake))
         self.assertIn(expected_message, text)
         self.assertEqual(calls_named(fake, "markdown"), [])
         self.assertNotIn(RENDERED_ONE, text)
