@@ -42,7 +42,7 @@ from modules.runtime_security import (
 
 _BACKUP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _STORAGE_KEY = re.compile(r"^objects/([0-9a-f]{32})$")
-_SUPPORTED_SCHEMA_VERSION = 6
+_SUPPORTED_SCHEMA_VERSION = 7
 _DB_BACKUP_MAGIC = b"DWAARBKP1\x00"
 _NONCE_BYTES = 12
 _BACKUP_KEY_INFO = b"DWAAR-RUNTIME-BACKUP-DB-V1"
