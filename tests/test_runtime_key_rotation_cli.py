@@ -141,7 +141,7 @@ class RuntimeKeyRotationCliTests(unittest.TestCase):
                 "ok": True,
                 "old_key_id": "doc-key-a",
                 "operation": "key_rotation_rehearsal",
-                "schema_version": 6,
+                "schema_version": 7,
             },
         )
         target_store = EncryptedLocalDocumentStore(
