@@ -54,9 +54,7 @@ from modules.runtime_security import (
     AuthenticationRequiredError,
     principal_from_streamlit_user,
 )
-from modules.triage_workspace import (
-    build_triage_requested_document_checklist,
-)
+from modules.triage_workspace import build_triage_evidence_checklist
 from workflows.gst.legal_questions import build_gst_legal_question_plan
 from workflows.gst.legal_research import (
     build_gst_legal_date_context,
@@ -4076,7 +4074,7 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
     evidence_checklist = result.draft_result.evidence_checklist
     triage_requested_records = False
     if not evidence_checklist:
-        evidence_checklist = build_triage_requested_document_checklist(result)
+        evidence_checklist = build_triage_evidence_checklist(result)
         triage_requested_records = bool(evidence_checklist)
     if not evidence_checklist:
         return
@@ -4084,9 +4082,10 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
     st.header("Supporting evidence workspace")
     if triage_requested_records:
         st.caption(
-            "Triage-only workspace based on records explicitly requested in "
-            "the notice. AI suggestions are candidates only; a match does not "
-            "prove that a record is complete, sufficient, or responsive."
+            "Triage-only workspace based on records explicitly requested or "
+            "referenced in the notice. AI suggestions are candidates only; "
+            "a match does not prove that a record is complete, sufficient, "
+            "responsive, or actually accompanied the notice."
         )
     else:
         st.caption(
