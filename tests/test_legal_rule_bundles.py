@@ -96,6 +96,18 @@ def profile():
 
 class LegalRuleBundleTests(unittest.TestCase):
     def test_current_workflow_bundles_pin_existing_verified_authorities(self):
+        scrutiny = GST_LEGAL_RESEARCH_PROFILES[
+            ProceedingType.GST_SEC61_SCRUTINY
+        ]
+        self.assertEqual(
+            [item.required_rule_keys for item in scrutiny.requirements],
+            [
+                (
+                    "cgst.s61.scrutiny_process",
+                    "cgst.r99.asmt_forms",
+                ),
+            ],
+        )
         general = GST_LEGAL_RESEARCH_PROFILES[
             ProceedingType.GST_SEC73_GENERAL
         ]
