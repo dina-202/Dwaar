@@ -24,6 +24,7 @@ from modules.runtime_access import (
 from modules.runtime_security import (
     RuntimeSecurityConfigurationError,
     decode_document_master_key,
+    validate_document_key_id,
 )
 from modules.sqlite_case_repository import LocalSQLiteCaseRepository
 
@@ -36,6 +37,19 @@ def _object_root_from_environment(
     if not isinstance(value, str) or not value.strip():
         raise ValueError("object root is not configured")
     return str(Path(value.strip()).expanduser())
+
+
+def _document_key_id_from_environment(
+    environment: Optional[Mapping[str, str]],
+) -> str:
+    source = os.environ if environment is None else environment
+    value = source.get("DWAAR_DOCUMENT_KEY_ID")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("document key ID is not configured")
+    try:
+        return validate_document_key_id(value)
+    except RuntimeSecurityConfigurationError as error:
+        raise ValueError("document key ID is invalid") from error
 
 
 def _document_key_from_environment(
@@ -117,6 +131,20 @@ def evaluate_runtime_readiness(
             document_key is not None,
             "Document encryption-key configuration is valid.",
             "Document encryption-key configuration is missing or invalid.",
+        )
+    )
+
+    document_key_id = None
+    try:
+        document_key_id = _document_key_id_from_environment(environment)
+    except ValueError:
+        pass
+    checks.append(
+        _check(
+            RuntimeReadinessCode.DOCUMENT_KEY_ID_CONFIGURATION,
+            document_key_id is not None,
+            "Document key identity configuration is valid.",
+            "Document key identity configuration is missing or invalid.",
         )
     )
 

@@ -18,6 +18,7 @@ def env(root: Path):
         "DWAAR_DB_PATH": str(root / "dwaar.db"),
         "DWAAR_OBJECT_ROOT": str(root / "objects"),
         "DWAAR_DOCUMENT_KEY_B64": key,
+        "DWAAR_DOCUMENT_KEY_ID": "doc-key-2026-a",
     }
 
 
@@ -29,7 +30,7 @@ class RuntimeReadinessTests(unittest.TestCase):
             self.assertTrue(report.ready)
             self.assertEqual(
                 [item.status for item in report.checks],
-                [RuntimeReadinessStatus.PASS] * 6,
+                [RuntimeReadinessStatus.PASS] * 7,
             )
             object_root = root / "objects"
             self.assertTrue((root / "dwaar.db").is_file())
@@ -56,6 +57,12 @@ class RuntimeReadinessTests(unittest.TestCase):
             ].status,
             RuntimeReadinessStatus.BLOCKED,
         )
+        self.assertIs(
+            by_code[
+                RuntimeReadinessCode.DOCUMENT_KEY_ID_CONFIGURATION
+            ].status,
+            RuntimeReadinessStatus.BLOCKED,
+        )
         rendered = repr(report)
         self.assertNotIn("DWAAR_DB_PATH", rendered)
         self.assertNotIn("DWAAR_DOCUMENT_KEY_B64", rendered)
@@ -78,6 +85,20 @@ class RuntimeReadinessTests(unittest.TestCase):
                 ].status,
                 RuntimeReadinessStatus.BLOCKED,
             )
+
+    def test_invalid_document_key_id_blocks_readiness(self):
+        with tempfile.TemporaryDirectory() as temp:
+            values = env(Path(temp))
+            values["DWAAR_DOCUMENT_KEY_ID"] = "bad id with spaces"
+            report = evaluate_runtime_readiness(values)
+            by_code = {item.code: item for item in report.checks}
+            self.assertIs(
+                by_code[
+                    RuntimeReadinessCode.DOCUMENT_KEY_ID_CONFIGURATION
+                ].status,
+                RuntimeReadinessStatus.BLOCKED,
+            )
+            self.assertFalse(report.ready)
 
     def test_database_path_with_missing_parent_blocks_db_checks(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -138,6 +159,7 @@ class RuntimeReadinessTests(unittest.TestCase):
                     RuntimeReadinessCode.DB_CONFIGURATION,
                     RuntimeReadinessCode.OBJECT_STORE_CONFIGURATION,
                     RuntimeReadinessCode.DOCUMENT_KEY_CONFIGURATION,
+                    RuntimeReadinessCode.DOCUMENT_KEY_ID_CONFIGURATION,
                     RuntimeReadinessCode.DB_OPEN_AND_MIGRATION,
                     RuntimeReadinessCode.DB_INTEGRITY,
                     RuntimeReadinessCode.OBJECT_STORE_ROUND_TRIP,

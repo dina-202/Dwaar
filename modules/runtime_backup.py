@@ -25,10 +25,15 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from domain.runtime_backup_models import (
     RUNTIME_BACKUP_MANIFEST_VERSION,
+    SUPPORTED_RUNTIME_BACKUP_MANIFEST_VERSIONS,
     RuntimeBackupManifest,
     RuntimeBackupObject,
 )
 from modules.encrypted_document_store import EncryptedLocalDocumentStore
+from modules.runtime_security import (
+    RuntimeSecurityConfigurationError,
+    validate_document_key_id,
+)
 
 
 _BACKUP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
@@ -44,7 +49,7 @@ _STORAGE_TABLES = (
     "draft_versions",
     "legal_briefs",
 )
-_MANIFEST_KEYS = frozenset(
+_MANIFEST_KEYS_V1 = frozenset(
     {
         "manifest_version",
         "backup_id",
@@ -55,6 +60,7 @@ _MANIFEST_KEYS = frozenset(
         "objects",
     }
 )
+_MANIFEST_KEYS_V2 = _MANIFEST_KEYS_V1 | {"document_key_id"}
 _OBJECT_KEYS = frozenset(
     {"storage_key", "byte_size", "ciphertext_sha256"}
 )
@@ -79,8 +85,25 @@ def _backup_database_key(document_key: bytes) -> bytes:
     ).derive(document_key)
 
 
-def _database_aad(backup_id: str) -> bytes:
-    return _BACKUP_KEY_INFO + b"\x00" + backup_id.encode("utf-8")
+def _database_aad(
+    backup_id: str,
+    *,
+    manifest_version: int,
+    document_key_id: str | None,
+) -> bytes:
+    if manifest_version == 1:
+        return _BACKUP_KEY_INFO + b"\x00" + backup_id.encode("utf-8")
+    if manifest_version == 2:
+        if document_key_id is None:
+            raise ValueError("v2 backup requires document_key_id")
+        return (
+            _BACKUP_KEY_INFO
+            + b"\x00v2\x00"
+            + backup_id.encode("utf-8")
+            + b"\x00"
+            + document_key_id.encode("utf-8")
+        )
+    raise ValueError("unsupported backup manifest version")
 
 
 def _encrypt_database_backup(
@@ -89,6 +112,8 @@ def _encrypt_database_backup(
     *,
     document_key: bytes,
     backup_id: str,
+    manifest_version: int,
+    document_key_id: str | None,
 ) -> None:
     plaintext = plaintext_path.read_bytes()
     nonce = os.urandom(_NONCE_BYTES)
@@ -97,7 +122,11 @@ def _encrypt_database_backup(
     ).encrypt(
         nonce,
         plaintext,
-        _database_aad(backup_id),
+        _database_aad(
+            backup_id,
+            manifest_version=manifest_version,
+            document_key_id=document_key_id,
+        ),
     )
     encrypted_path.write_bytes(
         _DB_BACKUP_MAGIC + nonce + ciphertext
@@ -113,6 +142,8 @@ def _decrypt_database_backup(
     *,
     document_key: bytes,
     backup_id: str,
+    manifest_version: int,
+    document_key_id: str | None,
 ) -> bytes:
     encoded = encrypted_path.read_bytes()
     minimum = len(_DB_BACKUP_MAGIC) + _NONCE_BYTES + 16
@@ -129,7 +160,11 @@ def _decrypt_database_backup(
         ).decrypt(
             nonce,
             ciphertext,
-            _database_aad(backup_id),
+            _database_aad(
+                backup_id,
+                manifest_version=manifest_version,
+                document_key_id=document_key_id,
+            ),
         )
     except InvalidTag as error:
         raise RuntimeBackupError(
@@ -216,7 +251,7 @@ def _object_path(root: Path, storage_key: str) -> Path:
 def _manifest_payload(
     manifest: RuntimeBackupManifest,
 ) -> dict:
-    return {
+    payload = {
         "manifest_version": manifest.manifest_version,
         "backup_id": manifest.backup_id,
         "created_at": manifest.created_at.isoformat(),
@@ -232,6 +267,9 @@ def _manifest_payload(
             for item in manifest.objects
         ],
     }
+    if manifest.manifest_version == 2:
+        payload["document_key_id"] = manifest.document_key_id
+    return payload
 
 
 def _write_manifest(path: Path, manifest: RuntimeBackupManifest) -> None:
@@ -250,10 +288,29 @@ def _parse_manifest(path: Path) -> RuntimeBackupManifest:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RuntimeBackupError("backup manifest is unreadable") from error
-    if not isinstance(payload, dict) or set(payload) != _MANIFEST_KEYS:
+    if not isinstance(payload, dict):
         raise RuntimeBackupError("backup manifest schema is invalid")
-    if payload.get("manifest_version") != RUNTIME_BACKUP_MANIFEST_VERSION:
+    manifest_version = payload.get("manifest_version")
+    if manifest_version not in SUPPORTED_RUNTIME_BACKUP_MANIFEST_VERSIONS:
         raise RuntimeBackupError("backup manifest version is unsupported")
+    expected_keys = (
+        _MANIFEST_KEYS_V1
+        if manifest_version == 1
+        else _MANIFEST_KEYS_V2
+    )
+    if set(payload) != expected_keys:
+        raise RuntimeBackupError("backup manifest schema is invalid")
+
+    document_key_id = None
+    if manifest_version == 2:
+        try:
+            document_key_id = validate_document_key_id(
+                payload.get("document_key_id")
+            )
+        except RuntimeSecurityConfigurationError as error:
+            raise RuntimeBackupError(
+                "backup document key identity is invalid"
+            ) from error
 
     backup_id = payload.get("backup_id")
     if (
@@ -326,13 +383,14 @@ def _parse_manifest(path: Path) -> RuntimeBackupManifest:
         raise RuntimeBackupError("backup object manifest order is invalid")
 
     return RuntimeBackupManifest(
-        manifest_version=RUNTIME_BACKUP_MANIFEST_VERSION,
+        manifest_version=manifest_version,
         backup_id=backup_id,
         created_at=created_at,
         source_schema_version=_SUPPORTED_SCHEMA_VERSION,
         database_byte_size=db_size,
         database_sha256=db_hash.lower(),
         objects=tuple(objects),
+        document_key_id=document_key_id,
     )
 
 
@@ -344,6 +402,7 @@ def create_runtime_backup(
     backup_id: str,
     created_at: datetime,
     document_key: bytes,
+    document_key_id: str | None = None,
 ) -> RuntimeBackupManifest:
     """Create and atomically publish a verified runtime backup."""
     if not isinstance(db_path, str) or not db_path.strip():
@@ -357,6 +416,12 @@ def create_runtime_backup(
     if not isinstance(created_at, datetime) or created_at.tzinfo is None:
         raise ValueError("created_at must be timezone-aware")
     _validate_document_key(document_key)
+    if document_key_id is not None:
+        try:
+            document_key_id = validate_document_key_id(document_key_id)
+        except RuntimeSecurityConfigurationError as error:
+            raise ValueError("document_key_id is invalid") from error
+    manifest_version = 2 if document_key_id is not None else 1
 
     source_db = Path(db_path).expanduser().resolve()
     source_objects = Path(object_root).expanduser().resolve()
@@ -407,6 +472,8 @@ def create_runtime_backup(
             backup_db,
             document_key=document_key,
             backup_id=backup_id,
+            manifest_version=manifest_version,
+            document_key_id=document_key_id,
         )
         plaintext_db.unlink()
 
@@ -430,18 +497,20 @@ def create_runtime_backup(
             )
 
         manifest = RuntimeBackupManifest(
-            manifest_version=RUNTIME_BACKUP_MANIFEST_VERSION,
+            manifest_version=manifest_version,
             backup_id=backup_id,
             created_at=created_at,
             source_schema_version=source_schema_version,
             database_byte_size=backup_db.stat().st_size,
             database_sha256=_sha256(backup_db),
             objects=tuple(object_entries),
+            document_key_id=document_key_id,
         )
         _write_manifest(manifest_path, manifest)
         verify_runtime_backup(
             str(temp_dir),
             expected_backup_id=backup_id,
+            expected_document_key_id=document_key_id,
             document_key=document_key,
         )
         temp_dir.rename(final_dir)
@@ -456,6 +525,7 @@ def verify_runtime_backup(
     *,
     document_key: bytes,
     expected_backup_id: str | None = None,
+    expected_document_key_id: str | None = None,
 ) -> RuntimeBackupManifest:
     """Verify a published or temporary backup without decrypting objects."""
     if not isinstance(backup_dir, str) or not backup_dir.strip():
@@ -466,6 +536,23 @@ def verify_runtime_backup(
         raise RuntimeBackupError("backup directory does not exist")
 
     manifest = _parse_manifest(root / "manifest.json")
+    if expected_document_key_id is not None:
+        try:
+            expected_document_key_id = validate_document_key_id(
+                expected_document_key_id
+            )
+        except RuntimeSecurityConfigurationError as error:
+            raise ValueError(
+                "expected_document_key_id is invalid"
+            ) from error
+        if manifest.document_key_id is None:
+            raise RuntimeBackupError(
+                "backup document key identity is unavailable"
+            )
+        if manifest.document_key_id != expected_document_key_id:
+            raise RuntimeBackupError(
+                "backup document key identity mismatch"
+            )
     if (
         expected_backup_id is not None
         and manifest.backup_id != expected_backup_id
@@ -490,6 +577,8 @@ def verify_runtime_backup(
         database,
         document_key=document_key,
         backup_id=manifest.backup_id,
+        manifest_version=manifest.manifest_version,
+        document_key_id=manifest.document_key_id,
     )
     temp_database = None
     try:
@@ -570,6 +659,7 @@ def restore_runtime_backup(
     target_db_path: str,
     target_object_root: str,
     document_key: bytes,
+    expected_document_key_id: str | None = None,
 ) -> RuntimeBackupManifest:
     """Restore a verified backup only into an empty runtime target.
 
@@ -586,6 +676,7 @@ def restore_runtime_backup(
     manifest = verify_runtime_backup(
         backup_dir,
         document_key=document_key,
+        expected_document_key_id=expected_document_key_id,
     )
     backup_root = Path(backup_dir).expanduser().resolve()
     target_db = Path(target_db_path).expanduser().resolve()
@@ -623,6 +714,8 @@ def restore_runtime_backup(
             backup_database,
             document_key=document_key,
             backup_id=manifest.backup_id,
+            manifest_version=manifest.manifest_version,
+            document_key_id=manifest.document_key_id,
         )
         with staged_db.open("xb") as handle:
             try:

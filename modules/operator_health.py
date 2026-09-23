@@ -17,6 +17,7 @@ from modules.runtime_readiness import evaluate_runtime_readiness
 from modules.runtime_security import (
     RuntimeSecurityConfigurationError,
     decode_document_master_key,
+    validate_document_key_id,
 )
 
 
@@ -46,6 +47,19 @@ def _document_key(
         return None
     try:
         return decode_document_master_key(value)
+    except RuntimeSecurityConfigurationError:
+        return None
+
+
+def _document_key_id(
+    environment: Optional[Mapping[str, str]],
+) -> str | None:
+    source = os.environ if environment is None else environment
+    value = source.get("DWAAR_DOCUMENT_KEY_ID")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return validate_document_key_id(value)
     except RuntimeSecurityConfigurationError:
         return None
 
@@ -80,6 +94,7 @@ def evaluate_operator_health(
     ]
 
     key = _document_key(environment)
+    key_id = _document_key_id(environment)
     manifest = None
     if key is not None:
         try:
@@ -96,6 +111,21 @@ def evaluate_operator_health(
             manifest is not None,
             "Nominated backup verification passed.",
             "Nominated backup verification is blocked.",
+        )
+    )
+
+    identity_ok = (
+        manifest is not None
+        and manifest.document_key_id is not None
+        and key_id is not None
+        and manifest.document_key_id == key_id
+    )
+    checks.append(
+        _check(
+            OperatorHealthCode.BACKUP_KEY_IDENTITY,
+            identity_ok,
+            "Nominated backup key identity matches the runtime.",
+            "Nominated backup key identity is unavailable or mismatched.",
         )
     )
 

@@ -42,6 +42,7 @@ class RuntimePreflightCliTests(unittest.TestCase):
                     "DWAAR_DOCUMENT_KEY_B64": base64.b64encode(
                         b"q" * 32
                     ).decode("ascii"),
+                    "DWAAR_DOCUMENT_KEY_ID": "doc-key-2026-cli",
                 }
             )
             completed = subprocess.run(
@@ -55,7 +56,7 @@ class RuntimePreflightCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = self.payload(completed)
         self.assertTrue(payload["ready"])
-        self.assertEqual(len(payload["checks"]), 6)
+        self.assertEqual(len(payload["checks"]), 7)
         rendered = completed.stdout
         self.assertNotIn(str(root), rendered)
         self.assertNotIn(environment["DWAAR_DOCUMENT_KEY_B64"], rendered)
@@ -66,6 +67,7 @@ class RuntimePreflightCliTests(unittest.TestCase):
             "DWAAR_DB_PATH",
             "DWAAR_OBJECT_ROOT",
             "DWAAR_DOCUMENT_KEY_B64",
+            "DWAAR_DOCUMENT_KEY_ID",
         ):
             environment.pop(name, None)
         completed = subprocess.run(
