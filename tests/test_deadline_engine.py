@@ -183,6 +183,89 @@ class Phase3BDeadlineSafetyTests(unittest.TestCase):
         self.assertIsNone(result.response_period_days)
         self.assertIsNone(result.response_deadline)
 
+    def test_period_parser_ignores_section_number_before_day_count(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=None,
+            response_period_text=(
+                "Under Section 61, furnish a reply within 15 days "
+                "from receipt of this notice"
+            ),
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertEqual(result.response_period_days, 15)
+        self.assertIsNone(result.response_deadline)
+        self.assertEqual(result.deadline_status, DeadlineStatus.UNKNOWN)
+
+    def test_period_parser_ignores_form_number_before_day_count(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=None,
+            response_period_text=(
+                "ASMT-10 requires a response within 30 days from receipt"
+            ),
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertEqual(result.response_period_days, 30)
+        self.assertIsNone(result.response_deadline)
+
+    def test_explicit_number_word_period_is_supported(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=None,
+            response_period_text=(
+                "Furnish the reply within fifteen days from receipt"
+            ),
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertEqual(result.response_period_days, 15)
+        self.assertIsNone(result.response_deadline)
+
+    def test_hyphenated_number_word_period_is_supported(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=date(2026, 8, 22),
+            response_period_text=(
+                "Reply within twenty-one days from date of service"
+            ),
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertEqual(result.response_period_days, 21)
+        self.assertEqual(result.response_deadline, date(2026, 9, 12))
+        self.assertEqual(
+            result.deadline_confidence,
+            DeadlineConfidence.CONFIRMED,
+        )
+
+    def test_worded_working_day_period_still_fails_closed(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=date(2026, 8, 22),
+            response_period_text=(
+                "Reply within seven working days from date of service"
+            ),
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertIsNone(result.response_period_days)
+        self.assertIsNone(result.response_deadline)
+        self.assertEqual(result.deadline_status, DeadlineStatus.UNKNOWN)
+
+    def test_unrelated_numeric_identifier_without_day_period_is_not_period(self):
+        result = calculate_deadline(
+            notice_date=date(2026, 8, 20),
+            service_date=None,
+            response_period_text="ASMT-10 issued under Section 61",
+            hearing_date_text=None,
+            today=TODAY,
+        )
+        self.assertIsNone(result.response_period_days)
+        self.assertIsNone(result.response_deadline)
+
     def test_receipt_based_period_without_service_date_stays_unknown(self):
         result = calculate_deadline(
             notice_date=date(2026, 8, 20),
