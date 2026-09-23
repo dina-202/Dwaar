@@ -11,6 +11,10 @@ from domain.draft_work_product_models import (
 )
 from domain.filing_models import FilingRecord
 from domain.legal_brief_models import LegalBriefRef, LoadedLegalBrief
+from domain.legal_evidence_models import (
+    LegalEvidenceReadiness,
+    LegalEvidenceReadinessStatus,
+)
 from domain.models import NoticeForm, ProceedingType
 from domain.professional_workbench_models import CaseAttentionCode
 from modules.professional_workbench import build_professional_case_attention
@@ -149,6 +153,83 @@ class ProfessionalCaseAttentionTests(unittest.TestCase):
             codes(result),
             (CaseAttentionCode.LEGAL_RESEARCH_UNRESOLVED,),
         )
+
+    def test_incomplete_legal_evidence_is_attention_not_legal_verdict(self):
+        readiness = LegalEvidenceReadiness(
+            question_id="gst_sec73_itc.eligibility",
+            status=(
+                LegalEvidenceReadinessStatus.PARTIAL_CONFIRMED_EVIDENCE
+            ),
+            required_evidence_ids=(
+                "sec73_itc.e3",
+                "sec73_itc.e4",
+                "sec73_itc.e5",
+            ),
+            confirmed_evidence_ids=("sec73_itc.e3",),
+            missing_evidence_ids=("sec73_itc.e4", "sec73_itc.e5"),
+            confirmed_review_ids=("ER-1",),
+        )
+        result = build_professional_case_attention(
+            case(),
+            snapshots=[snapshot()],
+            legal_briefs=[brief()],
+            draft_versions=[draft(DraftReviewStatus.APPROVED)],
+            filings=[filing("DOC-ACK")],
+            legal_evidence_readiness=[readiness],
+        )
+        self.assertEqual(
+            codes(result),
+            (CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE,),
+        )
+        self.assertEqual(
+            result.items[0].related_id,
+            "gst_sec73_itc.eligibility",
+        )
+        self.assertNotIn("eligible", result.items[0].message.lower())
+
+    def test_fully_confirmed_legal_evidence_adds_no_attention(self):
+        readiness = LegalEvidenceReadiness(
+            question_id="gst_sec73_itc.eligibility",
+            status=(
+                LegalEvidenceReadinessStatus.REQUIRED_EVIDENCE_CONFIRMED
+            ),
+            required_evidence_ids=(
+                "sec73_itc.e3",
+                "sec73_itc.e4",
+                "sec73_itc.e5",
+            ),
+            confirmed_evidence_ids=(
+                "sec73_itc.e3",
+                "sec73_itc.e4",
+                "sec73_itc.e5",
+            ),
+            missing_evidence_ids=(),
+            confirmed_review_ids=("ER-1", "ER-2", "ER-3"),
+        )
+        result = build_professional_case_attention(
+            case(),
+            snapshots=[snapshot()],
+            legal_briefs=[brief()],
+            draft_versions=[draft(DraftReviewStatus.APPROVED)],
+            filings=[filing("DOC-ACK")],
+            legal_evidence_readiness=[readiness],
+        )
+        self.assertEqual(result.items, ())
+
+    def test_legal_evidence_contract_drift_is_explicit_attention(self):
+        result = build_professional_case_attention(
+            case(),
+            snapshots=[snapshot()],
+            legal_briefs=[brief()],
+            draft_versions=[draft(DraftReviewStatus.APPROVED)],
+            filings=[filing("DOC-ACK")],
+            legal_evidence_contract_drift=True,
+        )
+        self.assertEqual(
+            codes(result),
+            (CaseAttentionCode.LEGAL_EVIDENCE_CONTRACT_DRIFT,),
+        )
+        self.assertEqual(result.items[0].related_id, "SNAP-1")
 
     def test_working_draft_awaits_review(self):
         result = build_professional_case_attention(
