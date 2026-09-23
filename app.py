@@ -276,11 +276,30 @@ def _classification_failed_for_display(result):
     )
 
 
+_PROFESSIONAL_LABEL_TOKENS = {
+    "ca": "CA",
+    "gst": "GST",
+    "itc": "ITC",
+    "rcm": "RCM",
+    "rfn": "RFN",
+    "din": "DIN",
+    "gstr1": "GSTR-1",
+    "gstr2a": "GSTR-2A",
+    "gstr2b": "GSTR-2B",
+    "gstr3b": "GSTR-3B",
+    "fy": "FY",
+}
+
+
 def _friendly_enum(value):
     raw = _display(value)
     if raw == "unavailable":
         return raw
-    return raw.replace("_", " ").strip().title()
+    words = raw.replace("_", " ").strip().split()
+    return " ".join(
+        _PROFESSIONAL_LABEL_TOKENS.get(word.lower(), word.capitalize())
+        for word in words
+    )
 
 
 def _numbered_labels(items, labeler):
