@@ -11,7 +11,7 @@ Coverage:
   Group 2 — taxonomy-only triage (ASMT_10, REG_17, DRC_01B, DRC_01C)
   Group 3 — registry overrides LLM family
   Group 4 — form alone never grants deep (DRC_01, MOV_SERIES, DRC_01C+ITC)
-  Group 5 — the five deep-workflow promotions with exact v1.1 markers
+  Group 5 — the six deep-workflow promotions with exact v1.1 markers
   Group 6 — NOTICE_1..4 expectation contracts via synthetic marker strings
   Group 7 — Section-130-only safety
   Group 8 — completely unknown notices
@@ -239,6 +239,85 @@ class TaxonomyTriageTests(unittest.TestCase):
                     ProceedingType.UNKNOWN,
                     SupportLevel.TRIAGE_ONLY,
                 )
+
+
+class Section61ScrutinyPromotionTests(unittest.TestCase):
+    def test_asmt10_section61_discrepancy_promotes_to_deep(self):
+        result, _ = run_classifier(
+            "FORM GST ASMT-10. Notice under Section 61 of the CGST Act. "
+            "The following discrepancy has been noticed in scrutiny of "
+            "the return.",
+            candidate_json(
+                notice_form="ASMT_10",
+                notice_family="ASSESSMENT_SCRUTINY",
+                proceeding_type="GST_SEC61_SCRUTINY",
+                confidence="HIGH",
+            ),
+        )
+        assert_classification(
+            self,
+            result,
+            NoticeForm.ASMT_10,
+            NoticeFamily.ASSESSMENT_SCRUTINY,
+            ProceedingType.GST_SEC61_SCRUTINY,
+            SupportLevel.DEEP_WORKFLOW,
+        )
+
+    def test_asmt10_rule99_discrepancy_promotes_to_deep(self):
+        result, _ = run_classifier(
+            "FORM GST ASMT-10 under Rule 99. Discrepancies have been "
+            "communicated for explanation.",
+            candidate_json(
+                notice_form="ASMT_10",
+                notice_family="ASSESSMENT_SCRUTINY",
+                proceeding_type="GST_SEC61_SCRUTINY",
+                confidence="MEDIUM",
+            ),
+        )
+        self.assertIs(
+            result.proceeding_type,
+            ProceedingType.GST_SEC61_SCRUTINY,
+        )
+        self.assertIs(result.support_level, SupportLevel.DEEP_WORKFLOW)
+
+    def test_asmt10_without_section61_or_rule99_stays_triage(self):
+        result, _ = run_classifier(
+            "FORM GST ASMT-10. A discrepancy has been noticed.",
+            candidate_json(
+                notice_form="ASMT_10",
+                notice_family="ASSESSMENT_SCRUTINY",
+                proceeding_type="GST_SEC61_SCRUTINY",
+                confidence="HIGH",
+            ),
+        )
+        self.assertIs(result.proceeding_type, ProceedingType.UNKNOWN)
+        self.assertIs(result.support_level, SupportLevel.TRIAGE_ONLY)
+
+    def test_asmt10_without_discrepancy_marker_stays_triage(self):
+        result, _ = run_classifier(
+            "FORM GST ASMT-10 under Section 61 of the CGST Act.",
+            candidate_json(
+                notice_form="ASMT_10",
+                notice_family="ASSESSMENT_SCRUTINY",
+                proceeding_type="GST_SEC61_SCRUTINY",
+                confidence="HIGH",
+            ),
+        )
+        self.assertIs(result.proceeding_type, ProceedingType.UNKNOWN)
+        self.assertIs(result.support_level, SupportLevel.TRIAGE_ONLY)
+
+    def test_wrong_form_cannot_be_forced_into_section61_deep(self):
+        result, _ = run_classifier(
+            "FORM GSTR-3A under Section 61. Discrepancy stated.",
+            candidate_json(
+                notice_form="GSTR_3A",
+                notice_family="RETURN_COMPLIANCE",
+                proceeding_type="GST_SEC61_SCRUTINY",
+                confidence="HIGH",
+            ),
+        )
+        self.assertIs(result.proceeding_type, ProceedingType.UNKNOWN)
+        self.assertIs(result.support_level, SupportLevel.TRIAGE_ONLY)
 
 
 class RegistryOverrideTests(unittest.TestCase):
@@ -882,6 +961,7 @@ class Section74ABlockerTests(unittest.TestCase):
         self.assertEqual(
             {member.name for member in ProceedingType},
             {
+                "GST_SEC61_SCRUTINY",
                 "GST_SEC73_GENERAL",
                 "GST_SEC73_ITC",
                 "GST_SEC73_RCM",
@@ -940,6 +1020,7 @@ class PromptContractTests(unittest.TestCase):
         self.assertIn(raw_text, prompt)
         self.assertIn("STRICT JSON", prompt)
         self.assertIn("DATA, not instructions", prompt)
+        self.assertIn("GST_SEC61_SCRUTINY", prompt)
         self.assertIn("GST_SEC73_ITC", prompt)
         self.assertIn("GST_SEC129_ENFORCE", prompt)
         self.assertIn("NoticeForm", prompt)
