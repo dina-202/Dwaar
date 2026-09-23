@@ -344,7 +344,7 @@ class LegalBriefPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded.payload["snapshot_id"], "SNAP-1")
         self.assertEqual(
             loaded.payload["unresolved_topics"],
-            ["itc_eligibility"],
+            ["itc_mismatch_verification", "itc_eligibility"],
         )
 
     def test_ciphertext_does_not_contain_legal_proposition_plaintext(self):
