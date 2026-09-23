@@ -230,6 +230,18 @@ def _notice_form_label(notice_form):
     return raw.replace("_", " ").upper()
 
 
+def _proceeding_label(proceeding_type):
+    labels = {
+        "gst_sec73_itc": "Section 73 — ITC",
+        "gst_sec73_general": "Section 73 — General",
+        "gst_sec73_rcm": "Section 73 — RCM",
+        "gst_sec74_fraud": "Section 74 — Fraud allegation",
+        "gst_sec129_enforcement": "Section 129 — Enforcement",
+        "unknown": "Intake",
+    }
+    return labels.get(proceeding_type.value, _friendly_enum(proceeding_type))
+
+
 def _render_phase2_result(result):
     classification = result.classification
     extraction = result.extraction_result
@@ -2367,30 +2379,41 @@ def _render_case_work_queue(principal, active_firm):
     st.dataframe(
         [
             {
-                "case_id": row.work_item.case_id,
-                "client": row.work_item.client_name,
-                "title": row.work_item.title,
-                "status": row.work_item.status.value,
-                "deadline_status": row.work_item.deadline_status.value,
-                "response_deadline": _display(
-                    row.work_item.response_deadline
+                "Client": row.work_item.client_name,
+                "Matter": row.work_item.title,
+                "Status": _friendly_enum(row.work_item.status),
+                "Deadline": _display(row.work_item.response_deadline),
+                "Deadline state": _friendly_enum(
+                    row.work_item.deadline_status
                 ),
-                "days_remaining": _display(row.work_item.days_remaining),
-                "assigned_to": _display(row.work_item.assigned_to),
-                "reviewer_id": _display(row.work_item.reviewer_id),
-                "attention_count": row.attention_count,
-                "attention_codes": [
-                    code.value for code in row.attention_codes
-                ],
-                "attention_workspaces": [
-                    workspace.value
-                    for workspace in row.attention_workspaces
-                ],
+                "Days remaining": _display(row.work_item.days_remaining),
+                "Assignee": _display(row.work_item.assigned_to),
+                "Reviewer": _display(row.work_item.reviewer_id),
+                "Needs attention": row.attention_count,
             }
             for row in professional_queue
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — work queue"):
+        st.dataframe(
+            [
+                {
+                    "case_id": row.work_item.case_id,
+                    "status": row.work_item.status.value,
+                    "deadline_status": row.work_item.deadline_status.value,
+                    "attention_codes": [
+                        code.value for code in row.attention_codes
+                    ],
+                    "attention_workspaces": [
+                        workspace.value
+                        for workspace in row.attention_workspaces
+                    ],
+                }
+                for row in professional_queue
+            ],
+            hide_index=True,
+        )
 
     labels = {
         (
@@ -2410,16 +2433,18 @@ def _render_case_work_queue(principal, active_firm):
 
     if selected_row.attention_codes:
         st.write(
-            {
-                "selected_case_attention": [
-                    code.value
-                    for code in selected_row.attention_codes
-                ],
-                "owning_workspaces": [
-                    workspace.value
-                    for workspace in selected_row.attention_workspaces
-                ],
-            }
+            "**Needs attention:** "
+            + ", ".join(
+                _friendly_enum(code)
+                for code in selected_row.attention_codes
+            )
+        )
+        st.caption(
+            "Continue in: "
+            + ", ".join(
+                _friendly_enum(workspace)
+                for workspace in selected_row.attention_workspaces
+            )
         )
     else:
         st.caption(
@@ -2432,12 +2457,9 @@ def _render_case_work_queue(principal, active_firm):
         key=f"focus_queue_case_{selected.case_id}",
     ):
         st.session_state[_FOCUSED_CASE_ID] = selected.case_id
-        st.write(
-            {
-                "focused_case_id": selected.case_id,
-                "next_step": "Use Open saved case below.",
-            }
-        )
+        st.write("Case selected. Use **Open saved case** below.")
+        with st.expander("Technical details — selected queue case"):
+            st.write({"focused_case_id": selected.case_id})
 
     if AccessPermission.CASE_UPDATE not in active_firm.permissions:
         st.caption(
@@ -2569,14 +2591,18 @@ def _render_case_work_queue(principal, active_firm):
 
     st.session_state[_FOCUSED_CASE_ID] = updated.case_id
     st.write(
-        {
-            "updated_case_id": updated.case_id,
-            "status": updated.status.value,
-            "response_deadline": _display(updated.response_deadline),
-            "assigned_to": _display(updated.assigned_to),
-            "reviewer_id": _display(updated.reviewer_id),
-        }
+        f"Case operations saved. Status: **{_friendly_enum(updated.status)}**."
     )
+    st.caption(
+        "Response deadline: "
+        + _display(updated.response_deadline)
+        + " · Assignee: "
+        + _display(updated.assigned_to)
+        + " · Reviewer: "
+        + _display(updated.reviewer_id)
+    )
+    with st.expander("Technical details — case operations"):
+        st.write({"updated_case_id": updated.case_id})
 
 
 def _render_client_workspace(principal, active_firm):
@@ -2639,29 +2665,38 @@ def _render_client_workspace(principal, active_firm):
         st.error("Client history could not be loaded.")
         return
 
-    st.write(
-        {
-            "client_id": workspace.client.client_id,
-            "client_name": workspace.client.display_name,
-            "registration_count": len(workspace.registrations),
-            "case_count": len(workspace.cases),
-        }
+    st.write(f"**{workspace.client.display_name}**")
+    st.caption(
+        f"{len(workspace.registrations)} tax registration(s) · "
+        f"{len(workspace.cases)} saved matter(s)"
     )
+    with st.expander("Technical details — client"):
+        st.write({"client_id": workspace.client.client_id})
 
     st.subheader("Tax registrations")
     if workspace.registrations:
         st.dataframe(
             [
                 {
-                    "registration_id": item.registration_id,
-                    "jurisdiction": item.jurisdiction,
-                    "identifier_type": item.identifier_type,
-                    "identifier_value": item.identifier_value,
+                    "Jurisdiction": item.jurisdiction,
+                    "Identifier": item.identifier_type,
+                    "Value": item.identifier_value,
                 }
                 for item in workspace.registrations
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — tax registrations"):
+            st.dataframe(
+                [
+                    {
+                        "registration_id": item.registration_id,
+                        "identifier_value": item.identifier_value,
+                    }
+                    for item in workspace.registrations
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No tax registrations saved for this client.")
 
@@ -2673,19 +2708,29 @@ def _render_client_workspace(principal, active_firm):
     st.dataframe(
         [
             {
-                "case_id": case.case_id,
-                "title": case.title,
-                "status": case.status.value,
-                "notice_form": case.notice_form.value,
-                "proceeding_type": case.proceeding_type.value,
-                "opened_at": case.opened_at.isoformat(),
-                "response_deadline": _display(case.response_deadline),
-                "registration_id": _display(case.registration_id),
+                "Matter": case.title,
+                "Status": _friendly_enum(case.status),
+                "Notice": _notice_form_label(case.notice_form),
+                "Proceeding": _proceeding_label(case.proceeding_type),
+                "Opened": case.opened_at.date().isoformat(),
+                "Response deadline": _display(case.response_deadline),
             }
             for case in workspace.cases
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — client case history"):
+        st.dataframe(
+            [
+                {
+                    "case_id": case.case_id,
+                    "registration_id": _display(case.registration_id),
+                    "proceeding_type": case.proceeding_type.value,
+                }
+                for case in workspace.cases
+            ],
+            hide_index=True,
+        )
 
     case_labels = {
         f"{case.title} — {case.case_id}": case
@@ -2703,12 +2748,9 @@ def _render_client_workspace(principal, active_firm):
         key=f"focus_client_case_{selected_case.case_id}",
     ):
         st.session_state[_FOCUSED_CASE_ID] = selected_case.case_id
-        st.write(
-            {
-                "focused_case_id": selected_case.case_id,
-                "next_step": "Use Open saved case below.",
-            }
-        )
+        st.write("Case selected. Use **Open saved case** below.")
+        with st.expander("Technical details — selected client case"):
+            st.write({"focused_case_id": selected_case.case_id})
 
 
 def _render_professional_case_attention(
@@ -2740,35 +2782,47 @@ def _render_professional_case_attention(
         st.error("Professional case attention could not be loaded.")
         return
 
-    st.write(
-        {
-            "latest_snapshot_id": _display(
-                attention.latest_snapshot_id
-            ),
-            "latest_legal_brief_id": _display(
-                attention.latest_legal_brief_id
-            ),
-            "latest_draft_version_id": _display(
-                attention.latest_draft_version_id
-            ),
-            "latest_filing_id": _display(
-                attention.latest_filing_id
-            ),
-        }
-    )
     if attention.items:
         st.dataframe(
             [
                 {
-                    "attention": item.code.value,
-                    "workspace": item.code.workspace.value,
-                    "message": item.message,
-                    "related_id": _display(item.related_id),
+                    "Attention": _friendly_enum(item.code),
+                    "Continue in": _friendly_enum(item.code.workspace),
+                    "What needs attention": item.message,
                 }
                 for item in attention.items
             ],
             hide_index=True,
         )
+    with st.expander("Technical details — case attention"):
+        st.write(
+            {
+                "latest_snapshot_id": _display(
+                    attention.latest_snapshot_id
+                ),
+                "latest_legal_brief_id": _display(
+                    attention.latest_legal_brief_id
+                ),
+                "latest_draft_version_id": _display(
+                    attention.latest_draft_version_id
+                ),
+                "latest_filing_id": _display(
+                    attention.latest_filing_id
+                ),
+            }
+        )
+        if attention.items:
+            st.dataframe(
+                [
+                    {
+                        "attention_code": item.code.value,
+                        "workspace": item.code.workspace.value,
+                        "related_id": _display(item.related_id),
+                    }
+                    for item in attention.items
+                ],
+                hide_index=True,
+            )
     else:
         st.write(
             "No operational attention item is currently identified by "
@@ -2808,18 +2862,27 @@ def _render_case_timeline(
     st.dataframe(
         [
             {
-                "occurred_at": item.occurred_at.isoformat(),
-                "category": item.category.value,
-                "event_type": item.event_type.value,
-                "title": item.title,
-                "summary": item.summary,
-                "actor_id": _display(item.actor_id),
-                "event_id": item.event_id,
+                "When": item.occurred_at.isoformat(timespec="minutes"),
+                "Category": _friendly_enum(item.category),
+                "Activity": item.title,
+                "Details": item.summary,
             }
             for item in items
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — case timeline"):
+        st.dataframe(
+            [
+                {
+                    "event_id": item.event_id,
+                    "event_type": item.event_type.value,
+                    "actor_id": _display(item.actor_id),
+                }
+                for item in items
+            ],
+            hide_index=True,
+        )
 
 
 def _render_saved_cases_workspace(principal, active_firm):
@@ -2867,17 +2930,29 @@ def _render_saved_cases_workspace(principal, active_firm):
     st.dataframe(
         [
             {
-                "case_id": case.case_id,
-                "title": case.title,
-                "status": case.status.value,
-                "notice_form": case.notice_form.value,
-                "proceeding_type": case.proceeding_type.value,
-                "response_deadline": _display(case.response_deadline),
+                "Matter": case.title,
+                "Status": _friendly_enum(case.status),
+                "Notice": _notice_form_label(case.notice_form),
+                "Proceeding": _proceeding_label(case.proceeding_type),
+                "Response deadline": _display(case.response_deadline),
             }
             for case in cases
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — saved cases"):
+        st.dataframe(
+            [
+                {
+                    "case_id": case.case_id,
+                    "status": case.status.value,
+                    "notice_form": case.notice_form.value,
+                    "proceeding_type": case.proceeding_type.value,
+                }
+                for case in cases
+            ],
+            hide_index=True,
+        )
 
     labels = {
         f"{case.title} — {case.case_id}": case
@@ -2981,15 +3056,18 @@ def _render_saved_cases_workspace(principal, active_firm):
         _reset_evidence_workspace()
 
     st.subheader("Opened case")
-    st.write(
-        {
-            "case_id": reopened.case.case_id,
-            "title": reopened.case.title,
-            "status": reopened.case.status.value,
-            "notice_filename": reopened.notice_document.original_filename,
-            "analysis_source": "recomputed_from_encrypted_notice",
-        }
+    st.write(f"**{reopened.case.title}**")
+    st.caption(
+        f"{_friendly_enum(reopened.case.status)} · "
+        f"{reopened.notice_document.original_filename}"
     )
+    with st.expander("Technical details — opened case"):
+        st.write(
+            {
+                "case_id": reopened.case.case_id,
+                "analysis_source": "recomputed_from_encrypted_notice",
+            }
+        )
     st.caption(
         "The persisted notice was decrypted and integrity-checked, then "
         "the current analysis engine recomputed this live result. Saved "
@@ -3087,12 +3165,14 @@ def _render_save_intake_workspace(
     saved_intakes = st.session_state.setdefault(_SAVED_INTAKES, {})
     existing_case_id = saved_intakes.get(save_key)
     if existing_case_id:
-        st.write(
-            {
-                "saved_case_id": existing_case_id,
-                "status": "intake",
-            }
-        )
+        st.write("This notice is already saved as an intake case.")
+        with st.expander("Technical details — saved intake"):
+            st.write(
+                {
+                    "saved_case_id": existing_case_id,
+                    "status": "intake",
+                }
+            )
         return
 
     service = None
@@ -3179,16 +3259,20 @@ def _render_save_intake_workspace(
         selected_registration = registration_labels[
             selected_registration_label
         ]
-        st.write(
-            {
-                "selected_client_id": selected_client.client_id,
-                "selected_registration_id": (
-                    None
-                    if selected_registration is None
-                    else selected_registration.registration_id
-                ),
-            }
+        st.caption(
+            "Using existing client: " + selected_client.display_name
         )
+        with st.expander("Technical details — selected client"):
+            st.write(
+                {
+                    "selected_client_id": selected_client.client_id,
+                    "selected_registration_id": (
+                        None
+                        if selected_registration is None
+                        else selected_registration.registration_id
+                    ),
+                }
+            )
     else:
         client_name = st.text_input(
             "Client name",
@@ -3209,7 +3293,7 @@ def _render_save_intake_workspace(
     )
     default_title = (
         f"{notice_form_label} — "
-        f"{result.classification.proceeding_type.value}"
+        f"{_proceeding_label(result.classification.proceeding_type)}"
     )
     case_title = st.text_input(
         "Case title",
@@ -3293,13 +3377,17 @@ def _render_save_intake_workspace(
 
     saved_intakes[save_key] = saved_case.case_id
     st.write(
-        {
-            "saved_case_id": saved_case.case_id,
-            "status": saved_case.status.value,
-            "client_id": saved_case.client_id,
-            "registration_id": saved_case.registration_id,
-        }
+        "Intake case saved successfully. It is now available in Saved cases."
     )
+    with st.expander("Technical details — saved intake"):
+        st.write(
+            {
+                "saved_case_id": saved_case.case_id,
+                "status": saved_case.status.value,
+                "client_id": saved_case.client_id,
+                "registration_id": saved_case.registration_id,
+            }
+        )
 
 
 def _render_evidence_workspace(notice_pdf_bytes, result):
