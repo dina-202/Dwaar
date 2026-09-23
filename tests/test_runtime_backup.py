@@ -27,6 +27,7 @@ from modules.sqlite_case_repository import LocalSQLiteCaseRepository
 NOW = datetime(2026, 9, 23, 7, 30, tzinfo=timezone.utc)
 STORAGE_KEY = "objects/" + "a" * 32
 PLAINTEXT = b"professional notice payload"
+DOCUMENT_KEY = b"k" * 32
 
 
 class RuntimeBackupFixture(unittest.TestCase):
@@ -55,7 +56,7 @@ class RuntimeBackupFixture(unittest.TestCase):
         )
         self.store = EncryptedLocalDocumentStore(
             str(self.object_root),
-            b"k" * 32,
+            DOCUMENT_KEY,
         )
         self.store.put(STORAGE_KEY, PLAINTEXT)
         self.repo.add_document_ref(
@@ -69,6 +70,7 @@ class RuntimeBackupFixture(unittest.TestCase):
                 sha256_hex="1" * 64,
                 storage_key=STORAGE_KEY,
                 created_at=NOW,
+                document_key=DOCUMENT_KEY,
             )
         )
 
@@ -82,6 +84,7 @@ class RuntimeBackupFixture(unittest.TestCase):
             backup_root=str(self.backup_root),
             backup_id=backup_id,
             created_at=NOW,
+            document_key=DOCUMENT_KEY,
         )
 
 
@@ -89,13 +92,16 @@ class RuntimeBackupTests(RuntimeBackupFixture):
     def test_backup_round_trip_is_verified_without_decrypting_objects(self):
         manifest = self.create()
         backup_dir = self.backup_root / "backup-001"
-        loaded = verify_runtime_backup(str(backup_dir))
+        loaded = verify_runtime_backup(str(backup_dir), document_key=DOCUMENT_KEY)
 
         self.assertEqual(loaded, manifest)
         self.assertEqual(manifest.object_count, 1)
         self.assertEqual(manifest.objects[0].storage_key, STORAGE_KEY)
         self.assertEqual(manifest.source_schema_version, 6)
-        self.assertTrue((backup_dir / "dwaar.sqlite3").is_file())
+        encrypted_db = backup_dir / "dwaar.sqlite3.enc"
+        self.assertTrue(encrypted_db.is_file())
+        self.assertNotIn(b"Client", encrypted_db.read_bytes())
+        self.assertNotIn(b"Matter", encrypted_db.read_bytes())
         copied = backup_dir / "objects" / ("a" * 32 + ".dwaar")
         self.assertTrue(copied.is_file())
         self.assertNotIn(PLAINTEXT, copied.read_bytes())
@@ -111,13 +117,13 @@ class RuntimeBackupTests(RuntimeBackupFixture):
     def test_live_mutation_after_backup_does_not_change_backup(self):
         self.create()
         backup_dir = self.backup_root / "backup-001"
-        before = (backup_dir / "dwaar.sqlite3").read_bytes()
+        before = (backup_dir / "dwaar.sqlite3.enc").read_bytes()
         self.repo.create_client(Client("C-2", "F-1", "Later", NOW))
         self.assertEqual(
-            (backup_dir / "dwaar.sqlite3").read_bytes(),
+            (backup_dir / "dwaar.sqlite3.enc").read_bytes(),
             before,
         )
-        verify_runtime_backup(str(backup_dir))
+        verify_runtime_backup(str(backup_dir), document_key=DOCUMENT_KEY)
 
     def test_missing_referenced_live_object_aborts_without_publishing(self):
         self.store.delete(STORAGE_KEY)
@@ -140,15 +146,15 @@ class RuntimeBackupTests(RuntimeBackupFixture):
         object_path = backup_dir / "objects" / ("a" * 32 + ".dwaar")
         object_path.write_bytes(object_path.read_bytes() + b"tamper")
         with self.assertRaisesRegex(RuntimeBackupError, "object hash"):
-            verify_runtime_backup(str(backup_dir))
+            verify_runtime_backup(str(backup_dir), document_key=DOCUMENT_KEY)
 
     def test_tampered_backup_database_is_rejected(self):
         self.create()
         backup_dir = self.backup_root / "backup-001"
-        database = backup_dir / "dwaar.sqlite3"
+        database = backup_dir / "dwaar.sqlite3.enc"
         database.write_bytes(database.read_bytes() + b"tamper")
         with self.assertRaisesRegex(RuntimeBackupError, "database hash"):
-            verify_runtime_backup(str(backup_dir))
+            verify_runtime_backup(str(backup_dir), document_key=DOCUMENT_KEY)
 
     def test_extra_backup_object_is_rejected(self):
         self.create()
@@ -157,7 +163,7 @@ class RuntimeBackupTests(RuntimeBackupFixture):
             b"unexpected"
         )
         with self.assertRaisesRegex(RuntimeBackupError, "unexpected file set"):
-            verify_runtime_backup(str(backup_dir))
+            verify_runtime_backup(str(backup_dir), document_key=DOCUMENT_KEY)
 
     def test_duplicate_backup_id_refuses_overwrite(self):
         self.create()
@@ -198,13 +204,26 @@ class RuntimeBackupTests(RuntimeBackupFixture):
         with self.assertRaisesRegex(RuntimeBackupError, "invalid encrypted"):
             self.create()
 
+    def test_wrong_document_key_cannot_verify_backup(self):
+        self.create()
+        with self.assertRaisesRegex(
+            RuntimeBackupError, "authentication failed"
+        ):
+            verify_runtime_backup(
+                str(self.backup_root / "backup-001"),
+                document_key=b"z" * 32,
+            )
+
     def test_manifest_directory_name_binding_is_verified(self):
         self.create()
         source = self.backup_root / "backup-001"
         renamed = self.backup_root / "renamed"
         source.rename(renamed)
         with self.assertRaisesRegex(RuntimeBackupError, "directory name"):
-            verify_runtime_backup(str(renamed))
+            verify_runtime_backup(
+                str(renamed),
+                document_key=DOCUMENT_KEY,
+            )
 
 
 if __name__ == "__main__":
