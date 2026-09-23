@@ -225,6 +225,45 @@ class ContextAwareLegalResearchTests(unittest.TestCase):
         self.assertEqual(result.matches, ())
         self.assertEqual(len(result.unresolved_topics), 2)
 
+    def test_section74_scope_resolves_for_fy2023_24_or_earlier(self):
+        context = build_legal_date_context(
+            [
+                fact("F-N", FactType.NOTICE_DATE, "Issued 17/08/2026"),
+                fact("F-T", FactType.TAX_PERIOD, "FY 2023-24"),
+            ]
+        )
+        result = resolve_gst_legal_brief_from_context(
+            ProceedingType.GST_SEC74_FRAUD,
+            context,
+        )
+        self.assertEqual(result.unresolved_topics, ())
+        self.assertEqual(len(result.matches), 3)
+        fraud = [
+            item for item in result.matches
+            if item.rule.topic.value == "fraud_suppression_scope"
+        ][0]
+        self.assertEqual(
+            fraud.rule.effective_to,
+            date(2024, 3, 31),
+        )
+
+    def test_section74_scope_does_not_leak_into_fy2024_25(self):
+        context = build_legal_date_context(
+            [
+                fact("F-N", FactType.NOTICE_DATE, "Issued 17/08/2026"),
+                fact("F-T", FactType.TAX_PERIOD, "FY 2024-25"),
+            ]
+        )
+        result = resolve_gst_legal_brief_from_context(
+            ProceedingType.GST_SEC74_FRAUD,
+            context,
+        )
+        self.assertEqual(len(result.matches), 2)
+        self.assertEqual(
+            tuple(item.value for item in result.unresolved_topics),
+            ("fraud_suppression_scope",),
+        )
+
     def test_itc_tax_period_anchor_does_not_fake_missing_itc_law(self):
         context = build_legal_date_context(
             [
