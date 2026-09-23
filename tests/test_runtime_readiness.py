@@ -159,8 +159,6 @@ class RuntimeReadinessTests(unittest.TestCase):
 
     def test_missing_ocr_runtime_blocks_readiness_without_details(self):
         with tempfile.TemporaryDirectory() as temp:
-            self.ocr_patcher.stop()
-            self.addCleanup(lambda: None)
             with patch(
                 "modules.runtime_readiness._ocr_runtime_available",
                 return_value=False,
