@@ -1,0 +1,22 @@
+Workflow: GST Section 61 scrutiny proceedings (GST_SEC61_SCRUTINY).
+
+Return typed-block selections for these supplied sections only, in their
+supplied order:
+
+- sec61_scrutiny.s1 — Scrutiny working paper
+- sec61_scrutiny.s2 — Discrepancy-by-discrepancy response matrix
+- sec61_scrutiny.s3 — Reviewable ASMT-11 explanation
+
+Selection boundaries:
+
+- Keep every department-stated discrepancy as an allegation unless the
+  controlled context independently supports a taxpayer fact.
+- Preserve each discrepancy separately; do not collapse distinct allegations
+  into one admission or conclusion.
+- Use deadline blocks only from the supplied deadline context. Do not supply a
+  generic Rule 99 response period.
+- Select fact, evidence, requirement and review blocks only from the controlled
+  context.
+- Keep unresolved evidence/factual matters unresolved.
+- Do not author final wording, invent a reconciliation result, or add a factual
+  premise.
