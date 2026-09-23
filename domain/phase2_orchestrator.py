@@ -37,6 +37,7 @@ from domain.models import (
     FactStatus as _FactStatus,
     FactType as _FactType,
     NoticeClassification as _NoticeClassification,
+    ClassificationRunStatus as _ClassificationRunStatus,
     Phase2AnalysisResult as _Phase2AnalysisResult,
     ProceedingType as _ProceedingType,
     RequirementKind as _RequirementKind,
@@ -89,6 +90,10 @@ _NO_INPUT_MESSAGE = (
 )
 _FAILED_MESSAGE = (
     "Fact extraction failed, so specialist drafting is blocked."
+)
+_CLASSIFICATION_FAILED_MESSAGE = (
+    "Notice classification could not be completed because the AI "
+    "classification step did not return a usable result."
 )
 _UNKNOWN_MESSAGE = (
     "This notice could not be matched to an approved deep specialist workflow."
@@ -317,6 +322,8 @@ def _build_triage_summary(
 ) -> _Optional[_TriageSummary]:
     if extraction_result.status is _FactExtractionStatus.NO_INPUT:
         message = _NO_INPUT_MESSAGE
+    elif classification.classification_status is _ClassificationRunStatus.FAILED:
+        message = _CLASSIFICATION_FAILED_MESSAGE
     elif extraction_result.status is _FactExtractionStatus.FAILED:
         message = _FAILED_MESSAGE
     elif (
