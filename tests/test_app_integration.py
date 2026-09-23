@@ -1629,6 +1629,36 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
                 fact_type=FactType.REQUESTED_DOCUMENT,
                 fact_role=FactRole.NONE,
             ),
+            ExtractedFact(
+                fact_id="F-006",
+                claim="Section cited",
+                status=FactStatus.CONFIRMED,
+                source_text="Section 61 of the CGST Act",
+                source_page=1,
+                allowed_in_draft=DraftPermission.YES,
+                fact_type=FactType.STATUTORY_SECTION,
+                fact_role=FactRole.NONE,
+            ),
+            ExtractedFact(
+                fact_id="F-007",
+                claim="Rule cited",
+                status=FactStatus.CONFIRMED,
+                source_text="Rule 99 of the CGST Rules",
+                source_page=1,
+                allowed_in_draft=DraftPermission.YES,
+                fact_type=FactType.STATUTORY_RULE,
+                fact_role=FactRole.NONE,
+            ),
+            ExtractedFact(
+                fact_id="F-008",
+                claim="Annexure referenced",
+                status=FactStatus.CONFIRMED,
+                source_text="Annexure A",
+                source_page=2,
+                allowed_in_draft=DraftPermission.YES,
+                fact_type=FactType.REFERENCED_ANNEXURE,
+                fact_role=FactRole.NONE,
+            ),
         ]
         result.deadline_result.response_period_days = 30
         result.deadline_result.response_deadline = None
@@ -1644,6 +1674,11 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
         self.assertIn("Reply within 30 days from the date of receipt", text)
         self.assertIn("Department allegations", text)
         self.assertIn("Documents requested in the notice", text)
+        self.assertIn("Law cited in the notice", text)
+        self.assertIn("Section 61 of the CGST Act", text)
+        self.assertIn("Rule 99 of the CGST Rules", text)
+        self.assertIn("Annexures referenced in the notice", text)
+        self.assertIn("Annexure A", text)
         self.assertIn("Next review steps", text)
         self.assertIn("Confirm the actual service/receipt date", text)
         self.assertNotIn("model claim must not render", text)
