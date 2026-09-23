@@ -16,6 +16,11 @@ from modules.sqlite_case_repository import LocalSQLiteCaseRepository
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "operator_health.py"
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from modules.runtime_readiness import _ocr_runtime_available
 KEY = b"o" * 32
 KEY_ID = "doc-key-operator-a"
 
@@ -92,13 +97,26 @@ class OperatorHealthCliTests(unittest.TestCase):
             now - timedelta(minutes=15),
         )
         completed = self.run_cli(backup, 24)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = self.payload(completed)
-        self.assertTrue(payload["healthy"])
+        ocr_available = _ocr_runtime_available()
         self.assertEqual(
-            [item["status"] for item in payload["checks"]],
-            ["pass", "pass", "pass", "pass", "pass"],
+            completed.returncode,
+            0 if ocr_available else 1,
+            completed.stderr,
         )
+        self.assertIs(payload["healthy"], ocr_available)
+        checks = {item["code"]: item for item in payload["checks"]}
+        self.assertEqual(
+            checks["runtime_preflight"]["status"],
+            "pass" if ocr_available else "blocked",
+        )
+        for code in (
+            "live_storage_consistency",
+            "backup_verification",
+            "backup_key_identity",
+            "backup_freshness",
+        ):
+            self.assertEqual(checks[code]["status"], "pass")
         rendered = completed.stdout
         self.assertNotIn(str(self.root), rendered)
         self.assertNotIn("operator-fresh", rendered)
@@ -118,7 +136,10 @@ class OperatorHealthCliTests(unittest.TestCase):
         payload = self.payload(completed)
         self.assertFalse(payload["healthy"])
         checks = {item["code"]: item for item in payload["checks"]}
-        self.assertEqual(checks["runtime_preflight"]["status"], "pass")
+        self.assertEqual(
+            checks["runtime_preflight"]["status"],
+            "pass" if _ocr_runtime_available() else "blocked",
+        )
         self.assertEqual(
             checks["live_storage_consistency"]["status"], "pass"
         )
