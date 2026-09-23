@@ -550,6 +550,8 @@ def run_app(
     draft_service_error=None,
     filing_service=None,
     filing_service_error=None,
+    legal_brief_service=None,
+    legal_brief_service_error=None,
     professional_workbench_service=None,
     professional_workbench_service_error=None,
     persisted_evidence_ref=None,
@@ -738,6 +740,15 @@ def run_app(
     if filing_service_error is not None:
         filing_service_mock.side_effect = filing_service_error
 
+    if legal_brief_service is None:
+        legal_brief_service = Mock()
+        legal_brief_service.list_for_snapshot.return_value = []
+    elif isinstance(legal_brief_service.list_for_snapshot.return_value, Mock):
+        legal_brief_service.list_for_snapshot.return_value = []
+    legal_brief_service_mock = Mock(return_value=legal_brief_service)
+    if legal_brief_service_error is not None:
+        legal_brief_service_mock.side_effect = legal_brief_service_error
+
     if professional_workbench_service is None:
         professional_workbench_service = Mock()
 
@@ -793,6 +804,7 @@ def run_app(
     fake.evidence_review_service_mock = evidence_review_service_mock
     fake.draft_service_mock = draft_service_mock
     fake.filing_service_mock = filing_service_mock
+    fake.legal_brief_service_mock = legal_brief_service_mock
     fake.professional_workbench_service_mock = (
         professional_workbench_service_mock
     )
@@ -849,6 +861,11 @@ def run_app(
             runtime_persistence_module,
             "build_authorized_filing_service",
             filing_service_mock,
+        ),
+        patch.object(
+            runtime_persistence_module,
+            "build_authorized_legal_brief_service",
+            legal_brief_service_mock,
         ),
         patch.object(
             runtime_persistence_module,
@@ -2487,7 +2504,7 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
             call
             for call in calls_named(fake, "button")
             if call[1]
-            and call[1][0] == "Save current analysis snapshot"
+            and call[1][0] == "Save current analysis"
         ]
         self.assertEqual(save_buttons, [])
         snapshot_service.save_current_analysis.assert_not_called()
@@ -2551,7 +2568,7 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
 
         snapshot_service.load_snapshot.assert_called_once()
         text = log_text(fake)
-        self.assertIn("Historical analysis snapshot", text)
+        self.assertIn("Historical analysis version", text)
         self.assertIn("Historical record only", text)
         self.assertIn(ANALYSIS_ENGINE_VERSION, text)
         self.assertIn("HISTORICAL DRAFT SENTINEL", text)
@@ -2613,7 +2630,7 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
 
         text = log_text(fake)
         self.assertIn(
-            "historical analysis snapshot could not be loaded",
+            "saved analysis could not be loaded",
             text.lower(),
         )
         self.assertNotIn("private ciphertext", text)
@@ -2641,7 +2658,7 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
         )
 
         text = log_text(fake)
-        self.assertIn("snapshot was saved", text.lower())
+        self.assertIn("analysis was saved", text.lower())
         self.assertIn("could not be refreshed", text.lower())
         self.assertNotIn("private refresh detail", text)
 
@@ -2826,7 +2843,7 @@ class DraftWorkProductUiTests(unittest.TestCase):
 
         self.assertIn("Draft work product", headers(fake))
         self.assertIn(
-            "Save an analysis snapshot before creating a durable draft",
+            "Save the current analysis before creating a saved draft work product",
             log_text(fake),
         )
         draft_service.create_generated_baseline.assert_not_called()
@@ -3013,7 +3030,7 @@ class DraftWorkProductUiTests(unittest.TestCase):
         self.assertEqual(len(historical_views), 1)
         self.assertTrue(historical_views[0][2]["disabled"])
         self.assertIn(
-            "Historical draft versions are immutable",
+            "Saved draft versions cannot be overwritten",
             log_text(fake),
         )
         draft_service.create_edited_version.assert_not_called()
@@ -3818,7 +3835,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
 
         text = log_text(fake)
         self.assertIn(
-            "Persisted evidence could not be analyzed",
+            "Attached evidence could not be analyzed",
             text,
         )
         self.assertNotIn("private llm/storage detail", text)
@@ -4236,7 +4253,7 @@ class ClientWorkspaceUiTests(unittest.TestCase):
         )
         self.assertIn("Client workspace", headers(fake))
         self.assertIn(
-            "new notice upload requires CASE_CREATE",
+            "does not allow creating a new notice intake",
             log_text(fake),
         )
 
