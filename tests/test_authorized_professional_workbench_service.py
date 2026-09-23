@@ -1,0 +1,147 @@
+"""Tests for authorized professional case cockpit."""
+
+import unittest
+from datetime import datetime, timezone
+from unittest import mock
+
+from domain.analysis_snapshot_models import AnalysisSnapshotRef
+from domain.case_models import CaseRecord, CaseStatus
+from domain.models import NoticeForm, ProceedingType
+from modules.authorized_professional_workbench_service import (
+    AuthorizedProfessionalWorkbenchService,
+)
+
+
+NOW = datetime(2026, 9, 23, 5, 30, tzinfo=timezone.utc)
+
+
+def case():
+    return CaseRecord(
+        case_id="CASE-1",
+        firm_id="F-1",
+        client_id="C-1",
+        registration_id=None,
+        title="Matter",
+        status=CaseStatus.ANALYZED,
+        proceeding_type=ProceedingType.GST_SEC73_ITC,
+        notice_form=NoticeForm.DRC_01,
+        opened_at=NOW,
+    )
+
+
+def snapshot():
+    return AnalysisSnapshotRef(
+        snapshot_id="SNAP-1",
+        case_id="CASE-1",
+        source_document_id="DOC-1",
+        source_document_sha256="a" * 64,
+        schema_version=1,
+        engine_version="phase2-contract-2026.09.22.1",
+        byte_size=10,
+        sha256_hex="b" * 64,
+        storage_key="objects/snap",
+        created_at=NOW,
+        created_by="OIDC-" + "c" * 64,
+    )
+
+
+class AuthorizedProfessionalWorkbenchTests(unittest.TestCase):
+    def build(self):
+        cases = mock.Mock()
+        snapshots = mock.Mock()
+        legal = mock.Mock()
+        drafts = mock.Mock()
+        filings = mock.Mock()
+        cases.get_case.return_value = case()
+        snapshots.list_snapshot_history.return_value = [snapshot()]
+        legal.list_for_snapshot.return_value = []
+        drafts.list_versions.return_value = []
+        filings.list_filings.return_value = []
+        service = AuthorizedProfessionalWorkbenchService(
+            cases, snapshots, legal, drafts, filings
+        )
+        return service, cases, snapshots, legal, drafts, filings
+
+    def test_reads_all_artifacts_through_authorized_services(self):
+        service, cases, snapshots, legal, drafts, filings = self.build()
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        self.assertEqual(result.case_id, "CASE-1")
+        cases.get_case.assert_called_once_with(
+            mock.sentinel.principal, "F-1", "CASE-1"
+        )
+        snapshots.list_snapshot_history.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        legal.list_for_snapshot.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+        drafts.list_versions.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        filings.list_filings.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+
+    def test_missing_case_stops_before_artifact_reads(self):
+        service, cases, snapshots, legal, drafts, filings = self.build()
+        cases.get_case.return_value = None
+        with self.assertRaises(LookupError):
+            service.get_case_attention(
+                mock.sentinel.principal,
+                "F-1",
+                case_id="CASE-X",
+            )
+        snapshots.list_snapshot_history.assert_not_called()
+        legal.list_for_snapshot.assert_not_called()
+        drafts.list_versions.assert_not_called()
+        filings.list_filings.assert_not_called()
+
+    def test_no_snapshot_does_not_query_legal_briefs(self):
+        service, _, snapshots, legal, _, _ = self.build()
+        snapshots.list_snapshot_history.return_value = []
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        legal.list_for_snapshot.assert_not_called()
+        self.assertIsNone(result.latest_snapshot_id)
+
+    def test_only_latest_snapshot_legal_history_is_loaded(self):
+        service, _, snapshots, legal, _, _ = self.build()
+        older = snapshot()
+        newer = AnalysisSnapshotRef(
+            **{
+                **snapshot().__dict__,
+                "snapshot_id": "SNAP-2",
+                "created_at": NOW.replace(minute=31),
+            }
+        )
+        snapshots.list_snapshot_history.return_value = [newer, older]
+        legal.list_for_snapshot.return_value = []
+        service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        self.assertEqual(
+            legal.list_for_snapshot.call_args.kwargs["snapshot_id"],
+            "SNAP-2",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
