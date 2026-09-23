@@ -70,7 +70,6 @@ class RuntimeBackupFixture(unittest.TestCase):
                 sha256_hex="1" * 64,
                 storage_key=STORAGE_KEY,
                 created_at=NOW,
-                document_key=DOCUMENT_KEY,
             )
         )
 
@@ -178,6 +177,7 @@ class RuntimeBackupTests(RuntimeBackupFixture):
                 backup_root=str(self.object_root / "backups"),
                 backup_id="backup-001",
                 created_at=NOW,
+                document_key=DOCUMENT_KEY,
             )
 
     def test_unsupported_schema_version_fails_closed(self):
