@@ -818,27 +818,33 @@ def _render_historical_snapshot(snapshot):
         "with the current engine."
     )
     st.write(
-        {
-            "snapshot_id": metadata.snapshot_id,
-            "created_at": metadata.created_at.isoformat(),
-            "schema_version": metadata.schema_version,
-            "engine_version": metadata.engine_version,
-            "source_document_id": metadata.source_document_id,
-            "source_document_sha256": metadata.source_document_sha256,
-        }
+        f"Saved {metadata.created_at.isoformat(timespec='minutes')} · "
+        f"Engine {metadata.engine_version}"
     )
 
     classification = payload["classification"]
     st.write(
-        {
-            "historical_notice_form": classification["notice_form"],
-            "historical_proceeding_type": (
-                classification["proceeding_type"]
-            ),
-            "historical_support_level": classification["support_level"],
-            "historical_confidence": classification["confidence"],
-        }
+        "**Notice:** "
+        + classification["notice_form"].replace("_", " ").upper()
+        + " · **Proceeding:** "
+        + classification["proceeding_type"].replace("_", " ").title()
     )
+    st.caption(
+        "Support: "
+        + classification["support_level"].replace("_", " ").title()
+        + " · Confidence: "
+        + classification["confidence"].replace("_", " ").title()
+    )
+    with st.expander("Technical details — historical snapshot"):
+        st.write(
+            {
+                "snapshot_id": metadata.snapshot_id,
+                "schema_version": metadata.schema_version,
+                "engine_version": metadata.engine_version,
+                "source_document_id": metadata.source_document_id,
+                "source_document_sha256": metadata.source_document_sha256,
+            }
+        )
 
     extraction = payload["extraction"]
     historical_facts = extraction["facts"]
@@ -849,34 +855,36 @@ def _render_historical_snapshot(snapshot):
 
     deadline = payload["deadline"]
     st.write(
-        {
-            "historical_response_deadline": deadline["response_deadline"],
-            "historical_deadline_status": deadline["deadline_status"],
-            "historical_days_remaining": deadline["days_remaining"],
-            "historical_hearing_date": deadline["hearing_date"],
-            "historical_hearing_status": deadline["hearing_status"],
-        }
+        "**Historical response deadline:** "
+        + _display(deadline["response_deadline"])
+        + " · "
+        + str(deadline["deadline_status"]).replace("_", " ").title()
     )
+    if deadline["hearing_date"] is not None:
+        st.caption(
+            "Hearing: "
+            + str(deadline["hearing_date"])
+            + " · "
+            + str(deadline["hearing_status"]).replace("_", " ").title()
+        )
 
     validation = payload["validation"]
-    st.write(
-        {
-            "historical_validation_status": validation["overall_status"],
-            "historical_draft_eligibility": (
-                validation["draft_eligibility"]
-            ),
-        }
-    )
-
     draft = payload["draft"]
     st.write(
-        {
-            "historical_draft_status": draft["status"],
-            "historical_draft_eligibility": (
-                draft["draft_eligibility"]
-            ),
-        }
+        "**Historical validation:** "
+        + str(validation["overall_status"]).replace("_", " ").title()
+        + " · **Drafting:** "
+        + str(draft["draft_eligibility"]).replace("_", " ").title()
     )
+    with st.expander("Technical details — historical decision state"):
+        st.write(
+            {
+                "deadline": deadline,
+                "validation_status": validation["overall_status"],
+                "draft_eligibility": validation["draft_eligibility"],
+                "draft_status": draft["status"],
+            }
+        )
     if draft["sections"]:
         st.caption(
             "Historical draft text below is preserved for audit/history "
@@ -939,12 +947,10 @@ def _render_snapshot_history(
             except Exception:
                 st.error("The analysis snapshot could not be saved.")
             else:
-                st.write(
-                    {
-                        "saved_snapshot_id": saved.snapshot_id,
-                        "engine_version": saved.engine_version,
-                    }
-                )
+                st.write("Current analysis snapshot saved.")
+                st.caption(f"Engine {saved.engine_version}")
+                with st.expander("Technical details — saved snapshot"):
+                    st.write({"saved_snapshot_id": saved.snapshot_id})
                 try:
                     history = snapshot_service.list_snapshot_history(
                         principal,
@@ -965,16 +971,25 @@ def _render_snapshot_history(
     st.dataframe(
         [
             {
-                "snapshot_id": item.snapshot_id,
-                "created_at": item.created_at.isoformat(),
-                "schema_version": item.schema_version,
-                "engine_version": item.engine_version,
-                "source_document_id": item.source_document_id,
+                "Saved at": item.created_at.isoformat(timespec="minutes"),
+                "Engine": item.engine_version,
             }
             for item in history
         ],
         hide_index=True,
     )
+    with st.expander("Technical details — analysis history"):
+        st.dataframe(
+            [
+                {
+                    "snapshot_id": item.snapshot_id,
+                    "schema_version": item.schema_version,
+                    "source_document_id": item.source_document_id,
+                }
+                for item in history
+            ],
+            hide_index=True,
+        )
 
     labels = {
         (
@@ -1039,17 +1054,21 @@ def _render_snapshot_history(
                 except Exception:
                     st.error("The verified legal brief could not be saved.")
                 else:
-                    st.write(
-                        {
-                            "saved_legal_brief_id": (
-                                saved_brief.legal_brief_id
-                            ),
-                            "catalog_version": saved_brief.catalog_version,
-                            "legal_as_of_date": (
-                                saved_brief.as_of_date.isoformat()
-                            ),
-                        }
+                    st.write("Verified legal brief saved.")
+                    st.caption(
+                        f"Catalog {saved_brief.catalog_version} · "
+                        f"Legal as of {saved_brief.as_of_date.isoformat()}"
                     )
+                    with st.expander(
+                        "Technical details — saved legal brief"
+                    ):
+                        st.write(
+                            {
+                                "saved_legal_brief_id": (
+                                    saved_brief.legal_brief_id
+                                )
+                            }
+                        )
                     try:
                         legal_briefs = legal_brief_service.list_for_snapshot(
                             principal,
@@ -1068,16 +1087,26 @@ def _render_snapshot_history(
             st.dataframe(
                 [
                     {
-                        "legal_brief_id": item.legal_brief_id,
-                        "created_at": item.created_at.isoformat(),
-                        "catalog_version": item.catalog_version,
-                        "as_of_date": item.as_of_date.isoformat(),
-                        "proceeding_type": item.proceeding_type.value,
+                        "Saved at": item.created_at.isoformat(timespec="minutes"),
+                        "Catalog": item.catalog_version,
+                        "Legal as of": item.as_of_date.isoformat(),
+                        "Proceeding": _proceeding_label(item.proceeding_type),
                     }
                     for item in legal_briefs
                 ],
                 hide_index=True,
             )
+            with st.expander("Technical details — legal research history"):
+                st.dataframe(
+                    [
+                        {
+                            "legal_brief_id": item.legal_brief_id,
+                            "proceeding_type": item.proceeding_type.value,
+                        }
+                        for item in legal_briefs
+                    ],
+                    hide_index=True,
+                )
             brief_labels = {
                 (
                     f"{item.created_at.isoformat()} — "
@@ -1595,25 +1624,39 @@ def _render_filing_workspace(
         st.dataframe(
             [
                 {
-                    "filing_id": item.filing_id,
-                    "filing_reference": item.filing_reference,
-                    "approved_draft_version_id": (
-                        item.approved_draft_version_id
+                    "Filing reference": item.filing_reference,
+                    "Filed at": item.filed_at.isoformat(timespec="minutes"),
+                    "Filed by": item.filed_by,
+                    "Acknowledgement": (
+                        "Attached"
+                        if item.acknowledgement_document_id is not None
+                        else "Pending"
                     ),
-                    "filed_response_document_id": (
-                        item.filed_response_document_id
-                    ),
-                    "acknowledgement_document_id": _display(
-                        item.acknowledgement_document_id
-                    ),
-                    "filed_at": item.filed_at.isoformat(),
-                    "filed_by": item.filed_by,
-                    "recorded_at": item.recorded_at.isoformat(),
                 }
                 for item in filings
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — filing history"):
+            st.dataframe(
+                [
+                    {
+                        "filing_id": item.filing_id,
+                        "approved_draft_version_id": (
+                            item.approved_draft_version_id
+                        ),
+                        "filed_response_document_id": (
+                            item.filed_response_document_id
+                        ),
+                        "acknowledgement_document_id": _display(
+                            item.acknowledgement_document_id
+                        ),
+                        "recorded_at": item.recorded_at.isoformat(),
+                    }
+                    for item in filings
+                ],
+                hide_index=True,
+            )
     else:
         st.write("No filing records yet.")
 
@@ -1766,21 +1809,23 @@ def _render_filing_workspace(
                                 case_id=reopened.case.case_id,
                             )
                             st.write(
-                                {
-                                    "recorded_filing_id": (
-                                        saved.filing_id
-                                    ),
-                                    "filing_reference": (
-                                        saved.filing_reference
-                                    ),
-                                    "filed_response_document_id": (
-                                        saved.filed_response_document_id
-                                    ),
-                                    "acknowledgement_document_id": (
-                                        saved.acknowledgement_document_id
-                                    ),
-                                }
+                                "Filing recorded successfully. Reference: "
+                                f"**{saved.filing_reference}**"
                             )
+                            with st.expander(
+                                "Technical details — recorded filing"
+                            ):
+                                st.write(
+                                    {
+                                        "recorded_filing_id": saved.filing_id,
+                                        "filed_response_document_id": (
+                                            saved.filed_response_document_id
+                                        ),
+                                        "acknowledgement_document_id": (
+                                            saved.acknowledgement_document_id
+                                        ),
+                                    }
+                                )
 
     missing_ack = [
         item
@@ -1836,14 +1881,18 @@ def _render_filing_workspace(
         except Exception:
             st.error("The acknowledgement could not be attached.")
         else:
-            st.write(
-                {
-                    "updated_filing_id": updated.filing_id,
-                    "acknowledgement_document_id": (
-                        updated.acknowledgement_document_id
-                    ),
-                }
-            )
+            st.write("Acknowledgement attached successfully.")
+            with st.expander(
+                "Technical details — acknowledgement attachment"
+            ):
+                st.write(
+                    {
+                        "updated_filing_id": updated.filing_id,
+                        "acknowledgement_document_id": (
+                            updated.acknowledgement_document_id
+                        ),
+                    }
+                )
 
 
 def _render_persisted_evidence_workspace(
