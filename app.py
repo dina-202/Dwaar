@@ -77,6 +77,24 @@ def _engineering_diagnostics_enabled():
     ).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _render_internal_failure(
+    professional_message,
+    error,
+    *,
+    technical_label,
+):
+    """Fail closed in CA mode while preserving exact diagnostics internally."""
+    st.error(professional_message)
+    if _engineering_diagnostics_enabled():
+        with st.expander(technical_label):
+            st.write(
+                {
+                    "error_type": type(error).__name__,
+                    "message": str(error),
+                }
+            )
+
+
 def _render_checks(checks, *, technical=False):
     if not checks:
         st.write("None.")
@@ -4216,10 +4234,22 @@ def _render_evidence_workspace(notice_pdf_bytes, result):
                     documents,
                 )
         except RuntimeError as error:
-            st.error(str(error))
+            _render_internal_failure(
+                "Supporting evidence could not be analyzed safely.",
+                error,
+                technical_label=(
+                    "Technical details — supporting evidence analysis failure"
+                ),
+            )
             return
-        except Exception:
-            st.error("Supporting evidence could not be analyzed.")
+        except Exception as error:
+            _render_internal_failure(
+                "Supporting evidence could not be analyzed.",
+                error,
+                technical_label=(
+                    "Technical details — supporting evidence analysis failure"
+                ),
+            )
             return
 
         st.session_state[_EVIDENCE_KEY] = workspace_key
@@ -4417,9 +4447,17 @@ if AccessPermission.CASE_CREATE in _active_firm.permissions:
         try:
             result, document_pages, raw_text = _notice_analysis(pdf_bytes)
         except RuntimeError as error:
-            st.error(str(error))
-        except Exception:
-            st.error("Notice analysis could not be completed.")
+            _render_internal_failure(
+                "The notice PDF could not be read or analyzed safely.",
+                error,
+                technical_label="Technical details — notice analysis failure",
+            )
+        except Exception as error:
+            _render_internal_failure(
+                "Notice analysis could not be completed.",
+                error,
+                technical_label="Technical details — notice analysis failure",
+            )
         else:
             ocr_pages = [
                 page.page_number
