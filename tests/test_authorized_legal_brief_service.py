@@ -231,7 +231,9 @@ class AuthorizedLegalBriefServiceTests(unittest.TestCase):
             {AccessPermission.CASE_READ, AccessPermission.CASE_UPDATE}
         )
         snapshot_service.load_snapshot.return_value = loaded_snapshot(None)
-        with self.assertRaisesRegex(ValueError, "no notice date"):
+        with self.assertRaisesRegex(
+            ValueError, "no unique verified notice date"
+        ):
             service.save_for_snapshot(
                 PRINCIPAL,
                 "F-1",
