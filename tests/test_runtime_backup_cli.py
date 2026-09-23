@@ -20,6 +20,7 @@ from domain.case_models import (
 )
 from domain.models import NoticeForm, ProceedingType
 from modules.encrypted_document_store import EncryptedLocalDocumentStore
+from modules.runtime_backup import create_runtime_backup
 from modules.sqlite_case_repository import LocalSQLiteCaseRepository
 
 
@@ -212,6 +213,53 @@ class RuntimeBackupCliTests(unittest.TestCase):
         self.assertEqual(target_db.read_bytes(), b"sentinel")
         self.assertNotIn(str(target_db), restored.stdout)
         self.assertEqual(restored.stderr, "")
+
+    def test_legacy_v1_backup_requires_explicit_legacy_flag(self):
+        create_runtime_backup(
+            db_path=str(self.db_path),
+            object_root=str(self.object_root),
+            backup_root=str(self.backup_root),
+            backup_id="legacy-v1",
+            created_at=NOW,
+            document_key=KEY,
+        )
+        backup_dir = self.backup_root / "legacy-v1"
+
+        blocked = self.run_cli("verify", str(backup_dir))
+        self.assertEqual(blocked.returncode, 1)
+        self.assertEqual(
+            self.payload(blocked),
+            {"error": "verification_failed", "ok": False},
+        )
+
+        verified = self.run_cli(
+            "verify",
+            str(backup_dir),
+            "--allow-legacy-key-id",
+        )
+        self.assertEqual(verified.returncode, 0, verified.stderr)
+        self.assertTrue(self.payload(verified)["ok"])
+
+        target_db = self.root / "legacy-restore" / "dwaar.db"
+        target_objects = self.root / "legacy-restore" / "objects"
+        restored = self.run_cli(
+            "restore",
+            str(backup_dir),
+            "--target-db",
+            str(target_db),
+            "--target-objects",
+            str(target_objects),
+            "--allow-legacy-key-id",
+        )
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        self.assertTrue(self.payload(restored)["ok"])
+        self.assertEqual(
+            EncryptedLocalDocumentStore(
+                str(target_objects),
+                KEY,
+            ).get(STORAGE_KEY),
+            b"notice",
+        )
 
     def test_verify_with_wrong_key_fails_safely(self):
         created = self.run_cli(
