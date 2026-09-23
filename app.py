@@ -100,8 +100,8 @@ def _render_checks(checks, *, technical=False):
 
 
 def _render_legal_brief(classification, extraction):
-    st.header("Verified legal sources")
     if classification.support_level.value != "deep_workflow":
+        st.header("Legal research status")
         st.caption(
             "No approved form-specific verified legal research pack is "
             "available for this triage workflow yet. Law cited in the notice "
@@ -110,6 +110,7 @@ def _render_legal_brief(classification, extraction):
         )
         return
 
+    st.header("Verified legal sources")
     date_context = build_gst_legal_date_context(extraction.facts)
     brief = resolve_gst_legal_brief_from_context(
         classification.proceeding_type,
