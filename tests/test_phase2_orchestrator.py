@@ -500,6 +500,60 @@ class PipelineTests(unittest.TestCase):
                 mocks["validation"].assert_called_once()
                 mocks["drafting"].assert_called_once()
 
+    def test_section61_deep_path_uses_standard_pipeline_without_triage(self):
+        classification = NoticeClassification(
+            notice_family=NoticeFamily.ASSESSMENT_SCRUTINY,
+            notice_form=NoticeForm.ASMT_10,
+            proceeding_type=ProceedingType.GST_SEC61_SCRUTINY,
+            support_level=SupportLevel.DEEP_WORKFLOW,
+            confidence=ClassificationConfidence.HIGH,
+            classification_reasons=["Section 61 ASMT-10 fixture"],
+        )
+        extraction = make_extraction(
+            [
+                make_fact(
+                    "F-S61-1",
+                    FactType.DEPARTMENT_ALLEGATION,
+                    "Discrepancy stated by department",
+                    status=FactStatus.ALLEGED,
+                ),
+                make_fact(
+                    "F-S61-2",
+                    FactType.TAX_PERIOD,
+                    "FY 2025-26",
+                ),
+                make_fact(
+                    "F-S61-3",
+                    FactType.DOCUMENT_DETAIL,
+                    "Reply within fifteen days from receipt",
+                    role=FactRole.RESPONSE_PERIOD,
+                ),
+            ]
+        )
+        result, mocks, _, order = self._run_pipeline(
+            classification,
+            extraction,
+        )
+        self.assertIs(
+            result.classification.proceeding_type,
+            ProceedingType.GST_SEC61_SCRUTINY,
+        )
+        self.assertIsNone(result.triage_summary)
+        self.assertEqual(
+            order,
+            [
+                "classification",
+                "extraction",
+                "deadline",
+                "preflight",
+                "arithmetic",
+                "validation",
+                "drafting",
+            ],
+        )
+        mocks["validation"].assert_called_once()
+        mocks["drafting"].assert_called_once()
+
     def test_four_reference_proceeding_paths_are_preserved(self):
         expected = (
             ProceedingType.GST_SEC73_ITC,
