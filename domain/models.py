@@ -143,21 +143,6 @@ class ClassificationConfidence(Enum):
     UNKNOWN = "unknown"
 
 
-class ClassificationRunStatus(Enum):
-    """Whether the focused classifier itself produced a usable result.
-
-    SUCCESS means the classifier response passed structural validation, even
-    when the resulting notice/proceeding is legitimately UNKNOWN.
-
-    FAILED means the provider response was unavailable, malformed, or could
-    not satisfy the closed classifier contract. It must not be presented to
-    professionals as a substantive "unknown notice" determination.
-    """
-
-    SUCCESS = "success"
-    FAILED = "failed"
-
-
 class CommunicationIdentifierStatus(Enum):
     """Observed RFN/DIN presence only (ARCHITECTURE_SPEC_v1_1 §6.2).
 
@@ -526,7 +511,6 @@ class NoticeClassification:
     support_level: SupportLevel
     confidence: ClassificationConfidence
     classification_reasons: List[str]
-    classification_status: ClassificationRunStatus = ClassificationRunStatus.SUCCESS
 
 
 # --- Phase 2 Step 6.3 dataclass (ARCHITECTURE_SPEC_v1_1 §18.2) ---------------
