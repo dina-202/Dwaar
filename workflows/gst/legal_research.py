@@ -29,6 +29,7 @@ from workflows.gst.legal_knowledge import (
 class GstLegalResearchRequirement:
     topic: LegalTopic
     date_basis: LegalDateBasis
+    required_rule_keys: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -44,8 +45,17 @@ class GstLegalResearchProfile:
 def _r(
     topic: LegalTopic,
     date_basis: LegalDateBasis,
+    *required_rule_keys: str,
 ) -> GstLegalResearchRequirement:
-    return GstLegalResearchRequirement(topic=topic, date_basis=date_basis)
+    if len(required_rule_keys) != len(set(required_rule_keys)):
+        raise ValueError("required_rule_keys must be unique")
+    if any(not isinstance(key, str) or not key for key in required_rule_keys):
+        raise ValueError("required_rule_keys must be non-empty strings")
+    return GstLegalResearchRequirement(
+        topic=topic,
+        date_basis=date_basis,
+        required_rule_keys=tuple(required_rule_keys),
+    )
 
 
 GST_LEGAL_RESEARCH_PROFILES: Dict[
@@ -54,8 +64,16 @@ GST_LEGAL_RESEARCH_PROFILES: Dict[
     ProceedingType.GST_SEC73_GENERAL: GstLegalResearchProfile(
         proceeding_type=ProceedingType.GST_SEC73_GENERAL,
         requirements=(
-            _r(LegalTopic.HEARING_RIGHT, LegalDateBasis.NOTICE_DATE),
-            _r(LegalTopic.DEMAND_SCOPE, LegalDateBasis.NOTICE_DATE),
+            _r(
+                LegalTopic.HEARING_RIGHT,
+                LegalDateBasis.NOTICE_DATE,
+                "cgst.s75.4.hearing",
+            ),
+            _r(
+                LegalTopic.DEMAND_SCOPE,
+                LegalDateBasis.NOTICE_DATE,
+                "cgst.s75.7.demand_scope",
+            ),
         ),
     ),
     ProceedingType.GST_SEC73_ITC: GstLegalResearchProfile(
@@ -63,7 +81,10 @@ GST_LEGAL_RESEARCH_PROFILES: Dict[
         requirements=(
             _r(LegalTopic.HEARING_RIGHT, LegalDateBasis.NOTICE_DATE),
             _r(LegalTopic.DEMAND_SCOPE, LegalDateBasis.NOTICE_DATE),
-            _r(LegalTopic.ITC_ELIGIBILITY, LegalDateBasis.TAX_PERIOD_END),
+            _r(
+                LegalTopic.ITC_ELIGIBILITY,
+                LegalDateBasis.TAX_PERIOD_END,
+            ),
         ),
     ),
     ProceedingType.GST_SEC73_RCM: GstLegalResearchProfile(
@@ -85,6 +106,7 @@ GST_LEGAL_RESEARCH_PROFILES: Dict[
             _r(
                 LegalTopic.FRAUD_SUPPRESSION_SCOPE,
                 LegalDateBasis.TAX_PERIOD_END,
+                "cgst.s74.fraud_scope",
             ),
         ),
     ),
@@ -94,10 +116,12 @@ GST_LEGAL_RESEARCH_PROFILES: Dict[
             _r(
                 LegalTopic.SECTION_129_TIMELINE,
                 LegalDateBasis.DETENTION_OR_SEIZURE_DATE,
+                "cgst.s129.3.timeline",
             ),
             _r(
                 LegalTopic.SECTION_129_HEARING,
                 LegalDateBasis.DETENTION_OR_SEIZURE_DATE,
+                "cgst.s129.4.hearing",
             ),
         ),
     ),
@@ -153,10 +177,26 @@ def resolve_gst_legal_brief_from_context(
             catalog_valid = False
             unresolved.append(requirement.topic)
             continue
-        if len(resolved.matches) != 1:
+
+        # A topic is complete only when its closed workflow bundle is
+        # represented exactly by the effective source-verified rules.
+        # Empty bundles deliberately remain unresolved until curated.
+        if not requirement.required_rule_keys:
             unresolved.append(requirement.topic)
             continue
-        matches.extend(resolved.matches)
+        by_key = {}
+        duplicate_key = False
+        for match in resolved.matches:
+            key = match.rule.rule_key
+            if key in by_key:
+                duplicate_key = True
+                break
+            by_key[key] = match
+        required = tuple(requirement.required_rule_keys)
+        if duplicate_key or set(by_key) != set(required):
+            unresolved.append(requirement.topic)
+            continue
+        matches.extend(by_key[key] for key in required)
 
     return LegalKnowledgeResult(
         matches=tuple(matches),
