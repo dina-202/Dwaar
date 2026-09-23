@@ -33,12 +33,22 @@ from domain.models import (
     ValidationEngineResult,
     ValidationStatus,
 )
-from modules.triage_workspace import build_triage_requested_document_checklist
+from modules.triage_workspace import (
+    build_triage_evidence_checklist,
+    build_triage_requested_document_checklist,
+)
 
 
-def make_result(*, support=SupportLevel.TRIAGE_ONLY, facts=None, requested_ids=None):
+def make_result(
+    *,
+    support=SupportLevel.TRIAGE_ONLY,
+    facts=None,
+    requested_ids=None,
+    annexure_ids=None,
+):
     facts = list(facts or [])
     requested_ids = list(requested_ids or [])
+    annexure_ids = list(annexure_ids or [])
     classification = NoticeClassification(
         notice_family=NoticeFamily.ASSESSMENT_SCRUTINY,
         notice_form=NoticeForm.ASMT_10,
@@ -76,7 +86,7 @@ def make_result(*, support=SupportLevel.TRIAGE_ONLY, facts=None, requested_ids=N
         deadline_conflict_status=DeadlineConflictStatus.CANNOT_COMPARE,
         hearing_fact_ids=[],
         requested_document_fact_ids=requested_ids,
-        referenced_annexure_fact_ids=[],
+        referenced_annexure_fact_ids=annexure_ids,
     )
     validation = ValidationEngineResult(
         overall_status=ValidationStatus.WARNING,
@@ -113,7 +123,7 @@ def make_result(*, support=SupportLevel.TRIAGE_ONLY, facts=None, requested_ids=N
             deadline_status=DeadlineStatus.UNKNOWN,
             hearing_status=HearingStatus.NOT_SCHEDULED,
             requested_document_fact_ids=requested_ids,
-            referenced_annexure_fact_ids=[],
+            referenced_annexure_fact_ids=annexure_ids,
             message="triage",
         )
     return Phase2AnalysisResult(
@@ -145,6 +155,81 @@ def requested_fact(
         fact_type=fact_type,
         fact_role=FactRole.NONE,
     )
+
+
+class TriageEvidenceChecklistTests(unittest.TestCase):
+    def test_combines_requested_records_and_referenced_annexures_in_source_order(self):
+        result = make_result(
+            facts=[
+                requested_fact(
+                    "F-001",
+                    "Annexure A containing discrepancy computation",
+                    fact_type=FactType.REFERENCED_ANNEXURE,
+                ),
+                requested_fact("F-002", "1. Purchase register"),
+            ],
+            requested_ids=["F-002"],
+            annexure_ids=["F-001"],
+        )
+        items = build_triage_evidence_checklist(result)
+        self.assertEqual(
+            [item.evidence_id for item in items],
+            [
+                "triage.referenced_annexure.F-001",
+                "triage.requested_document.F-002",
+            ],
+        )
+        self.assertEqual(
+            [item.requirement_text for item in items],
+            [
+                (
+                    "Notice-referenced annexure: "
+                    "Annexure A containing discrepancy computation"
+                ),
+                "Department-requested record: 1. Purchase register",
+            ],
+        )
+        self.assertTrue(
+            all(item.status is EvidenceStatus.UNKNOWN for item in items)
+        )
+
+    def test_annexure_target_uses_only_deterministically_selected_confirmed_fact(self):
+        result = make_result(
+            facts=[
+                requested_fact(
+                    "F-001",
+                    "Annexure A",
+                    fact_type=FactType.REFERENCED_ANNEXURE,
+                ),
+                requested_fact(
+                    "F-002",
+                    "Annexure B",
+                    status=FactStatus.REQUIRES_VERIFICATION,
+                    fact_type=FactType.REFERENCED_ANNEXURE,
+                ),
+            ],
+            annexure_ids=["F-001", "F-002", "F-MISSING"],
+        )
+        items = build_triage_evidence_checklist(result)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(
+            items[0].requirement_text,
+            "Notice-referenced annexure: Annexure A",
+        )
+
+    def test_model_claim_never_becomes_annexure_requirement_text(self):
+        result = make_result(
+            facts=[
+                requested_fact(
+                    "F-001",
+                    "Annexure A",
+                    fact_type=FactType.REFERENCED_ANNEXURE,
+                )
+            ],
+            annexure_ids=["F-001"],
+        )
+        items = build_triage_evidence_checklist(result)
+        self.assertNotIn("MODEL CLAIM MUST NOT BE USED", repr(items))
 
 
 class TriageRequestedDocumentChecklistTests(unittest.TestCase):
