@@ -21,6 +21,7 @@ class CaseAttentionCode(Enum):
     LEGAL_RESEARCH_UNRESOLVED = "legal_research_unresolved"
     LEGAL_EVIDENCE_INCOMPLETE = "legal_evidence_incomplete"
     LEGAL_EVIDENCE_CONTRACT_DRIFT = "legal_evidence_contract_drift"
+    TRIAGE_EVIDENCE_REVIEW_PENDING = "triage_evidence_review_pending"
     DRAFT_NOT_STARTED = "draft_not_started"
     DRAFT_AWAITING_REVIEW = "draft_awaiting_review"
     DRAFT_AWAITING_APPROVAL = "draft_awaiting_approval"
@@ -38,6 +39,7 @@ _ATTENTION_WORKSPACE = {
     CaseAttentionCode.LEGAL_RESEARCH_UNRESOLVED: CaseWorkspace.LEGAL_RESEARCH,
     CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE: CaseWorkspace.EVIDENCE,
     CaseAttentionCode.LEGAL_EVIDENCE_CONTRACT_DRIFT: CaseWorkspace.EVIDENCE,
+    CaseAttentionCode.TRIAGE_EVIDENCE_REVIEW_PENDING: CaseWorkspace.EVIDENCE,
     CaseAttentionCode.DRAFT_NOT_STARTED: CaseWorkspace.DRAFT,
     CaseAttentionCode.DRAFT_AWAITING_REVIEW: CaseWorkspace.DRAFT,
     CaseAttentionCode.DRAFT_AWAITING_APPROVAL: CaseWorkspace.DRAFT,
