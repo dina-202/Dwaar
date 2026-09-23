@@ -102,13 +102,16 @@ class AuthorizedFactReviewService:
                 or fact_id in seen
             ):
                 raise ValueError("analysis snapshot fact identity is invalid")
-            if not isinstance(fact["source_text"], str) or not fact[
-                "source_text"
-            ]:
+            if not isinstance(fact["source_text"], str):
                 raise ValueError(
-                    "analysis snapshot fact has no reviewable source text"
+                    "analysis snapshot fact source text is invalid"
                 )
             seen.add(fact_id)
+            if not fact["source_text"].strip():
+                # A source-grounded professional decision requires an exact
+                # quote. Keep the historical fact, but do not offer it as
+                # reviewable merely because it has an ID.
+                continue
             facts.append(fact)
         return facts
 
