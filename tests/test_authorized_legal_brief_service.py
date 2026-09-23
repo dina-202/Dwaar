@@ -67,6 +67,25 @@ def loaded_snapshot(notice_date="2026-08-01"):
             "classification": {
                 "proceeding_type": ProceedingType.GST_SEC73_ITC.value
             },
+            "extraction": {
+                "facts": [] if notice_date is None else [
+                    {
+                        "fact_id": "F-N",
+                        "claim": "Notice date",
+                        "status": "confirmed",
+                        "source_text": (
+                            "Issued " + notice_date[8:10] + "/"
+                            + notice_date[5:7] + "/" + notice_date[0:4]
+                        ),
+                        "source_page": 1,
+                        "allowed_in_draft": "yes",
+                        "fact_type": "notice_date",
+                        "fact_role": "none",
+                        "source_origin": "embedded",
+                        "source_verification": "verified",
+                    }
+                ]
+            },
         },
     )
 
@@ -160,6 +179,49 @@ class AuthorizedLegalBriefServiceTests(unittest.TestCase):
                 created_at=NOW,
             )
         persist_mock.assert_not_called()
+
+    @mock.patch(
+        "modules.authorized_legal_brief_service.persist_legal_brief"
+    )
+    def test_snapshot_tax_period_is_available_to_legal_resolver(
+        self,
+        persist_mock,
+    ):
+        service, _, snapshot_service, *_ = self.build(
+            {AccessPermission.CASE_READ, AccessPermission.CASE_UPDATE}
+        )
+        payload = loaded_snapshot().payload
+        payload["extraction"]["facts"].append(
+            {
+                "fact_id": "F-T",
+                "claim": "Tax period",
+                "status": "confirmed",
+                "source_text": "FY 2021-22",
+                "source_page": 2,
+                "allowed_in_draft": "yes",
+                "fact_type": "tax_period",
+                "fact_role": "none",
+                "source_origin": "embedded",
+                "source_verification": "verified",
+            }
+        )
+        snapshot_service.load_snapshot.return_value = LoadedAnalysisSnapshot(
+            metadata=snapshot(),
+            payload=payload,
+        )
+        persist_mock.return_value = mock.sentinel.brief
+        service.save_for_snapshot(
+            PRINCIPAL,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            created_at=NOW,
+        )
+        result = persist_mock.call_args.kwargs["result"]
+        self.assertEqual(
+            tuple(item.value for item in result.unresolved_topics),
+            ("itc_eligibility",),
+        )
 
     @mock.patch(
         "modules.authorized_legal_brief_service.persist_legal_brief"
