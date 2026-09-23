@@ -45,7 +45,10 @@ from domain.models import (
     TriageSummary as _TriageSummary,
 )
 from domain.preflight_engine import run_preflight
-from domain.proceeding_classifier import classify_notice, classifier_failed
+from domain.proceeding_classifier import (
+    classify_notice,
+    classifier_failed as _classifier_failed,
+)
 from domain.validation_engine import run_validation
 from workflows.gst.validation_profiles import (
     get_validation_profile,
@@ -101,6 +104,13 @@ _TRIAGE_ONLY_MESSAGE = (
     "This notice is recognized for triage, but no approved deep specialist "
     "workflow is available."
 )
+
+
+def classification_execution_failed(
+    classification: _NoticeClassification,
+) -> bool:
+    """UI-safe view of the classifier execution-failure signal."""
+    return _classifier_failed(classification)
 
 
 def _deadline_candidates(
@@ -321,7 +331,7 @@ def _build_triage_summary(
 ) -> _Optional[_TriageSummary]:
     if extraction_result.status is _FactExtractionStatus.NO_INPUT:
         message = _NO_INPUT_MESSAGE
-    elif classifier_failed(classification):
+    elif _classifier_failed(classification):
         message = _CLASSIFICATION_FAILED_MESSAGE
     elif extraction_result.status is _FactExtractionStatus.FAILED:
         message = _FAILED_MESSAGE
