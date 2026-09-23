@@ -2469,13 +2469,15 @@ class CaseTimelineUiTests(unittest.TestCase):
 
 
 class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
-    def _firm(self, *, case_update=False):
+    def _firm(self, *, case_update=False, fact_review=False):
         permissions = {
             AccessPermission.CASE_READ,
             AccessPermission.DOCUMENT_READ,
         }
         if case_update:
             permissions.add(AccessPermission.CASE_UPDATE)
+        if fact_review:
+            permissions.add(AccessPermission.FACT_REVIEW)
         return AvailableFirmAccess(
             firm_id="F-TEST",
             display_name="Test Firm",
@@ -2579,6 +2581,255 @@ class AnalysisSnapshotHistoryUiTests(unittest.TestCase):
         self.assertEqual(args.args[1], "F-TEST")
         self.assertEqual(args.kwargs["case_id"], "CASE-1")
         self.assertIn("SNAP-1", log_text(fake))
+
+    @staticmethod
+    def _reviewable_fact():
+        return {
+            "fact_id": "F-SECRET-FACT",
+            "fact_type": "department_allegation",
+            "fact_role": "none",
+            "status": "alleged",
+            "source_text": (
+                "Department states a discrepancy of Rs. 1,10,530."
+            ),
+            "source_page": 2,
+            "source_origin": "embedded",
+            "source_verification": "verified",
+            "allowed_in_draft": "conditional",
+        }
+
+    @staticmethod
+    def _fact_review_ref(
+        *,
+        decision=FactReviewDecision.CONFIRMED,
+        review_id="FREV-SECRET",
+    ):
+        return FactReviewRef(
+            review_id=review_id,
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+            fact_id="F-SECRET-FACT",
+            fact_fingerprint="a" * 64,
+            source_text_sha256="b" * 64,
+            decision=decision,
+            byte_size=10,
+            sha256_hex="c" * 64,
+            storage_key="objects/" + "d" * 32,
+            reviewed_at=datetime(
+                2026, 8, 2, 14, 0, tzinfo=timezone.utc
+            ),
+            reviewed_by="OIDC-" + "f" * 64,
+        )
+
+    def test_customer_fact_review_shows_source_and_hides_machine_ids(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+        fact_service = Mock()
+        fact_service.list_reviewable_facts.return_value = [
+            self._reviewable_fact()
+        ]
+        fact_service.latest_reviews_by_fact.return_value = {
+            "F-SECRET-FACT": self._fact_review_ref()
+        }
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm(fact_review=True)],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            fact_review_service=fact_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(),
+        )
+
+        text = log_text(fake)
+        self.assertIn("Professional fact review", text)
+        self.assertIn(
+            "accurately reflects the source notice",
+            text,
+        )
+        self.assertIn(
+            "does not admit a department allegation",
+            text,
+        )
+        self.assertIn(
+            "Department states a discrepancy of Rs. 1,10,530.",
+            text,
+        )
+        self.assertIn("Confirmed", text)
+        self.assertNotIn("F-SECRET-FACT", text)
+        self.assertNotIn("FREV-SECRET", text)
+        self.assertNotIn("fact_role", text)
+        self.assertNotIn("alleged", text.lower())
+
+    def test_confirm_fact_review_writes_only_selected_snapshot_fact_id(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+        fact_service = Mock()
+        fact_service.list_reviewable_facts.return_value = [
+            self._reviewable_fact()
+        ]
+        fact_service.latest_reviews_by_fact.return_value = {}
+        saved = self._fact_review_ref(
+            decision=FactReviewDecision.CONFIRMED,
+            review_id="FREV-SAVED",
+        )
+        fact_service.save_review.return_value = saved
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm(fact_review=True)],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            fact_review_service=fact_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(
+                {"save_fact_review_SNAP-1": True}
+            ),
+            selectbox_values={
+                "fact_review_decision_SNAP-1": (
+                    "Confirm source extraction"
+                ),
+            },
+            text_values={
+                "fact_review_note_SNAP-1": (
+                    "Checked against the notice PDF."
+                ),
+            },
+        )
+
+        fact_service.save_review.assert_called_once()
+        kwargs = fact_service.save_review.call_args.kwargs
+        self.assertEqual(kwargs["case_id"], "CASE-1")
+        self.assertEqual(kwargs["snapshot_id"], "SNAP-1")
+        self.assertEqual(kwargs["fact_id"], "F-SECRET-FACT")
+        self.assertIs(
+            kwargs["decision"],
+            FactReviewDecision.CONFIRMED,
+        )
+        self.assertEqual(
+            kwargs["reviewer_note"],
+            "Checked against the notice PDF.",
+        )
+        self.assertIsNotNone(kwargs["reviewed_at"].tzinfo)
+        self.assertIn("Fact review saved: Confirmed", log_text(fake))
+
+    def test_rejected_fact_review_warns_that_draft_approval_is_blocked(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+        fact_service = Mock()
+        fact_service.list_reviewable_facts.return_value = [
+            self._reviewable_fact()
+        ]
+        fact_service.latest_reviews_by_fact.return_value = {}
+        fact_service.save_review.return_value = self._fact_review_ref(
+            decision=FactReviewDecision.REJECTED,
+            review_id="FREV-REJECTED",
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm(fact_review=True)],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            fact_review_service=fact_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(
+                {"save_fact_review_SNAP-1": True}
+            ),
+            selectbox_values={
+                "fact_review_decision_SNAP-1": (
+                    "Reject source extraction"
+                ),
+            },
+        )
+
+        kwargs = fact_service.save_review.call_args.kwargs
+        self.assertIs(
+            kwargs["decision"],
+            FactReviewDecision.REJECTED,
+        )
+        text = log_text(fake)
+        self.assertIn("Fact review saved: Rejected", text)
+        self.assertIn("Draft approval", text)
+        self.assertIn("latest professional decision", text)
+
+    def test_without_fact_review_permission_workspace_is_noninteractive(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+        fact_service = Mock()
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm(fact_review=False)],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            fact_review_service=fact_service,
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(),
+        )
+
+        text = log_text(fake)
+        self.assertIn("Professional fact review", text)
+        self.assertIn(
+            "does not allow professional fact review",
+            text,
+        )
+        fake.fact_review_service_mock.assert_not_called()
+        save_buttons = [
+            call
+            for call in calls_named(fake, "button")
+            if call[1] and call[1][0] == "Save fact review"
+        ]
+        self.assertEqual(save_buttons, [])
+
+    def test_fact_review_failure_is_private_in_customer_mode(self):
+        case_service = Mock()
+        case_service.list_cases.return_value = [self._case()]
+        snapshot_service = Mock()
+        snapshot_service.list_snapshot_history.return_value = [
+            self._snapshot_ref()
+        ]
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm(fact_review=True)],
+            persistence_service=case_service,
+            snapshot_service=snapshot_service,
+            fact_review_service_error=RuntimeError(
+                "private fact-review database path and key"
+            ),
+            reopen_result=self._reopened(),
+            button_values=self._open_buttons(),
+        )
+
+        text = log_text(fake)
+        self.assertIn(
+            "Professional fact review could not be loaded",
+            text,
+        )
+        self.assertNotIn("private fact-review database", text)
 
     def test_read_only_user_cannot_save_snapshot(self):
         case_service = Mock()
