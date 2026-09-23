@@ -17,7 +17,7 @@ from domain.legal_knowledge_models import (
 from domain.models import ProceedingType
 
 
-GST_LEGAL_CATALOG_VERSION = "gst-legal.v4.2026-09-23"
+GST_LEGAL_CATALOG_VERSION = "gst-legal.v5.2026-09-23"
 
 CGST_ACT_INDIA_CODE = LegalSourceRef(
     source_id="src.cgst_act.indiacode.2026-09-23",
@@ -30,6 +30,19 @@ CGST_ACT_INDIA_CODE = LegalSourceRef(
     official_domain="www.indiacode.nic.in",
     version_label="India Code consolidated source accessed 2026-09-23",
     publication_date=date(2017, 4, 12),
+    retrieved_at=date(2026, 9, 23),
+    verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
+)
+
+CGST_RULES_SCRUTINY_CBIC = LegalSourceRef(
+    source_id="src.cbic.cgst_rules.scrutiny.2026-09-23",
+    authority_type=LegalAuthorityType.RULE,
+    title="CGST Rules — Assessment and Audit — Scrutiny of returns",
+    issuer="Central Board of Indirect Taxes and Customs",
+    official_url="https://cbic-gst.gov.in/assessment-audit-rules.html",
+    official_domain="cbic-gst.gov.in",
+    version_label="CBIC scrutiny-rules page accessed 2026-09-23",
+    publication_date=None,
     retrieved_at=date(2026, 9, 23),
     verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
 )
@@ -62,11 +75,52 @@ CIRCULAR_193_GST_COUNCIL = LegalSourceRef(
 
 GST_LEGAL_SOURCES = (
     CGST_ACT_INDIA_CODE,
+    CGST_RULES_SCRUTINY_CBIC,
     CIRCULAR_183_CBIC,
     CIRCULAR_193_GST_COUNCIL,
 )
 
 GST_LEGAL_RULES = (
+    LegalRule(
+        rule_id="cgst.s61.scrutiny_process.v1",
+        rule_key="cgst.s61.scrutiny_process",
+        source_id=CGST_ACT_INDIA_CODE.source_id,
+        provision="CGST Act, section 61",
+        proposition=(
+            "Section 61 provides for scrutiny of returns and related "
+            "particulars, communication of discrepancies and seeking the "
+            "registered person's explanation; an acceptable explanation "
+            "ends that scrutiny issue without further action, while an "
+            "unsatisfactory response may lead to further statutory action."
+        ),
+        effective_from=date(2017, 7, 1),
+        effective_to=None,
+        jurisdiction="India",
+        topic=LegalTopic.SCRUTINY_PROCESS,
+        proceeding_types=(ProceedingType.GST_SEC61_SCRUTINY,),
+        verified_at=date(2026, 9, 23),
+        verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
+    ),
+    LegalRule(
+        rule_id="cgst.r99.asmt_forms.v1",
+        rule_key="cgst.r99.asmt_forms",
+        source_id=CGST_RULES_SCRUTINY_CBIC.source_id,
+        provision="CGST Rules, rule 99",
+        proposition=(
+            "Rule 99 uses FORM GST ASMT-10 to communicate scrutiny "
+            "discrepancies, FORM GST ASMT-11 for the registered person's "
+            "acceptance or explanation, and FORM GST ASMT-12 to communicate "
+            "acceptance of that explanation. This curated proposition does "
+            "not state a generic response-period length."
+        ),
+        effective_from=date(2017, 7, 1),
+        effective_to=None,
+        jurisdiction="India",
+        topic=LegalTopic.SCRUTINY_PROCESS,
+        proceeding_types=(ProceedingType.GST_SEC61_SCRUTINY,),
+        verified_at=date(2026, 9, 23),
+        verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
+    ),
     LegalRule(
         rule_id="cbic.itc_mismatch_verification.fy2017_2018.v1",
         rule_key="cbic.itc_mismatch_verification",
