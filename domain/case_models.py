@@ -47,6 +47,7 @@ class CaseEventType(Enum):
     LEGAL_BRIEF_SAVED = "legal_brief_saved"
     EVIDENCE_CANDIDATES_GENERATED = "evidence_candidates_generated"
     EVIDENCE_REVIEWED = "evidence_reviewed"
+    FACT_REVIEWED = "fact_reviewed"
     DRAFT_CREATED = "draft_created"
     DRAFT_REVIEWED = "draft_reviewed"
     FILING_RECORDED = "filing_recorded"
