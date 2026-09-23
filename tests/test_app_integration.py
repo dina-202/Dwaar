@@ -1679,6 +1679,11 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
         self.assertIn("Rule 99 of the CGST Rules", text)
         self.assertIn("Annexures referenced in the notice", text)
         self.assertIn("Annexure A", text)
+        self.assertIn(
+            "No approved form-specific verified legal research pack",
+            text,
+        )
+        self.assertNotIn("No closed legal-question plan exists", text)
         self.assertIn("Next review steps", text)
         self.assertIn("Confirm the actual service/receipt date", text)
         self.assertNotIn("model claim must not render", text)
