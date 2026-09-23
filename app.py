@@ -456,13 +456,25 @@ def _render_phase2_result(result):
                 {
                     "Requirement": item.requirement_text,
                     "Status": _friendly_enum(item.status),
-                    "Related facts": item.related_fact_ids,
-                    "Calculation": _display(item.calculation_type),
                 }
                 for item in draft.unresolved_requirements
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — unresolved requirements"):
+            st.dataframe(
+                [
+                    {
+                        "requirement_id": item.requirement_id,
+                        "requirement_text": item.requirement_text,
+                        "status": item.status.value,
+                        "related_fact_ids": item.related_fact_ids,
+                        "calculation_type": _display(item.calculation_type),
+                    }
+                    for item in draft.unresolved_requirements
+                ],
+                hide_index=True,
+            )
     else:
         st.write("None.")
 
@@ -478,6 +490,18 @@ def _render_phase2_result(result):
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — evidence checklist"):
+            st.dataframe(
+                [
+                    {
+                        "evidence_id": item.evidence_id,
+                        "requirement_text": item.requirement_text,
+                        "status": item.status.value,
+                    }
+                    for item in draft.evidence_checklist
+                ],
+                hide_index=True,
+            )
     else:
         st.write("None.")
 
@@ -494,6 +518,19 @@ def _render_phase2_result(result):
             ],
             hide_index=True,
         )
+        with st.expander("Technical details — review requirements"):
+            st.dataframe(
+                [
+                    {
+                        "review_id": item.review_id,
+                        "level": item.level.value,
+                        "reason": item.reason,
+                        "mandatory": item.mandatory,
+                    }
+                    for item in draft.review_requirements
+                ],
+                hide_index=True,
+            )
     else:
         st.write("None.")
 
