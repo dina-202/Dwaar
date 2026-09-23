@@ -34,6 +34,7 @@ from modules.runtime_persistence import (
     build_authorized_evidence_workspace_service,
     build_authorized_filing_service,
     build_authorized_legal_brief_service,
+    build_authorized_professional_workbench_service,
 )
 from modules.case_reopen_service import (
     SavedCaseReopenError,
@@ -2332,6 +2333,70 @@ def _render_client_workspace(principal, active_firm):
         )
 
 
+def _render_professional_case_attention(
+    principal,
+    active_firm,
+    reopened,
+):
+    st.header("Case attention")
+    try:
+        workbench = build_authorized_professional_workbench_service()
+        attention = workbench.get_case_attention(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+        )
+    except RuntimePersistenceConfigurationError:
+        st.error(
+            "Professional case workspace storage is not fully configured "
+            "on this deployment."
+        )
+        return
+    except PermissionError:
+        st.error(
+            "Your account is no longer authorized to view professional "
+            "case attention."
+        )
+        return
+    except Exception:
+        st.error("Professional case attention could not be loaded.")
+        return
+
+    st.write(
+        {
+            "latest_snapshot_id": _display(
+                attention.latest_snapshot_id
+            ),
+            "latest_legal_brief_id": _display(
+                attention.latest_legal_brief_id
+            ),
+            "latest_draft_version_id": _display(
+                attention.latest_draft_version_id
+            ),
+            "latest_filing_id": _display(
+                attention.latest_filing_id
+            ),
+        }
+    )
+    if attention.items:
+        st.dataframe(
+            [
+                {
+                    "attention": item.code.value,
+                    "message": item.message,
+                    "related_id": _display(item.related_id),
+                }
+                for item in attention.items
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write(
+            "No operational attention item is currently identified by "
+            "the deterministic workbench projection."
+        )
+
+
 def _render_case_timeline(
     principal,
     active_firm,
@@ -2564,6 +2629,11 @@ def _render_saved_cases_workspace(principal, active_firm):
             + ". OCR-derived facts require verification."
         )
 
+    _render_professional_case_attention(
+        principal,
+        active_firm,
+        reopened,
+    )
     _render_case_timeline(
         principal,
         active_firm,
