@@ -53,6 +53,7 @@ from modules.runtime_security import (
     AuthenticationRequiredError,
     principal_from_streamlit_user,
 )
+from workflows.gst.legal_questions import build_gst_legal_question_plan
 from workflows.gst.legal_research import (
     build_gst_legal_date_context,
     resolve_gst_legal_brief_from_context,
@@ -95,11 +96,51 @@ def _render_legal_brief(classification, extraction):
         classification.proceeding_type,
         date_context,
     )
+    question_plan = build_gst_legal_question_plan(
+        classification.proceeding_type,
+        extraction.facts,
+        date_context,
+    )
     st.caption(
         "Source-verified propositions selected only when the required "
         "legal applicability date has verified fact provenance. This is "
         "research support, not a case-specific legal conclusion."
     )
+
+    st.subheader("Legal research questions")
+    st.caption(
+        "Question status separates missing case facts, missing legal dates, "
+        "uncurated authority, and source-verified research readiness. "
+        "Research-ready does not mean the case-specific legal conclusion "
+        "has been decided."
+    )
+    if question_plan.questions:
+        st.dataframe(
+            [
+                {
+                    "question_id": item.question_id,
+                    "question": item.question_text,
+                    "status": item.status.value,
+                    "date_basis": item.date_basis.value,
+                    "related_fact_ids": list(item.related_fact_ids),
+                    "missing_fact_requirements": [
+                        (
+                            selector.fact_type.value
+                            + " / "
+                            + selector.fact_role.value
+                        )
+                        for selector in item.missing_fact_selectors
+                    ],
+                    "verified_rule_ids": list(item.matched_rule_ids),
+                }
+                for item in question_plan.questions
+            ],
+            hide_index=True,
+        )
+    else:
+        st.write(
+            "No closed legal-question plan exists for this proceeding."
+        )
 
     if date_context.anchors:
         st.dataframe(

@@ -1079,6 +1079,7 @@ class SourceBoundaryTests(unittest.TestCase):
                 "modules.runtime_access",
                 "modules.runtime_persistence",
                 "modules.runtime_security",
+                "workflows.gst.legal_questions",
                 "workflows.gst.legal_research",
             },
         )
