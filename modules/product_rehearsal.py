@@ -14,7 +14,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Tuple
 
-import fitz
+import pymupdf
 
 from domain.case_models import (
     CaseDocumentKind,
@@ -145,7 +145,7 @@ class ProductRehearsalReport:
 
 
 def _pdf(text: str) -> bytes:
-    document = fitz.open()
+    document = pymupdf.open()
     try:
         page = document.new_page()
         page.insert_text((72, 72), text)
