@@ -227,7 +227,26 @@ def _notice_form_label(notice_form):
     raw = notice_form.value
     if raw == "unknown":
         return "Notice form not identified"
-    return raw.replace("_", " ").upper()
+    if raw == "mov_series":
+        return "MOV series"
+    return raw.replace("_", "-").upper()
+
+
+def _notice_family_label(notice_family):
+    labels = {
+        "return_compliance": "Return compliance",
+        "registration": "Registration",
+        "composition": "Composition",
+        "gst_practitioner": "GST practitioner",
+        "refund": "Refund",
+        "assessment_scrutiny": "Assessment / scrutiny",
+        "audit": "Audit",
+        "demand_adjudication": "Demand / adjudication",
+        "enforcement": "Enforcement",
+        "revision": "Revision",
+        "unknown": "Family not identified",
+    }
+    return labels.get(notice_family.value, _friendly_enum(notice_family))
 
 
 def _proceeding_label(proceeding_type):
@@ -411,6 +430,7 @@ def _render_phase2_result(result):
     else:
         st.write(f"**{_notice_form_label(classification.notice_form)}**")
         st.caption(
+            f"{_notice_family_label(classification.notice_family)} · "
             f"{_friendly_enum(classification.confidence)}-confidence "
             "identification."
         )
