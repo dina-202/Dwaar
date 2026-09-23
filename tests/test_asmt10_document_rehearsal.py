@@ -170,6 +170,57 @@ DRAFT_RESPONSE = json.dumps(
                         "template_id": "static.records_reconcile",
                     },
                     {
+                        "kind": "fact",
+                        "fact_id": "F-005",
+                    },
+                    {
+                        "kind": "static",
+                        "template_id": "static.open_items",
+                    },
+                ],
+            },
+            {
+                "section_id": "sec61_scrutiny.s3",
+                "blocks": [
+                    {
+                        "kind": "static",
+                        "template_id": "static.conditional_response",
+                    },
+                    {
+                        "kind": "static",
+                        "template_id": "static.ca_confirm",
+                    },
+                ],
+            },
+        ]
+    }
+)
+
+
+DRAFT_RESPONSE_OMITS_DISCREPANCY = json.dumps(
+    {
+        "sections": [
+            {
+                "section_id": "sec61_scrutiny.s1",
+                "blocks": [
+                    {
+                        "kind": "static",
+                        "template_id": "static.working_draft",
+                    },
+                    {
+                        "kind": "static",
+                        "template_id": "static.notice_material",
+                    },
+                ],
+            },
+            {
+                "section_id": "sec61_scrutiny.s2",
+                "blocks": [
+                    {
+                        "kind": "static",
+                        "template_id": "static.records_reconcile",
+                    },
+                    {
                         "kind": "static",
                         "template_id": "static.open_items",
                     },
@@ -286,9 +337,15 @@ class Asmt10DocumentRehearsalTests(unittest.TestCase):
                 "Reviewable ASMT-11 explanation",
             ],
         )
-        rendered = "\n".join(
+        rendered_text = "\n".join(
             section.rendered_text for section in result.draft_result.sections
-        ).lower()
+        )
+        rendered = rendered_text.lower()
+        self.assertIn(
+            "Discrepancy 1: Department states that taxable turnover "
+            "reported in GSTR-3B differs from available records.",
+            rendered_text,
+        )
         self.assertNotIn("drc-06", rendered)
         self.assertNotIn("15 days", rendered)
         self.assertNotIn("30 days", rendered)
@@ -330,6 +387,50 @@ class Asmt10DocumentRehearsalTests(unittest.TestCase):
             LegalQuestionStatus.SOURCE_VERIFIED_RESEARCH_READY,
         )
         self.assertIs(plan.questions[0].topic, LegalTopic.SCRUTINY_PROCESS)
+
+
+    def test_specialist_draft_fails_if_known_discrepancy_is_omitted(self):
+        pages = extract_document_pages(
+            FIXTURE.read_bytes(),
+            ocr_empty_pages=False,
+        )
+
+        with (
+            mock.patch.object(
+                proceeding_classifier,
+                "call_gemini",
+                return_value=CLASSIFIER_RESPONSE,
+            ),
+            mock.patch.object(
+                fact_engine,
+                "call_gemini",
+                return_value=FACT_RESPONSE,
+            ),
+            mock.patch.object(
+                drafting_engine,
+                "call_gemini",
+                return_value=DRAFT_RESPONSE_OMITS_DISCREPANCY,
+            ),
+        ):
+            result = run_phase2_analysis_from_document_pages(pages, TODAY)
+
+        self.assertIs(
+            result.draft_result.status,
+            DraftGenerationStatus.FAILED,
+        )
+        self.assertEqual(result.draft_result.sections, [])
+        checks = {
+            item.check_id: item
+            for item in result.draft_result.post_validation.checks
+        }
+        fact_check = checks["draft.blocks.fact_resolution"]
+        self.assertEqual(fact_check.status.value, "fail")
+        self.assertEqual(fact_check.related_fact_ids, ["F-005"])
+        self.assertIn(
+            "missing from the discrepancy-by-discrepancy response matrix",
+            fact_check.message,
+        )
+
 
 
 if __name__ == "__main__":
