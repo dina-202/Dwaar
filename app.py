@@ -2795,6 +2795,49 @@ def _render_persisted_evidence_workspace(
                     ],
                     hide_index=True,
                 )
+
+        evidence_file_labels = _numbered_labels(
+            attached,
+            lambda item: item.original_filename,
+        )
+        selected_evidence_label = st.selectbox(
+            "Attached evidence file",
+            list(evidence_file_labels),
+            key=f"evidence_file_download_{reopened.case.case_id}",
+        )
+        selected_evidence = evidence_file_labels[selected_evidence_label]
+        if st.button(
+            "Prepare evidence PDF for download",
+            key=(
+                f"prepare_evidence_download_"
+                f"{selected_evidence.document_id}"
+            ),
+        ):
+            try:
+                verified_ref, verified_payload = case_service.read_document(
+                    principal,
+                    active_firm.firm_id,
+                    case_id=reopened.case.case_id,
+                    document_id=selected_evidence.document_id,
+                )
+            except PermissionError:
+                st.error(
+                    "Your account is no longer authorized to read this "
+                    "supporting evidence."
+                )
+            except Exception:
+                st.error(
+                    "The selected supporting evidence could not be opened "
+                    "safely."
+                )
+            else:
+                st.download_button(
+                    "Download selected evidence PDF",
+                    data=verified_payload,
+                    file_name=verified_ref.original_filename,
+                    mime=verified_ref.media_type,
+                    key=f"download_evidence_{verified_ref.document_id}",
+                )
     else:
         st.write("No supporting evidence attached yet.")
 
