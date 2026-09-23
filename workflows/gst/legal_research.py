@@ -79,8 +79,16 @@ GST_LEGAL_RESEARCH_PROFILES: Dict[
     ProceedingType.GST_SEC73_ITC: GstLegalResearchProfile(
         proceeding_type=ProceedingType.GST_SEC73_ITC,
         requirements=(
-            _r(LegalTopic.HEARING_RIGHT, LegalDateBasis.NOTICE_DATE),
-            _r(LegalTopic.DEMAND_SCOPE, LegalDateBasis.NOTICE_DATE),
+            _r(
+                LegalTopic.HEARING_RIGHT,
+                LegalDateBasis.NOTICE_DATE,
+                "cgst.s75.4.hearing",
+            ),
+            _r(
+                LegalTopic.DEMAND_SCOPE,
+                LegalDateBasis.NOTICE_DATE,
+                "cgst.s75.7.demand_scope",
+            ),
             _r(
                 LegalTopic.ITC_ELIGIBILITY,
                 LegalDateBasis.TAX_PERIOD_END,
@@ -90,8 +98,16 @@ GST_LEGAL_RESEARCH_PROFILES: Dict[
     ProceedingType.GST_SEC73_RCM: GstLegalResearchProfile(
         proceeding_type=ProceedingType.GST_SEC73_RCM,
         requirements=(
-            _r(LegalTopic.HEARING_RIGHT, LegalDateBasis.NOTICE_DATE),
-            _r(LegalTopic.DEMAND_SCOPE, LegalDateBasis.NOTICE_DATE),
+            _r(
+                LegalTopic.HEARING_RIGHT,
+                LegalDateBasis.NOTICE_DATE,
+                "cgst.s75.4.hearing",
+            ),
+            _r(
+                LegalTopic.DEMAND_SCOPE,
+                LegalDateBasis.NOTICE_DATE,
+                "cgst.s75.7.demand_scope",
+            ),
             _r(
                 LegalTopic.RCM_APPLICABILITY,
                 LegalDateBasis.TAX_PERIOD_END,
@@ -101,8 +117,16 @@ GST_LEGAL_RESEARCH_PROFILES: Dict[
     ProceedingType.GST_SEC74_FRAUD: GstLegalResearchProfile(
         proceeding_type=ProceedingType.GST_SEC74_FRAUD,
         requirements=(
-            _r(LegalTopic.HEARING_RIGHT, LegalDateBasis.NOTICE_DATE),
-            _r(LegalTopic.DEMAND_SCOPE, LegalDateBasis.NOTICE_DATE),
+            _r(
+                LegalTopic.HEARING_RIGHT,
+                LegalDateBasis.NOTICE_DATE,
+                "cgst.s75.4.hearing",
+            ),
+            _r(
+                LegalTopic.DEMAND_SCOPE,
+                LegalDateBasis.NOTICE_DATE,
+                "cgst.s75.7.demand_scope",
+            ),
             _r(
                 LegalTopic.FRAUD_SUPPRESSION_SCOPE,
                 LegalDateBasis.TAX_PERIOD_END,
