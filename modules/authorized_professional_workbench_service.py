@@ -109,6 +109,11 @@ class AuthorizedProfessionalWorkbenchService:
                 if isinstance(classification, dict)
                 else None
             )
+            proceeding_type = (
+                classification.get("proceeding_type")
+                if isinstance(classification, dict)
+                else None
+            )
             if support_level in {"triage_only", "unknown"}:
                 specialist_workflow_available = False
 
@@ -139,6 +144,7 @@ class AuthorizedProfessionalWorkbenchService:
         evidence_readiness = []
         evidence_contract_drift = False
         triage_evidence_review_pending = False
+        notice_evidence_review_pending = False
         if latest_snapshot is not None and self._evidence is not None:
             if specialist_workflow_available:
                 try:
@@ -156,6 +162,42 @@ class AuthorizedProfessionalWorkbenchService:
                 except ValueError:
                     # Historical specialist checklist contract drift.
                     evidence_contract_drift = True
+
+                if proceeding_type == "gst_sec61_scrutiny":
+                    try:
+                        notice_checklist = (
+                            self._evidence.snapshot_evidence_checklist(
+                                principal,
+                                firm_id,
+                                case_id=case.case_id,
+                                snapshot_id=latest_snapshot.snapshot_id,
+                            )
+                        )
+                        notice_reviews = self._evidence.list_reviews(
+                            principal,
+                            firm_id,
+                            case_id=case.case_id,
+                            snapshot_id=latest_snapshot.snapshot_id,
+                        )
+                    except (PermissionError, ValueError):
+                        # CASE_READ does not imply evidence-review access,
+                        # and malformed historical evidence context fails
+                        # closed without creating a false completion signal.
+                        notice_checklist = []
+                        notice_reviews = []
+
+                    confirmed_notice_ids = {
+                        item.evidence_id
+                        for item in notice_reviews
+                        if item.decision is EvidenceReviewStatus.CONFIRMED
+                    }
+                    notice_evidence_review_pending = any(
+                        item.evidence_id.startswith(
+                            "sec61_scrutiny.notice."
+                        )
+                        and item.evidence_id not in confirmed_notice_ids
+                        for item in notice_checklist
+                    )
             else:
                 try:
                     triage_checklist = (
@@ -208,4 +250,5 @@ class AuthorizedProfessionalWorkbenchService:
             legal_evidence_contract_drift=evidence_contract_drift,
             specialist_workflow_available=specialist_workflow_available,
             triage_evidence_review_pending=triage_evidence_review_pending,
+            notice_evidence_review_pending=notice_evidence_review_pending,
         )
