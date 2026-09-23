@@ -127,6 +127,7 @@ from modules.case_reopen_service import (
     SavedCaseReopenError,
 )
 from modules.runtime_persistence import (
+    FilingSourceFactReviewBlockedError,
     RuntimePersistenceConfigurationError,
 )
 
@@ -3810,6 +3811,110 @@ class FilingWorkspaceUiTests(unittest.TestCase):
         self.assertIsNotNone(kwargs["filed_at"].tzinfo)
         self.assertIsNotNone(kwargs["recorded_at"].tzinfo)
         self.assertIn("recorded_filing_id", log_text(fake))
+
+    def test_rejected_fact_filing_block_is_actionable_and_private(self):
+        filing_service = Mock()
+        filing_service.list_filings.return_value = []
+        filing_service.record_filing.side_effect = (
+            FilingSourceFactReviewBlockedError(
+                "PRIVATE INTERNAL: rejected fact fingerprint="
+                + "a" * 64
+            )
+        )
+        response = _UploadedFile(
+            [],
+            name="portal-filed.pdf",
+            payload=b"%PDF filed response",
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=False,
+            available_firms=[self._firm(can_file=True)],
+            persistence_service=self._case_service(),
+            filing_service=filing_service,
+            draft_service=self._draft_service(),
+            reopen_result=self._reopened(),
+            file_upload_values={
+                "filed_response_CASE-1": response,
+                "filing_ack_CASE-1": None,
+            },
+            text_values={
+                "filing_reference_CASE-1": "ARN-TEST-001",
+                "filing_time_CASE-1": (
+                    "2026-09-22T22:00:00+05:30"
+                ),
+            },
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "record_filing_CASE-1": True,
+            },
+        )
+
+        text = log_text(fake)
+        self.assertIn("Filing cannot be recorded", text)
+        self.assertIn("latest professional review is Rejected", text)
+        self.assertIn("Return to Analysis history", text)
+        self.assertNotIn("PRIVATE INTERNAL", text)
+        self.assertNotIn("fingerprint", text)
+        technical = [
+            call
+            for call in calls_named(fake, "expander")
+            if call[1]
+            and "filing fact-review safety gate"
+            in str(call[1][0]).lower()
+        ]
+        self.assertEqual(technical, [])
+
+    def test_rejected_fact_filing_detail_is_engineering_only(self):
+        filing_service = Mock()
+        filing_service.list_filings.return_value = []
+        filing_service.record_filing.side_effect = (
+            FilingSourceFactReviewBlockedError(
+                "private rejected-fact diagnostic"
+            )
+        )
+        response = _UploadedFile(
+            [],
+            name="portal-filed.pdf",
+            payload=b"%PDF filed response",
+        )
+
+        fake, *_ = run_app(
+            upload=False,
+            engineering_diagnostics=True,
+            available_firms=[self._firm(can_file=True)],
+            persistence_service=self._case_service(),
+            filing_service=filing_service,
+            draft_service=self._draft_service(),
+            reopen_result=self._reopened(),
+            file_upload_values={
+                "filed_response_CASE-1": response,
+                "filing_ack_CASE-1": None,
+            },
+            text_values={
+                "filing_reference_CASE-1": "ARN-TEST-001",
+                "filing_time_CASE-1": (
+                    "2026-09-22T22:00:00+05:30"
+                ),
+            },
+            button_values={
+                "open_saved_case_CASE-1": True,
+                "record_filing_CASE-1": True,
+            },
+        )
+
+        text = log_text(fake)
+        self.assertIn("Filing cannot be recorded", text)
+        self.assertIn("private rejected-fact diagnostic", text)
+        technical = [
+            call
+            for call in calls_named(fake, "expander")
+            if call[1]
+            and "filing fact-review safety gate"
+            in str(call[1][0]).lower()
+        ]
+        self.assertEqual(len(technical), 1)
 
     def test_missing_filed_response_blocks_recording(self):
         filing_service = Mock()
