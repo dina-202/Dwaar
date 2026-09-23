@@ -136,6 +136,9 @@ class CaseAttentionWorkspaceRoutingTests(unittest.TestCase):
                 CaseAttentionCode.TRIAGE_EVIDENCE_REVIEW_PENDING: (
                     CaseWorkspace.EVIDENCE
                 ),
+                CaseAttentionCode.NOTICE_EVIDENCE_REVIEW_PENDING: (
+                    CaseWorkspace.EVIDENCE
+                ),
                 CaseAttentionCode.DRAFT_NOT_STARTED: CaseWorkspace.DRAFT,
                 CaseAttentionCode.DRAFT_AWAITING_REVIEW: (
                     CaseWorkspace.DRAFT
@@ -227,6 +230,28 @@ class ProfessionalCaseAttentionTests(unittest.TestCase):
         )
         self.assertIn("human-confirmed", result.items[0].message)
         self.assertNotIn("missing", result.items[0].message.lower())
+
+    def test_notice_pending_evidence_routes_to_evidence_without_merits_claim(self):
+        result = build_professional_case_attention(
+            case(),
+            snapshots=[snapshot()],
+            legal_briefs=[brief()],
+            draft_versions=[draft(DraftReviewStatus.APPROVED)],
+            filings=[filing("DOC-ACK")],
+            notice_evidence_review_pending=True,
+        )
+        self.assertEqual(
+            codes(result),
+            (CaseAttentionCode.NOTICE_EVIDENCE_REVIEW_PENDING,),
+        )
+        self.assertIs(
+            result.items[0].code.workspace,
+            CaseWorkspace.EVIDENCE,
+        )
+        self.assertIn("human-confirmed", result.items[0].message)
+        self.assertIn("requested or referenced", result.items[0].message)
+        self.assertNotIn("liable", result.items[0].message.lower())
+        self.assertNotIn("sufficient", result.items[0].message.lower())
 
     def test_latest_snapshot_without_brief_is_visible(self):
         result = build_professional_case_attention(
