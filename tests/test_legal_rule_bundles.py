@@ -135,7 +135,7 @@ class LegalRuleBundleTests(unittest.TestCase):
         self.assertEqual(rcm.requirements[-1].required_rule_keys, ())
 
     @patch("workflows.gst.legal_research.get_gst_legal_research_profile")
-    @patch("workflows.gst.legal_research.resolve_legal_knowledge")
+    @patch("workflows.gst.legal_research.resolve_legal_knowledge_interval")
     def test_complete_two_rule_bundle_resolves(
         self,
         resolve_mock,
@@ -163,7 +163,7 @@ class LegalRuleBundleTests(unittest.TestCase):
         )
 
     @patch("workflows.gst.legal_research.get_gst_legal_research_profile")
-    @patch("workflows.gst.legal_research.resolve_legal_knowledge")
+    @patch("workflows.gst.legal_research.resolve_legal_knowledge_interval")
     def test_missing_required_rule_keeps_topic_unresolved(
         self,
         resolve_mock,
@@ -189,7 +189,7 @@ class LegalRuleBundleTests(unittest.TestCase):
         )
 
     @patch("workflows.gst.legal_research.get_gst_legal_research_profile")
-    @patch("workflows.gst.legal_research.resolve_legal_knowledge")
+    @patch("workflows.gst.legal_research.resolve_legal_knowledge_interval")
     def test_unexpected_extra_rule_requires_explicit_bundle_update(
         self,
         resolve_mock,
@@ -219,7 +219,7 @@ class LegalRuleBundleTests(unittest.TestCase):
         )
 
     @patch("workflows.gst.legal_research.get_gst_legal_research_profile")
-    @patch("workflows.gst.legal_research.resolve_legal_knowledge")
+    @patch("workflows.gst.legal_research.resolve_legal_knowledge_interval")
     def test_duplicate_effective_rule_key_fails_topic_closed(
         self,
         resolve_mock,
