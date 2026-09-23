@@ -179,6 +179,31 @@ class ProfessionalCaseAttentionTests(unittest.TestCase):
             ),
         )
 
+    def test_triage_analysis_does_not_emit_impossible_specialist_tasks(self):
+        result = build_professional_case_attention(
+            case(),
+            snapshots=[snapshot()],
+            legal_briefs=[],
+            draft_versions=[],
+            filings=[],
+            specialist_workflow_available=False,
+        )
+        self.assertEqual(result.items, ())
+
+    def test_existing_triage_draft_still_keeps_real_review_attention(self):
+        result = build_professional_case_attention(
+            case(),
+            snapshots=[snapshot()],
+            legal_briefs=[],
+            draft_versions=[draft(DraftReviewStatus.WORKING)],
+            filings=[],
+            specialist_workflow_available=False,
+        )
+        self.assertEqual(
+            codes(result),
+            (CaseAttentionCode.DRAFT_AWAITING_REVIEW,),
+        )
+
     def test_latest_snapshot_without_brief_is_visible(self):
         result = build_professional_case_attention(
             case(),
