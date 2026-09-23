@@ -9,6 +9,7 @@ from domain.auth_models import AccessPermission
 from domain.case_models import CaseDocumentKind, CaseStatus
 from domain.draft_work_product_models import DraftReviewStatus
 from domain.evidence_engine import propose_evidence_candidates
+from domain.fact_review_models import FactReviewDecision
 from domain.evidence_review import (
     create_evidence_review,
     reviewed_candidate_ids,
@@ -34,6 +35,7 @@ from modules.runtime_persistence import (
     build_authorized_evidence_review_service,
     build_authorized_evidence_workspace_service,
     build_authorized_filing_service,
+    build_authorized_fact_review_service,
     build_authorized_legal_brief_service,
     build_authorized_professional_workbench_service,
 )
@@ -1383,6 +1385,212 @@ def _render_historical_snapshot(snapshot):
             st.markdown(section["rendered_text"])
 
 
+def _render_fact_review_workspace(
+    principal,
+    active_firm,
+    *,
+    case_id,
+    snapshot_id,
+):
+    st.subheader("Professional fact review")
+    st.caption(
+        "Confirm means the extracted item accurately reflects the source "
+        "notice. It does not admit a department allegation, establish "
+        "taxpayer liability, or approve filing. Reject means the extraction "
+        "or source mapping should not be relied on."
+    )
+
+    if AccessPermission.FACT_REVIEW not in active_firm.permissions:
+        st.caption(
+            "Your current firm access does not allow professional fact "
+            "review."
+        )
+        return
+
+    try:
+        service = build_authorized_fact_review_service()
+        facts = service.list_reviewable_facts(
+            principal,
+            active_firm.firm_id,
+            case_id=case_id,
+            snapshot_id=snapshot_id,
+        )
+        latest = service.latest_reviews_by_fact(
+            principal,
+            active_firm.firm_id,
+            case_id=case_id,
+            snapshot_id=snapshot_id,
+        )
+    except RuntimePersistenceConfigurationError as error:
+        _render_internal_failure(
+            "Fact review storage is not fully configured on this deployment.",
+            error,
+            technical_label="Technical details — fact review configuration",
+        )
+        return
+    except PermissionError as error:
+        _render_internal_failure(
+            "Your account is no longer authorized to review extracted facts.",
+            error,
+            technical_label="Technical details — fact review authorization",
+        )
+        return
+    except Exception as error:
+        _render_internal_failure(
+            "Professional fact review could not be loaded.",
+            error,
+            technical_label="Technical details — fact review load failure",
+        )
+        return
+
+    if not facts:
+        st.write(
+            "No source-grounded extracted facts are available for "
+            "professional review in this saved analysis."
+        )
+        return
+
+    def review_label(fact):
+        page = _display(fact["source_page"])
+        quote = " ".join(fact["source_text"].split())
+        if len(quote) > 110:
+            quote = quote[:107] + "..."
+        return (
+            f"{_friendly_enum(fact['fact_type'])} · "
+            f"page {page} · {quote}"
+        )
+
+    labels = _numbered_labels(facts, review_label)
+    selected_label = st.selectbox(
+        "Fact to review",
+        list(labels),
+        key=f"fact_review_fact_{snapshot_id}",
+    )
+    selected_fact = labels[selected_label]
+    current = latest.get(selected_fact["fact_id"])
+    if current is None:
+        st.caption("Current professional review: Not reviewed")
+    else:
+        st.caption(
+            "Current professional review: "
+            + _friendly_enum(current.decision)
+            + " · "
+            + current.reviewed_at.isoformat(timespec="minutes")
+        )
+
+    decision_label = st.selectbox(
+        "Professional decision",
+        [
+            "Confirm source extraction",
+            "Reject source extraction",
+        ],
+        key=f"fact_review_decision_{snapshot_id}",
+    )
+    reviewer_note = st.text_area(
+        "Reviewer note (optional)",
+        key=f"fact_review_note_{snapshot_id}",
+    )
+
+    if st.button(
+        "Save fact review",
+        key=f"save_fact_review_{snapshot_id}",
+    ):
+        decision = (
+            FactReviewDecision.CONFIRMED
+            if decision_label == "Confirm source extraction"
+            else FactReviewDecision.REJECTED
+        )
+        try:
+            saved = service.save_review(
+                principal,
+                active_firm.firm_id,
+                case_id=case_id,
+                snapshot_id=snapshot_id,
+                fact_id=selected_fact["fact_id"],
+                decision=decision,
+                reviewer_note=reviewer_note,
+                reviewed_at=datetime.now(timezone.utc),
+            )
+        except PermissionError as error:
+            _render_internal_failure(
+                "Your account is no longer authorized to save fact reviews.",
+                error,
+                technical_label="Technical details — fact review authorization",
+            )
+        except Exception as error:
+            _render_internal_failure(
+                "The professional fact review could not be saved.",
+                error,
+                technical_label="Technical details — fact review save failure",
+            )
+        else:
+            st.write(
+                "Fact review saved: "
+                + _friendly_enum(saved.decision)
+                + "."
+            )
+            if saved.decision is FactReviewDecision.REJECTED:
+                st.warning(
+                    "Draft approval for work based on this saved analysis "
+                    "remains blocked while the latest professional decision "
+                    "for this fact is Rejected."
+                )
+
+    latest_for_table = latest
+    try:
+        latest_for_table = service.latest_reviews_by_fact(
+            principal,
+            active_firm.firm_id,
+            case_id=case_id,
+            snapshot_id=snapshot_id,
+        )
+    except Exception:
+        pass
+
+    st.dataframe(
+        [
+            {
+                "Type": _friendly_enum(fact["fact_type"]),
+                "Source evidence": fact["source_text"],
+                "Page": _display(fact["source_page"]),
+                "Source verification": _friendly_enum(
+                    fact["source_verification"]
+                ),
+                "Professional review": (
+                    "Not reviewed"
+                    if latest_for_table.get(fact["fact_id"]) is None
+                    else _friendly_enum(
+                        latest_for_table[fact["fact_id"]].decision
+                    )
+                ),
+            }
+            for fact in facts
+        ],
+        hide_index=True,
+    )
+
+    if _engineering_diagnostics_enabled():
+        with st.expander("Technical details — fact review"):
+            st.dataframe(
+                [
+                    {
+                        "fact_id": fact["fact_id"],
+                        "fact_role": fact["fact_role"],
+                        "fact_status": fact["status"],
+                        "latest_review_id": (
+                            None
+                            if latest_for_table.get(fact["fact_id"]) is None
+                            else latest_for_table[
+                                fact["fact_id"]
+                            ].review_id
+                        ),
+                    }
+                    for fact in facts
+                ],
+                hide_index=True,
+            )
+
+
 def _render_snapshot_history(
     principal,
     active_firm,
@@ -1496,6 +1704,13 @@ def _render_snapshot_history(
         key=f"snapshot_selector_{reopened.case.case_id}",
     )
     selected = labels[selected_label]
+
+    _render_fact_review_workspace(
+        principal,
+        active_firm,
+        case_id=reopened.case.case_id,
+        snapshot_id=selected.snapshot_id,
+    )
 
     st.subheader("Legal research history")
     try:
