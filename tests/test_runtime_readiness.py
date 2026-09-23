@@ -31,6 +31,12 @@ class RuntimeReadinessTests(unittest.TestCase):
         )
         self.ocr_patcher.start()
         self.addCleanup(self.ocr_patcher.stop)
+        self.llm_patcher = patch(
+            "modules.runtime_readiness.llm_runtime_configuration_ready",
+            return_value=True,
+        )
+        self.llm_patcher.start()
+        self.addCleanup(self.llm_patcher.stop)
 
     def test_fresh_valid_runtime_is_ready_and_creates_no_probe_artifact(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -39,7 +45,7 @@ class RuntimeReadinessTests(unittest.TestCase):
             self.assertTrue(report.ready)
             self.assertEqual(
                 [item.status for item in report.checks],
-                [RuntimeReadinessStatus.PASS] * 8,
+                [RuntimeReadinessStatus.PASS] * 9,
             )
             object_root = root / "objects"
             self.assertTrue((root / "dwaar.db").is_file())
@@ -179,6 +185,29 @@ class RuntimeReadinessTests(unittest.TestCase):
             self.assertNotIn("path", item.message.lower())
             self.assertNotIn("exception", item.message.lower())
 
+    def test_missing_llm_configuration_blocks_readiness_without_secrets(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch(
+                "modules.runtime_readiness.llm_runtime_configuration_ready",
+                return_value=False,
+            ):
+                report = evaluate_runtime_readiness(env(Path(temp)))
+            by_code = {item.code: item for item in report.checks}
+            item = by_code[RuntimeReadinessCode.LLM_CONFIGURATION]
+            self.assertIs(item.status, RuntimeReadinessStatus.BLOCKED)
+            self.assertFalse(report.ready)
+            self.assertEqual(
+                item.message,
+                (
+                    "AI analysis configuration is missing or invalid. "
+                    "Configure at least one analysis credential before "
+                    "serving professional traffic."
+                ),
+            )
+            rendered = repr(report)
+            self.assertNotIn("GEMINI_API_KEY", rendered)
+            self.assertNotIn("gemini_01", rendered)
+
     def test_check_codes_are_unique_and_stable(self):
         with tempfile.TemporaryDirectory() as temp:
             report = evaluate_runtime_readiness(env(Path(temp)))
@@ -192,6 +221,7 @@ class RuntimeReadinessTests(unittest.TestCase):
                     RuntimeReadinessCode.DOCUMENT_KEY_CONFIGURATION,
                     RuntimeReadinessCode.DOCUMENT_KEY_ID_CONFIGURATION,
                     RuntimeReadinessCode.OCR_RUNTIME,
+                    RuntimeReadinessCode.LLM_CONFIGURATION,
                     RuntimeReadinessCode.DB_OPEN_AND_MIGRATION,
                     RuntimeReadinessCode.DB_INTEGRITY,
                     RuntimeReadinessCode.OBJECT_STORE_ROUND_TRIP,
