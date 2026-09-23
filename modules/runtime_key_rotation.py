@@ -32,7 +32,7 @@ class RuntimeKeyRotationReport:
     schema_version: int
 
 
-_SUPPORTED_SCHEMA_VERSION = 6
+_SUPPORTED_SCHEMA_VERSION = 7
 
 
 def _validate_key(value: bytes, label: str) -> None:
