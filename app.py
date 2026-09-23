@@ -568,6 +568,11 @@ def _render_triage_working_summary(result):
             "Match the client's available records against the documents "
             "explicitly requested in the notice."
         )
+    if annexure_facts:
+        review_steps.append(
+            "Confirm that every annexure or supporting document referenced "
+            "by the notice was actually received and is available for review."
+        )
     if extraction.status.value == "partial":
         review_steps.append(
             "Review rejected/missed extraction areas against the original "
