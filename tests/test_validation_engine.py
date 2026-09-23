@@ -4245,6 +4245,114 @@ class RequirementEligibilityTests(unittest.TestCase):
 
 # --- Step 8.3 X. Profile-wide requirement behavior (§19.16) ------------------
 
+class Section61ScrutinyValidationTests(unittest.TestCase):
+    def test_scrutiny_workflow_resolves_allegation_period_and_response_period(self):
+        classification = NoticeClassification(
+            notice_family=NoticeFamily.ASSESSMENT_SCRUTINY,
+            notice_form=NoticeForm.ASMT_10,
+            proceeding_type=ProceedingType.GST_SEC61_SCRUTINY,
+            support_level=SupportLevel.DEEP_WORKFLOW,
+            confidence=ClassificationConfidence.HIGH,
+            classification_reasons=["fixture"],
+        )
+        facts = [
+            ExtractedFact(
+                fact_id="F-S61-1",
+                claim="Department discrepancy",
+                status=FactStatus.ALLEGED,
+                source_text="Mismatch in turnover reported in returns",
+                source_page=1,
+                allowed_in_draft=DraftPermission.CONDITIONAL,
+                fact_type=FactType.DEPARTMENT_ALLEGATION,
+                fact_role=FactRole.NONE,
+                source_origin=SourceTextOrigin.EMBEDDED,
+                source_verification=SourceVerificationStatus.VERIFIED,
+            ),
+            ExtractedFact(
+                fact_id="F-S61-2",
+                claim="Tax period",
+                status=FactStatus.CONFIRMED,
+                source_text="FY 2025-26",
+                source_page=1,
+                allowed_in_draft=DraftPermission.YES,
+                fact_type=FactType.TAX_PERIOD,
+                fact_role=FactRole.NONE,
+                source_origin=SourceTextOrigin.EMBEDDED,
+                source_verification=SourceVerificationStatus.VERIFIED,
+            ),
+            ExtractedFact(
+                fact_id="F-S61-3",
+                claim="Response period",
+                status=FactStatus.CONFIRMED,
+                source_text="Reply within fifteen days from receipt",
+                source_page=1,
+                allowed_in_draft=DraftPermission.YES,
+                fact_type=FactType.DOCUMENT_DETAIL,
+                fact_role=FactRole.RESPONSE_PERIOD,
+                source_origin=SourceTextOrigin.EMBEDDED,
+                source_verification=SourceVerificationStatus.VERIFIED,
+            ),
+        ]
+        extraction = FactExtractionResult(
+            facts=facts,
+            status=FactExtractionStatus.SUCCESS,
+        )
+        preflight = PreflightResult(
+            fact_extraction_status=FactExtractionStatus.SUCCESS,
+            communication_identifier_status=CommunicationIdentifierStatus.UNKNOWN,
+            portal_verification_required=True,
+            authority_details_status=AuthorityDetailsStatus.PARTIAL,
+            authority_verification_required=True,
+            stated_due_date_fact_ids=[],
+            parsed_stated_due_dates=[],
+            unparsed_stated_due_date_fact_ids=[],
+            deadline_conflict_status=DeadlineConflictStatus.CANNOT_COMPARE,
+            hearing_fact_ids=[],
+            requested_document_fact_ids=[],
+            referenced_annexure_fact_ids=[],
+        )
+        deadline = DeadlineResult(
+            notice_date=date(2026, 9, 1),
+            service_date=None,
+            response_period_days=15,
+            response_deadline=None,
+            deadline_confidence=DeadlineConfidence.UNKNOWN,
+            deadline_status=DeadlineStatus.UNKNOWN,
+            days_remaining=None,
+            hearing_date=None,
+            hearing_status=HearingStatus.NOT_SCHEDULED,
+            portal_verification_required=True,
+            notes=[],
+        )
+
+        result = run_validation(
+            classification,
+            extraction,
+            preflight,
+            [],
+            deadline,
+        )
+
+        self.assertEqual(
+            [item.status for item in result.requirements],
+            [
+                RequirementStatus.SATISFIED,
+                RequirementStatus.SATISFIED,
+                RequirementStatus.SATISFIED,
+            ],
+        )
+        self.assertEqual(len(result.evidence_checklist), 4)
+        self.assertTrue(result.review_requirements)
+        self.assertIs(result.draft_eligibility, DraftEligibility.REVIEW_REQUIRED)
+        self.assertFalse(
+            any(
+                item.status is ValidationStatus.FAIL
+                and item.check_id.startswith("support.")
+                for item in result.checks
+            )
+        )
+
+
 class ProfileWideRequirementTests(unittest.TestCase):
     """Every deep profile resolves all of its authoritative specs at
     runtime."""
@@ -4281,7 +4389,7 @@ class ProfileWideRequirementTests(unittest.TestCase):
             len(self._run(ProceedingType.GST_SEC129_ENFORCE).requirements), 9
         )
 
-    def test_total_authoritative_profile_count_remains_29(self):
+    def test_total_authoritative_profile_count_is_32(self):
         static_total = sum(
             len(profile.requirement_specs)
             for profile in VALIDATION_PROFILE_REGISTRY.values()
