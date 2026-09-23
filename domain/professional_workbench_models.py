@@ -1,10 +1,18 @@
-"""Professional case-attention contracts for Dwaar Phase 3O.1."""
+"""Professional case-attention contracts for Dwaar Phase 3O."""
 
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Tuple
 
 from domain.case_models import CaseStatus
+
+
+class CaseWorkspace(Enum):
+    ANALYSIS_HISTORY = "analysis_history"
+    LEGAL_RESEARCH = "legal_research"
+    EVIDENCE = "evidence"
+    DRAFT = "draft"
+    FILING = "filing"
 
 
 class CaseAttentionCode(Enum):
@@ -18,6 +26,30 @@ class CaseAttentionCode(Enum):
     DRAFT_AWAITING_APPROVAL = "draft_awaiting_approval"
     APPROVED_DRAFT_NOT_FILED = "approved_draft_not_filed"
     FILING_ACKNOWLEDGEMENT_MISSING = "filing_acknowledgement_missing"
+
+    @property
+    def workspace(self) -> CaseWorkspace:
+        return _ATTENTION_WORKSPACE[self]
+
+
+_ATTENTION_WORKSPACE = {
+    CaseAttentionCode.ANALYSIS_NOT_SAVED: CaseWorkspace.ANALYSIS_HISTORY,
+    CaseAttentionCode.LEGAL_BRIEF_NOT_SAVED: CaseWorkspace.LEGAL_RESEARCH,
+    CaseAttentionCode.LEGAL_RESEARCH_UNRESOLVED: CaseWorkspace.LEGAL_RESEARCH,
+    CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE: CaseWorkspace.EVIDENCE,
+    CaseAttentionCode.LEGAL_EVIDENCE_CONTRACT_DRIFT: CaseWorkspace.EVIDENCE,
+    CaseAttentionCode.DRAFT_NOT_STARTED: CaseWorkspace.DRAFT,
+    CaseAttentionCode.DRAFT_AWAITING_REVIEW: CaseWorkspace.DRAFT,
+    CaseAttentionCode.DRAFT_AWAITING_APPROVAL: CaseWorkspace.DRAFT,
+    CaseAttentionCode.APPROVED_DRAFT_NOT_FILED: CaseWorkspace.FILING,
+    CaseAttentionCode.FILING_ACKNOWLEDGEMENT_MISSING: CaseWorkspace.FILING,
+}
+
+
+if set(_ATTENTION_WORKSPACE) != set(CaseAttentionCode):
+    raise RuntimeError(
+        "every CaseAttentionCode must have exactly one owning workspace"
+    )
 
 
 @dataclass(frozen=True)
