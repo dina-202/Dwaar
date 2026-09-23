@@ -147,8 +147,8 @@ class LocalSQLiteFactReviewRepository:
                 self._cases._insert_event(connection, event)
             except sqlite3.IntegrityError as error:
                 raise RepositoryConflictError(
-                    "Fact review could not be persisted due to an identity, "
-                    "duplicate-fact or relationship conflict."
+                    "Fact review could not be persisted due to an identity "
+                    "or relationship conflict."
                 ) from error
 
     def get_review_ref(
