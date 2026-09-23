@@ -456,7 +456,7 @@ class LegalBriefPersistenceTests(unittest.TestCase):
             [],
         )
 
-    def test_schema_v5_migrates_to_v6_with_legal_brief_table(self):
+    def test_schema_v5_migrates_to_v7_with_legal_brief_table(self):
         legacy_path = str(Path(self.temp_dir.name) / "legacy-v5.db")
         LocalSQLiteCaseRepository(legacy_path)
         with sqlite3.connect(legacy_path) as connection:
@@ -481,7 +481,7 @@ class LegalBriefPersistenceTests(unittest.TestCase):
                 WHERE type='table' AND name='legal_briefs'
                 """
             ).fetchone()
-        self.assertEqual(version, "6")
+        self.assertEqual(version, "7")
         self.assertEqual(table[0], "legal_briefs")
 
     def test_list_is_snapshot_scoped_and_stable(self):
