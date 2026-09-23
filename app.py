@@ -1971,6 +1971,56 @@ def _render_persisted_evidence_workspace(
                         snapshot_id=selected_snapshot.snapshot_id,
                     )
 
+    st.subheader("Legal evidence readiness")
+    st.caption(
+        "This shows whether the closed supporting-evidence set for a legal "
+        "research question has human-confirmed review records. It does not "
+        "decide whether the legal condition or ITC claim is satisfied."
+    )
+    try:
+        legal_evidence = review_service.legal_evidence_readiness(
+            principal,
+            active_firm.firm_id,
+            case_id=reopened.case.case_id,
+            snapshot_id=selected_snapshot.snapshot_id,
+        )
+    except ValueError:
+        st.caption(
+            "This snapshot predates or does not match the current closed "
+            "legal-evidence requirement set."
+        )
+    except Exception:
+        st.error("Legal evidence readiness could not be loaded.")
+    else:
+        if legal_evidence:
+            st.dataframe(
+                [
+                    {
+                        "question_id": item.question_id,
+                        "status": item.status.value,
+                        "required_evidence_ids": list(
+                            item.required_evidence_ids
+                        ),
+                        "confirmed_evidence_ids": list(
+                            item.confirmed_evidence_ids
+                        ),
+                        "missing_evidence_ids": list(
+                            item.missing_evidence_ids
+                        ),
+                        "confirmed_review_ids": list(
+                            item.confirmed_review_ids
+                        ),
+                    }
+                    for item in legal_evidence
+                ],
+                hide_index=True,
+            )
+        else:
+            st.write(
+                "No closed legal-evidence readiness plan exists for this "
+                "workflow yet."
+            )
+
     st.subheader("Durable evidence review history")
     if not durable_reviews:
         st.write("No durable review decisions for this snapshot yet.")
