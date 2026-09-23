@@ -3442,6 +3442,44 @@ class CaseWorkQueueUiTests(unittest.TestCase):
         service.list_assignable_user_ids.assert_not_called()
         service.update_case_operations.assert_not_called()
 
+    def test_queue_renders_professional_attention_without_reordering(self):
+        service, item, _ = self._service()
+        professional = Mock()
+        professional.list_case_attention_queue.return_value = [
+            ProfessionalQueueItem(
+                work_item=item,
+                attention_codes=(
+                    CaseAttentionCode.LEGAL_RESEARCH_UNRESOLVED,
+                    CaseAttentionCode.DRAFT_AWAITING_REVIEW,
+                ),
+                attention_workspaces=(
+                    CaseWorkspace.LEGAL_RESEARCH,
+                    CaseWorkspace.DRAFT,
+                ),
+            )
+        ]
+
+        fake, *_ = run_app(
+            upload=False,
+            available_firms=[self._firm(update=False)],
+            persistence_service=service,
+            professional_workbench_service=professional,
+        )
+
+        professional.list_case_attention_queue.assert_called_once_with(
+            ANY,
+            "F-TEST",
+            today=TODAY,
+        )
+        text = log_text(fake)
+        self.assertIn("legal_research_unresolved", text)
+        self.assertIn("draft_awaiting_review", text)
+        self.assertIn("legal_research", text)
+        self.assertIn("draft", text)
+        self.assertIn("attention_count", text)
+        self.assertIn("not a priority score or legal verdict", text)
+        service.update_case_operations.assert_not_called()
+
     def test_focus_queue_case_moves_it_to_saved_cases(self):
         service, item, _ = self._service()
         fake, *_ = run_app(
