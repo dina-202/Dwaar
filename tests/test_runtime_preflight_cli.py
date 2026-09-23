@@ -13,6 +13,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "runtime_preflight.py"
 
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from modules.runtime_readiness import _ocr_runtime_available
+
 
 class RuntimePreflightCliTests(unittest.TestCase):
     def payload(self, completed):
@@ -53,10 +58,24 @@ class RuntimePreflightCliTests(unittest.TestCase):
                 text=True,
                 check=False,
             )
-        self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = self.payload(completed)
-        self.assertTrue(payload["ready"])
-        self.assertEqual(len(payload["checks"]), 7)
+        ocr_available = _ocr_runtime_available()
+        self.assertEqual(
+            completed.returncode,
+            0 if ocr_available else 1,
+            completed.stderr,
+        )
+        self.assertIs(payload["ready"], ocr_available)
+        self.assertEqual(len(payload["checks"]), 8)
+        ocr_checks = [
+            item for item in payload["checks"]
+            if item["code"] == "ocr_runtime"
+        ]
+        self.assertEqual(len(ocr_checks), 1)
+        self.assertEqual(
+            ocr_checks[0]["status"],
+            "pass" if ocr_available else "blocked",
+        )
         rendered = completed.stdout
         self.assertNotIn(str(root), rendered)
         self.assertNotIn(environment["DWAAR_DOCUMENT_KEY_B64"], rendered)
@@ -81,10 +100,18 @@ class RuntimePreflightCliTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         payload = self.payload(completed)
         self.assertFalse(payload["ready"])
-        self.assertEqual(
-            {item["status"] for item in payload["checks"]},
-            {"blocked"},
-        )
+        by_code = {item["code"]: item for item in payload["checks"]}
+        for code in (
+            "db_configuration",
+            "object_store_configuration",
+            "document_key_configuration",
+            "document_key_id_configuration",
+            "db_open_and_migration",
+            "db_integrity",
+            "object_store_round_trip",
+        ):
+            self.assertEqual(by_code[code]["status"], "blocked")
+        self.assertIn(by_code["ocr_runtime"]["status"], {"pass", "blocked"})
         self.assertEqual(completed.stderr, "")
 
 
