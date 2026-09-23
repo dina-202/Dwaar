@@ -23,6 +23,8 @@ Workflow safety rules:
 
 - Every ASMT-10 discrepancy remains a departmental allegation unless supported
   by independently verified taxpayer evidence.
+- The discrepancy-by-discrepancy response matrix must include every
+  source-grounded department allegation supplied in the controlled context.
 - Do not admit, accept, pay, rectify or concede any discrepancy merely because
   it appears in the notice.
 - Do not inject a generic statutory reply period. Use deadline material only
