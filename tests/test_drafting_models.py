@@ -812,8 +812,9 @@ class Step8ContractCompatibilityTests(unittest.TestCase):
         self.assertEqual(len(EvidenceStatus), 4)
         self.assertEqual(len(ReviewLevel), 3)
 
-    def test_proceeding_type_remains_six_members(self):
-        self.assertEqual(len(ProceedingType), 6)
+    def test_proceeding_type_has_six_supported_workflows_plus_unknown(self):
+        self.assertEqual(len(ProceedingType), 7)
+        self.assertTrue(hasattr(ProceedingType, "GST_SEC61_SCRUTINY"))
         self.assertTrue(hasattr(ProceedingType, "UNKNOWN"))
 
     def test_extracted_fact_remains_eight_field_contract(self):
