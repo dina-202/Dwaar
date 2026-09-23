@@ -273,6 +273,14 @@ def _proceeding_label(proceeding_type):
     return labels.get(proceeding_type.value, _friendly_enum(proceeding_type))
 
 
+def _classification_context_label(classification):
+    if classification.proceeding_type.value != "unknown":
+        return _proceeding_label(classification.proceeding_type)
+    if classification.notice_family.value != "unknown":
+        return _notice_family_label(classification.notice_family)
+    return "Intake"
+
+
 def _matching_source_facts(extraction, *, fact_type=None, fact_role=None):
     """Return source-grounded facts for one presentation selector."""
     return [
@@ -3731,12 +3739,12 @@ def _render_save_intake_workspace(
         ):
             st.caption("No existing clients are saved in this firm yet.")
 
-    notice_form_label = (
-        result.classification.notice_form.value.upper().replace("_", "-")
+    notice_form_label = _notice_form_label(
+        result.classification.notice_form
     )
     default_title = (
         f"{notice_form_label} — "
-        f"{_proceeding_label(result.classification.proceeding_type)}"
+        f"{_classification_context_label(result.classification)}"
     )
     case_title = st.text_input(
         "Case title",
