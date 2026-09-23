@@ -1,8 +1,9 @@
 """GST deep-workflow registry (ARCHITECTURE_SPEC_v1_1 §10, §13 Step 5).
 
 Deterministic static registry mapping an approved ProceedingType to its
-WorkflowDefinition. Exactly five entries:
+WorkflowDefinition. Approved deep-workflow entries:
 
+- GST_SEC61_SCRUTINY
 - GST_SEC73_ITC
 - GST_SEC73_GENERAL
 - GST_SEC73_RCM
@@ -23,12 +24,14 @@ from domain.models import ProceedingType
 
 from .base import WorkflowDefinition
 from .sec129_enforcement import SEC129_ENFORCEMENT_WORKFLOW
+from .sec61_scrutiny import SEC61_SCRUTINY_WORKFLOW
 from .sec73_general import SEC73_GENERAL_WORKFLOW
 from .sec73_itc import SEC73_ITC_WORKFLOW
 from .sec73_rcm import SEC73_RCM_WORKFLOW
 from .sec74_fraud import SEC74_FRAUD_WORKFLOW
 
 GST_WORKFLOW_REGISTRY: Dict[ProceedingType, WorkflowDefinition] = {
+    ProceedingType.GST_SEC61_SCRUTINY: SEC61_SCRUTINY_WORKFLOW,
     ProceedingType.GST_SEC73_ITC: SEC73_ITC_WORKFLOW,
     ProceedingType.GST_SEC73_GENERAL: SEC73_GENERAL_WORKFLOW,
     ProceedingType.GST_SEC73_RCM: SEC73_RCM_WORKFLOW,
