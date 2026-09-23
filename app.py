@@ -9,7 +9,10 @@ from domain.auth_models import AccessPermission
 from domain.case_models import CaseDocumentKind, CaseStatus
 from domain.draft_work_product_models import DraftReviewStatus
 from domain.evidence_engine import propose_evidence_candidates
-from domain.fact_review_models import FactReviewDecision
+from domain.fact_review_models import (
+    FACT_REVIEW_NOTE_MAX_CHARS,
+    FactReviewDecision,
+)
 from domain.evidence_review import (
     create_evidence_review,
     reviewed_candidate_ids,
@@ -1489,6 +1492,7 @@ def _render_fact_review_workspace(
     reviewer_note = st.text_area(
         "Reviewer note (optional)",
         key=f"fact_review_note_{snapshot_id}",
+        max_chars=FACT_REVIEW_NOTE_MAX_CHARS,
     )
 
     if st.button(
