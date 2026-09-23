@@ -1,4 +1,4 @@
-"""Unit tests for the five Phase 2 deep workflow definitions and the
+"""Unit tests for the six approved deep workflow definitions and the
 deterministic workflow registry (ARCHITECTURE_SPEC_v1_1 §10, §10.1-§10.3,
 §13 Step 5).
 
@@ -7,7 +7,7 @@ Fully offline and deterministic. No LLM calls, no network, no fixtures.
 Verifies:
 
   - WorkflowDefinition has exactly the §10 field contract;
-  - exactly five workflow objects exist, keyed by ProceedingType; UNKNOWN
+  - exactly six workflow objects exist, keyed by ProceedingType; UNKNOWN
     has no workflow and get_workflow has no fallback;
   - default severities match §10;
   - every workflow's required_facts, evidence_requirements, issue_types,
@@ -47,6 +47,37 @@ LIST_FIELDS = (
 # Exact §10.3 authoritative content, transcribed verbatim so the tests
 # detect any future workflow drift.
 EXPECTED_WORKFLOWS = {
+    ProceedingType.GST_SEC61_SCRUTINY: {
+        "default_severity": IssueSeverity.MEDIUM,
+        "required_facts": [
+            "Discrepancy / issue stated by the department in FORM GST ASMT-10",
+            "FY / tax period under scrutiny",
+            "Response period stated in the notice, where stated",
+        ],
+        "evidence_requirements": [
+            "Return(s) and statements under scrutiny for the relevant period",
+            "Reconciliation and supporting records relevant to each discrepancy stated in FORM GST ASMT-10",
+            "Documents explicitly requested in FORM GST ASMT-10, where stated",
+            "Annexures or discrepancy computations referenced by FORM GST ASMT-10, where stated",
+        ],
+        "issue_types": [
+            "RETURN_SCRUTINY_DISCREPANCY",
+            "DISCREPANCY_RECONCILIATION",
+            "RESPONSE_TIMELINE",
+        ],
+        "output_structure": [
+            "Scrutiny working paper",
+            "Discrepancy-by-discrepancy response matrix",
+            "Reviewable ASMT-11 explanation",
+        ],
+        "special_rules": [
+            "Every discrepancy stated in FORM GST ASMT-10 remains a departmental allegation unless independently supported by taxpayer evidence.",
+            "Address each stated discrepancy separately; never treat the notice wording alone as an admission by the taxpayer.",
+            "Do not inject a generic statutory reply period; use only the notice-stated response period or due date and verified service/receipt inputs.",
+            "Any acceptance of a discrepancy, payment, or corrective action requires taxpayer evidence and professional confirmation.",
+            "Mandatory CA review is required before any ASMT-11 response is filed.",
+        ],
+    },
     ProceedingType.GST_SEC73_ITC: {
         "default_severity": IssueSeverity.MEDIUM,
         "required_facts": [
@@ -254,9 +285,10 @@ class WorkflowDefinitionContractTests(unittest.TestCase):
 
 
 class WorkflowRegistryTests(unittest.TestCase):
-    """Exactly five registered workflows; UNKNOWN has none; no fallback."""
+    """Exactly six registered workflows; UNKNOWN has none; no fallback."""
 
     EXPECTED_KEYS = {
+        ProceedingType.GST_SEC61_SCRUTINY,
         ProceedingType.GST_SEC73_ITC,
         ProceedingType.GST_SEC73_GENERAL,
         ProceedingType.GST_SEC73_RCM,
@@ -271,8 +303,8 @@ class WorkflowRegistryTests(unittest.TestCase):
         keys = list(GST_WORKFLOW_REGISTRY.keys())
         self.assertEqual(len(keys), len(set(keys)))
 
-    def test_exactly_five_workflow_definition_objects_exist(self):
-        self.assertEqual(len(GST_WORKFLOW_REGISTRY), 5)
+    def test_exactly_six_workflow_definition_objects_exist(self):
+        self.assertEqual(len(GST_WORKFLOW_REGISTRY), 6)
         self.assertTrue(
             all(
                 isinstance(wf, WorkflowDefinition)
@@ -298,6 +330,10 @@ class WorkflowRegistryTests(unittest.TestCase):
 
     def test_workflow_modules_export_the_registry_objects(self):
         exports = (
+            (
+                gst_pkg.sec61_scrutiny.SEC61_SCRUTINY_WORKFLOW,
+                ProceedingType.GST_SEC61_SCRUTINY,
+            ),
             (gst_pkg.sec73_itc.SEC73_ITC_WORKFLOW, ProceedingType.GST_SEC73_ITC),
             (
                 gst_pkg.sec73_general.SEC73_GENERAL_WORKFLOW,
@@ -358,6 +394,9 @@ class WorkflowContentTests(unittest.TestCase):
             self.assertEqual(
                 getattr(wf, field), expected[field], f"{ptype.name}.{field}"
             )
+
+    def test_sec61_scrutiny_workflow_content_matches_contract(self):
+        self._assert_workflow_exact(ProceedingType.GST_SEC61_SCRUTINY)
 
     def test_itc_workflow_content_matches_spec_verbatim(self):
         self._assert_workflow_exact(ProceedingType.GST_SEC73_ITC)
