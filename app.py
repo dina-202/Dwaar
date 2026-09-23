@@ -343,6 +343,7 @@ def _notice_family_label(notice_family):
 
 def _proceeding_label(proceeding_type):
     labels = {
+        "gst_sec61_scrutiny": "Section 61 — Return scrutiny",
         "gst_sec73_itc": "Section 73 — ITC",
         "gst_sec73_general": "Section 73 — General",
         "gst_sec73_rcm": "Section 73 — RCM",
