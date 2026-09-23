@@ -328,6 +328,66 @@ class FilingPersistenceTests(FilingIntegrationFixture):
             before,
         )
 
+    def test_approved_draft_from_another_case_is_rejected_before_storage(self):
+        self.case_repo.create_case(
+            CaseRecord(
+                case_id="CASE-2",
+                firm_id="F-1",
+                client_id="C-1",
+                registration_id=None,
+                title="Other matter",
+                status=CaseStatus.DRAFT_REVIEW,
+                proceeding_type=ProceedingType.GST_SEC73_GENERAL,
+                notice_form=NoticeForm.DRC_01,
+                opened_at=NOW - timedelta(days=5),
+            )
+        )
+        other_working = persist_draft_version(
+            self.draft_repo,
+            self.store,
+            case_id="CASE-2",
+            source_snapshot_id="SNAP-OTHER",
+            parent_draft_version_id=None,
+            version_number=1,
+            generated_baseline=True,
+            draft_text="Other case professional response.",
+            actor_id=PRINCIPAL.user_id,
+            created_at=NOW - timedelta(hours=3),
+        )
+        other_reviewed = transition_draft_review_status(
+            self.draft_repo,
+            version=other_working,
+            target_status=DraftReviewStatus.REVIEWED,
+            actor_id="OIDC-OTHER-REVIEWER",
+            occurred_at=NOW - timedelta(hours=2),
+        )
+        other_approved = transition_draft_review_status(
+            self.draft_repo,
+            version=other_reviewed,
+            target_status=DraftReviewStatus.APPROVED,
+            actor_id="OIDC-OTHER-APPROVER",
+            occurred_at=NOW - timedelta(hours=1, minutes=30),
+        )
+
+        before_objects = set(Path(self.object_root).glob("*.dwaar"))
+        with self.assertRaisesRegex(
+            LookupError,
+            "approved draft version does not exist",
+        ):
+            self.record(
+                approved_draft_version_id=other_approved.draft_version_id,
+            )
+
+        self.assertEqual(
+            set(Path(self.object_root).glob("*.dwaar")),
+            before_objects,
+        )
+        self.assertEqual(
+            self.filing_repo.list_filings("CASE-1"),
+            [],
+        )
+
+
     def test_unapproved_draft_is_rejected(self):
         working = persist_draft_version(
             self.draft_repo,
