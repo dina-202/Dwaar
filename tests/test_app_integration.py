@@ -38,6 +38,7 @@ from domain.professional_queue_models import ProfessionalQueueItem
 from domain.professional_workbench_models import (
     CaseAttentionCode,
     CaseWorkspace,
+    ProfessionalCaseAttention,
 )
 from domain.case_timeline_models import (
     CaseTimelineItem,
@@ -754,6 +755,17 @@ def run_app(
 
         professional_workbench_service.list_case_attention_queue.side_effect = (
             professional_queue_side_effect
+        )
+        professional_workbench_service.get_case_attention.side_effect = (
+            lambda principal, firm_id, *, case_id: ProfessionalCaseAttention(
+                case_id=case_id,
+                case_status=CaseStatus.ANALYZED,
+                latest_snapshot_id=None,
+                latest_legal_brief_id=None,
+                latest_draft_version_id=None,
+                latest_filing_id=None,
+                items=(),
+            )
         )
     professional_workbench_service_mock = Mock(
         return_value=professional_workbench_service
