@@ -353,6 +353,7 @@ def review_ids(reviews):
 # --- Step 8.3 requirement-resolution helpers ---------------------------------
 
 ALL_DEEP_PROCEEDINGS = (
+    ProceedingType.GST_SEC61_SCRUTINY,
     ProceedingType.GST_SEC73_ITC,
     ProceedingType.GST_SEC73_GENERAL,
     ProceedingType.GST_SEC73_RCM,
@@ -364,6 +365,7 @@ ITC_RULE_ID = "workflow.sec73_itc.special_rule.1.deterministic_check"
 GENERAL_RULE_ID = "workflow.sec73_general.special_rule.1.deterministic_check"
 
 DEEP_PROFILE_COUNTS = {
+    ProceedingType.GST_SEC61_SCRUTINY: 3,
     ProceedingType.GST_SEC73_ITC: 5,
     ProceedingType.GST_SEC73_GENERAL: 5,
     ProceedingType.GST_SEC73_RCM: 5,
@@ -4325,7 +4327,7 @@ class Section61ScrutinyValidationTests(unittest.TestCase):
             notes=[],
         )
 
-        result = run_validation(
+        result = engine.run_validation(
             classification,
             extraction,
             preflight,
@@ -4364,6 +4366,16 @@ class ProfileWideRequirementTests(unittest.TestCase):
             )
         )
 
+    def test_sec61_produces_exactly_three_requirement_results(self):
+        self.assertEqual(
+            len(
+                self._run(
+                    ProceedingType.GST_SEC61_SCRUTINY
+                ).requirements
+            ),
+            3,
+        )
+
     def test_itc_produces_exactly_five_requirement_results(self):
         self.assertEqual(
             len(self._run(ProceedingType.GST_SEC73_ITC).requirements), 5
@@ -4394,12 +4406,12 @@ class ProfileWideRequirementTests(unittest.TestCase):
             len(profile.requirement_specs)
             for profile in VALIDATION_PROFILE_REGISTRY.values()
         )
-        self.assertEqual(static_total, 29)
+        self.assertEqual(static_total, 32)
         runtime_total = sum(
             len(self._run(proceeding_type).requirements)
             for proceeding_type in DEEP_PROFILE_COUNTS
         )
-        self.assertEqual(runtime_total, 29)
+        self.assertEqual(runtime_total, 32)
 
     def test_requirement_ids_unique(self):
         for proceeding_type in DEEP_PROFILE_COUNTS:
