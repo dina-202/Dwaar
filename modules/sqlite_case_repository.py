@@ -27,7 +27,7 @@ from domain.case_models import (
 from domain.models import NoticeForm, ProceedingType
 
 
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 _PROHIBITED_EVENT_KEYS = frozenset(
     {
         "raw_text",
@@ -227,6 +227,34 @@ class LocalSQLiteCaseRepository:
                         snapshot_id, reviewed_at, review_id
                     );
 
+                CREATE TABLE IF NOT EXISTS fact_reviews (
+                    review_id TEXT PRIMARY KEY,
+                    case_id TEXT NOT NULL,
+                    snapshot_id TEXT NOT NULL,
+                    fact_id TEXT NOT NULL,
+                    fact_fingerprint TEXT NOT NULL,
+                    source_text_sha256 TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    byte_size INTEGER NOT NULL,
+                    sha256_hex TEXT NOT NULL,
+                    storage_key TEXT NOT NULL UNIQUE,
+                    reviewed_at TEXT NOT NULL,
+                    reviewed_by TEXT NOT NULL,
+                    FOREIGN KEY (case_id) REFERENCES cases(case_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    FOREIGN KEY (snapshot_id)
+                        REFERENCES analysis_snapshots(snapshot_id)
+                        ON UPDATE RESTRICT ON DELETE RESTRICT,
+                    UNIQUE (snapshot_id, fact_id),
+                    UNIQUE (snapshot_id, fact_fingerprint),
+                    CHECK (byte_size > 0)
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_fact_reviews_snapshot_time
+                    ON fact_reviews(
+                        snapshot_id, reviewed_at, review_id
+                    );
+
                 CREATE TABLE IF NOT EXISTS draft_versions (
                     draft_version_id TEXT PRIMARY KEY,
                     case_id TEXT NOT NULL,
@@ -325,10 +353,11 @@ class LocalSQLiteCaseRepository:
                 )
             else:
                 current_version = int(current["value"])
-                if current_version in (1, 2, 3, 4, 5):
+                if current_version in (1, 2, 3, 4, 5, 6):
                     # v2 analysis_snapshots; v3 evidence_reviews;
                     # v4 draft_versions; v5 filing_records;
-                    # v6 snapshot-bound legal_briefs. Tables are created
+                    # v6 snapshot-bound legal_briefs; v7 fact_reviews.
+                    # Tables are created
                     # idempotently above; this bump records migration.
                     connection.execute(
                         """
