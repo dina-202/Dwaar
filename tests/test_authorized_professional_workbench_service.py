@@ -6,7 +6,12 @@ from unittest import mock
 
 from domain.analysis_snapshot_models import AnalysisSnapshotRef
 from domain.case_models import CaseRecord, CaseStatus
+from domain.legal_evidence_models import (
+    LegalEvidenceReadiness,
+    LegalEvidenceReadinessStatus,
+)
 from domain.models import NoticeForm, ProceedingType
+from domain.professional_workbench_models import CaseAttentionCode
 from modules.authorized_professional_workbench_service import (
     AuthorizedProfessionalWorkbenchService,
 )
@@ -119,6 +124,117 @@ class AuthorizedProfessionalWorkbenchTests(unittest.TestCase):
         )
         legal.list_for_snapshot.assert_not_called()
         self.assertIsNone(result.latest_snapshot_id)
+
+    def test_evidence_review_permission_adds_incomplete_attention(self):
+        cases = mock.Mock()
+        snapshots = mock.Mock()
+        legal = mock.Mock()
+        drafts = mock.Mock()
+        filings = mock.Mock()
+        evidence = mock.Mock()
+        cases.get_case.return_value = case()
+        snapshots.list_snapshot_history.return_value = [snapshot()]
+        legal.list_for_snapshot.return_value = []
+        drafts.list_versions.return_value = []
+        filings.list_filings.return_value = []
+        evidence.legal_evidence_readiness.return_value = [
+            LegalEvidenceReadiness(
+                question_id="gst_sec73_itc.eligibility",
+                status=(
+                    LegalEvidenceReadinessStatus
+                    .PARTIAL_CONFIRMED_EVIDENCE
+                ),
+                required_evidence_ids=(
+                    "sec73_itc.e3",
+                    "sec73_itc.e4",
+                    "sec73_itc.e5",
+                ),
+                confirmed_evidence_ids=("sec73_itc.e3",),
+                missing_evidence_ids=(
+                    "sec73_itc.e4",
+                    "sec73_itc.e5",
+                ),
+                confirmed_review_ids=("ER-1",),
+            )
+        ]
+        service = AuthorizedProfessionalWorkbenchService(
+            cases, snapshots, legal, drafts, filings, evidence
+        )
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        self.assertIn(
+            CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE,
+            tuple(item.code for item in result.items),
+        )
+        evidence.legal_evidence_readiness.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
+
+    def test_missing_evidence_review_permission_does_not_break_cockpit(self):
+        cases = mock.Mock()
+        snapshots = mock.Mock()
+        legal = mock.Mock()
+        drafts = mock.Mock()
+        filings = mock.Mock()
+        evidence = mock.Mock()
+        cases.get_case.return_value = case()
+        snapshots.list_snapshot_history.return_value = [snapshot()]
+        legal.list_for_snapshot.return_value = []
+        drafts.list_versions.return_value = []
+        filings.list_filings.return_value = []
+        evidence.legal_evidence_readiness.side_effect = PermissionError(
+            "access denied"
+        )
+        service = AuthorizedProfessionalWorkbenchService(
+            cases, snapshots, legal, drafts, filings, evidence
+        )
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        self.assertNotIn(
+            CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE,
+            tuple(item.code for item in result.items),
+        )
+        self.assertIn(
+            CaseAttentionCode.LEGAL_BRIEF_NOT_SAVED,
+            tuple(item.code for item in result.items),
+        )
+
+    def test_evidence_contract_drift_is_attention_when_authorized(self):
+        cases = mock.Mock()
+        snapshots = mock.Mock()
+        legal = mock.Mock()
+        drafts = mock.Mock()
+        filings = mock.Mock()
+        evidence = mock.Mock()
+        cases.get_case.return_value = case()
+        snapshots.list_snapshot_history.return_value = [snapshot()]
+        legal.list_for_snapshot.return_value = []
+        drafts.list_versions.return_value = []
+        filings.list_filings.return_value = []
+        evidence.legal_evidence_readiness.side_effect = ValueError(
+            "requirements are not present"
+        )
+        service = AuthorizedProfessionalWorkbenchService(
+            cases, snapshots, legal, drafts, filings, evidence
+        )
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+        self.assertIn(
+            CaseAttentionCode.LEGAL_EVIDENCE_CONTRACT_DRIFT,
+            tuple(item.code for item in result.items),
+        )
 
     def test_only_latest_snapshot_legal_history_is_loaded(self):
         service, _, snapshots, legal, _, _ = self.build()
