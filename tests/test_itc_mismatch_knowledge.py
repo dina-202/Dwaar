@@ -132,14 +132,22 @@ class ItcMismatchKnowledgeTests(unittest.TestCase):
             ["cbic.itc_mismatch_verification.2019_2021.v2"],
         )
 
-    def test_post_2021_period_has_no_curated_mismatch_regime_yet(self):
+    def test_post_2021_period_uses_post2022_mismatch_regime(self):
         result = resolve_gst_legal_brief_from_context(
             ProceedingType.GST_SEC73_ITC,
             tax_period("FY 2022-23"),
         )
-        self.assertIn(
+        self.assertNotIn(
             LegalTopic.ITC_MISMATCH_VERIFICATION,
             result.unresolved_topics,
+        )
+        matches = [
+            item for item in result.matches
+            if item.rule.topic is LegalTopic.ITC_MISMATCH_VERIFICATION
+        ]
+        self.assertEqual(
+            [item.rule.rule_id for item in matches],
+            ["cbic.itc_mismatch_verification.post2022.v3"],
         )
 
     def test_final_itc_eligibility_still_remains_unresolved(self):

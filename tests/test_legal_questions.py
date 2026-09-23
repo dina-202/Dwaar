@@ -207,6 +207,56 @@ class LegalQuestionPlanTests(unittest.TestCase):
             ("cbic.itc_mismatch_verification.2019_2021.v2",),
         )
 
+    def test_fy2022_23_itc_mismatch_uses_post2022_regime(self):
+        facts = [
+            notice_date(),
+            fact("F-T", FactType.TAX_PERIOD, "FY 2022-23"),
+        ]
+        plan = build_gst_legal_question_plan(
+            ProceedingType.GST_SEC73_ITC,
+            facts,
+            build_legal_date_context(facts),
+        )
+        mismatch = [
+            item for item in plan.questions
+            if item.question_id == "gst_sec73_itc.mismatch_verification"
+        ][0]
+        self.assertIs(
+            mismatch.status,
+            LegalQuestionStatus.SOURCE_VERIFIED_RESEARCH_READY,
+        )
+        self.assertEqual(
+            mismatch.matched_rule_ids,
+            ("cbic.itc_mismatch_verification.post2022.v3",),
+        )
+
+    def test_explicit_jan_to_mar_2022_period_uses_post2022_regime(self):
+        facts = [
+            notice_date(),
+            fact(
+                "F-T",
+                FactType.TAX_PERIOD,
+                "Period 01/01/2022 to 31/03/2022",
+            ),
+        ]
+        plan = build_gst_legal_question_plan(
+            ProceedingType.GST_SEC73_ITC,
+            facts,
+            build_legal_date_context(facts),
+        )
+        mismatch = [
+            item for item in plan.questions
+            if item.question_id == "gst_sec73_itc.mismatch_verification"
+        ][0]
+        self.assertIs(
+            mismatch.status,
+            LegalQuestionStatus.SOURCE_VERIFIED_RESEARCH_READY,
+        )
+        self.assertEqual(
+            mismatch.matched_rule_ids,
+            ("cbic.itc_mismatch_verification.post2022.v3",),
+        )
+
     def test_itc_question_requires_period_and_both_mismatch_amount_facts(self):
         facts = [
             notice_date(),
