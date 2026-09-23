@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from typing import List
 
 from domain.analysis_snapshot_models import AnalysisSnapshotRef
@@ -13,7 +13,18 @@ from domain.auth_models import (
 )
 from domain.authorization import require_firm_permission
 from domain.legal_brief_models import LegalBriefRef, LoadedLegalBrief
-from domain.models import ProceedingType
+from domain.legal_date_engine import build_legal_date_context
+from domain.legal_date_models import LegalDateBasis
+from domain.models import (
+    DraftPermission,
+    ExtractedFact,
+    FactRole,
+    FactStatus,
+    FactType,
+    ProceedingType,
+    SourceTextOrigin,
+    SourceVerificationStatus,
+)
 from domain.persistence_ports import (
     AccessGrantRepository,
     DocumentStore,
@@ -28,7 +39,43 @@ from modules.legal_brief_service import (
     load_legal_brief,
     persist_legal_brief,
 )
-from workflows.gst.legal_research import resolve_gst_legal_brief
+from workflows.gst.legal_research import resolve_gst_legal_brief_from_context
+
+
+
+def _snapshot_facts(payload):
+    extraction = payload.get("extraction")
+    if not isinstance(extraction, dict):
+        raise ValueError("analysis snapshot extraction is invalid")
+    rows = extraction.get("facts")
+    if not isinstance(rows, list):
+        raise ValueError("analysis snapshot facts are invalid")
+    facts = []
+    try:
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("analysis snapshot fact is invalid")
+            facts.append(
+                ExtractedFact(
+                    fact_id=row["fact_id"],
+                    claim=row["claim"],
+                    status=FactStatus(row["status"]),
+                    source_text=row["source_text"],
+                    source_page=row["source_page"],
+                    allowed_in_draft=DraftPermission(
+                        row["allowed_in_draft"]
+                    ),
+                    fact_type=FactType(row["fact_type"]),
+                    fact_role=FactRole(row["fact_role"]),
+                    source_origin=SourceTextOrigin(row["source_origin"]),
+                    source_verification=SourceVerificationStatus(
+                        row["source_verification"]
+                    ),
+                )
+            )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("analysis snapshot fact is invalid") from error
+    return facts
 
 
 class AuthorizedLegalBriefService:
@@ -106,30 +153,31 @@ class AuthorizedLegalBriefService:
             case_id=case.case_id,
             snapshot_id=snapshot.snapshot_id,
         )
-        deadline = loaded.payload.get("deadline")
         classification = loaded.payload.get("classification")
-        if not isinstance(deadline, dict) or not isinstance(
-            classification, dict
-        ):
-            raise ValueError("analysis snapshot legal-date binding is invalid")
-
-        notice_date_text = deadline.get("notice_date")
+        if not isinstance(classification, dict):
+            raise ValueError("analysis snapshot classification is invalid")
         proceeding_text = classification.get("proceeding_type")
-        if not isinstance(notice_date_text, str) or not notice_date_text:
-            raise ValueError(
-                "analysis snapshot has no notice date for legal versioning"
-            )
         if not isinstance(proceeding_text, str) or not proceeding_text:
             raise ValueError(
                 "analysis snapshot has no proceeding type for legal research"
             )
         try:
-            as_of_date = date.fromisoformat(notice_date_text)
             proceeding_type = ProceedingType(proceeding_text)
         except ValueError as error:
             raise ValueError(
-                "analysis snapshot legal binding values are invalid"
+                "analysis snapshot proceeding type is invalid"
             ) from error
+
+        date_context = build_legal_date_context(
+            _snapshot_facts(loaded.payload)
+        )
+        notice_anchor = date_context.get(LegalDateBasis.NOTICE_DATE)
+        if notice_anchor is None:
+            raise ValueError(
+                "analysis snapshot has no unique verified notice date for "
+                "legal brief metadata"
+            )
+        as_of_date = notice_anchor.effective_date
 
         # Saving durable professional history is a case mutation. The
         # snapshot read above is already CASE_READ-authorized.
@@ -138,9 +186,9 @@ class AuthorizedLegalBriefService:
             firm_id,
             AccessPermission.CASE_UPDATE,
         )
-        result = resolve_gst_legal_brief(
+        result = resolve_gst_legal_brief_from_context(
             proceeding_type,
-            as_of_date,
+            date_context,
         )
         return persist_legal_brief(
             self._briefs,
