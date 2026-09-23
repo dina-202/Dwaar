@@ -113,6 +113,7 @@ _SUPPORT_STRUCTURAL_IDS: Tuple[str, ...] = (
 
 # §19.66: stable workflow check-ID prefixes per ProceedingType.
 _PREFIX_BY_PROCEEDING: Dict[ProceedingType, str] = {
+    ProceedingType.GST_SEC61_SCRUTINY: "sec61_scrutiny",
     ProceedingType.GST_SEC73_ITC: "sec73_itc",
     ProceedingType.GST_SEC73_GENERAL: "sec73_general",
     ProceedingType.GST_SEC73_RCM: "sec73_rcm",
