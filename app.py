@@ -1540,7 +1540,11 @@ def _render_fact_review_workspace(
                 st.warning(
                     "Draft approval for work based on this saved analysis "
                     "remains blocked while the latest professional decision "
-                    "for this fact is Rejected."
+                    "for this fact is Rejected. If the extraction itself is "
+                    "wrong, return to the opened case, re-run the current "
+                    "analysis after the extraction issue is addressed, and "
+                    "save a new analysis version. This historical review "
+                    "remains preserved."
                 )
 
     st.dataframe(
