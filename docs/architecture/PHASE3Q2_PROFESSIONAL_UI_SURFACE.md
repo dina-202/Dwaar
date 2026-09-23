@@ -143,6 +143,25 @@ remain audit/engineering data and are not part of the default CA surface.
 Fact review never mutates the original extracted fact or silently converts a
 department allegation into a taxpayer fact.
 
+### Rejected fact attention
+
+When the latest saved analysis has one or more extracted facts whose latest
+professional review is **Rejected**, the case queue emits
+`FACT_REVIEW_REJECTED` and routes it to **Analysis history**.
+
+This attention means only that a source extraction/source mapping has been
+professionally rejected and should be re-reviewed before the saved analysis is
+relied on for draft approval. It is not a conclusion that the department's
+allegation is false, that the taxpayer is not liable, or that any particular
+reply should be filed.
+
+The signal is permission-sensitive. A user who has CASE_READ but lacks
+FACT_REVIEW does not receive or infer the rejected-fact state through the case
+cockpit.
+
+A later professional review can supersede the operational state while preserving
+the earlier immutable review in history.
+
 ### Triage case attention
 
 The professional queue must reflect what the saved analysis actually supports.
