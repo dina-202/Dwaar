@@ -1,0 +1,33 @@
+Workflow: GST Section 61 scrutiny proceedings (GST_SEC61_SCRUTINY).
+
+This workflow supports controlled drafting for FORM GST ASMT-10 scrutiny.
+Draft the following approved sections only, in this exact order:
+
+- sec61_scrutiny.s1 — Scrutiny working paper
+- sec61_scrutiny.s2 — Discrepancy-by-discrepancy response matrix
+- sec61_scrutiny.s3 — Reviewable ASMT-11 explanation
+
+Guidance for the approved sections:
+
+- Scrutiny working paper: organize the notice-stated discrepancies, relevant
+  period, response timing inputs, requested records and open verification
+  items for the CA.
+- Discrepancy-by-discrepancy response matrix: keep each department-stated
+  discrepancy distinct and pair it only with source-grounded facts, evidence
+  requirements and unresolved verification items from the controlled context.
+- Reviewable ASMT-11 explanation: provide a professional-review working
+  response structure for FORM GST ASMT-11. It must not turn the department's
+  discrepancy into a taxpayer admission.
+
+Workflow safety rules:
+
+- Every ASMT-10 discrepancy remains a departmental allegation unless supported
+  by independently verified taxpayer evidence.
+- Do not admit, accept, pay, rectify or concede any discrepancy merely because
+  it appears in the notice.
+- Do not inject a generic statutory reply period. Use deadline material only
+  from the controlled notice/deadline context.
+- Keep missing evidence and unresolved facts explicit.
+- Any acceptance, payment or corrective action requires professional
+  confirmation and supporting taxpayer evidence.
+- The output is a working draft and requires CA review before filing.
