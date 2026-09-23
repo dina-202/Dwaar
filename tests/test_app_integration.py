@@ -1,6 +1,7 @@
 """Offline integration tests for the Step-10.2 Streamlit shell."""
 
 import ast
+from contextlib import ExitStack
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import os
@@ -843,99 +844,112 @@ def run_app(
     fake.persisted_evidence_mock = persisted_evidence_mock
     fake.reopen_mock = reopen_mock
 
-    with (
-        patch.dict(
-            os.environ,
-            {
-                "DWAAR_ENGINEERING_DIAGNOSTICS": (
-                    "1" if engineering_diagnostics else "0"
-                )
-            },
-        ),
-        patch.dict(sys.modules, {"streamlit": fake}),
-        patch("datetime.date", FixedDate),
-        patch.object(
-            runtime_access_module,
-            "database_path_from_environment",
-            db_path_mock,
-        ),
-        patch.object(
-            runtime_access_module,
-            "load_available_firms_for_permissions",
-            firms_mock,
-        ),
-        patch.object(
-            runtime_persistence_module,
-            "build_authorized_case_service",
-            persistence_service_mock,
-        ),
-        patch.object(
-            runtime_persistence_module,
-            "build_authorized_analysis_snapshot_service",
-            snapshot_service_mock,
-        ),
-        patch.object(
-            runtime_persistence_module,
-            "build_authorized_evidence_workspace_service",
-            evidence_workspace_service_mock,
-        ),
-        patch.object(
-            runtime_persistence_module,
-            "build_authorized_evidence_review_service",
-            evidence_review_service_mock,
-        ),
-        patch.object(
-            runtime_persistence_module,
-            "build_authorized_fact_review_service",
-            fact_review_service_mock,
-        ),
-        patch.object(
-            runtime_persistence_module,
-            "build_authorized_draft_work_product_service",
-            draft_service_mock,
-        ),
-        patch.object(
-            runtime_persistence_module,
-            "build_authorized_filing_service",
-            filing_service_mock,
-        ),
-        patch.object(
-            runtime_persistence_module,
-            "build_authorized_legal_brief_service",
-            legal_brief_service_mock,
-        ),
-        patch.object(
-            runtime_persistence_module,
-            "build_authorized_professional_workbench_service",
-            professional_workbench_service_mock,
-        ),
-        patch.object(
-            case_evidence_service_module,
-            "add_supporting_evidence_pdf",
-            persisted_evidence_mock,
-        ),
-        patch.object(
-            case_reopen_service_module,
-            "reopen_case_analysis",
-            reopen_mock,
-        ),
-        patch.object(pdf_reader, "extract_document_pages", extract_mock),
-        patch.object(
-            orchestrator_module,
-            "run_phase2_analysis_from_document_pages",
-            orchestrator_mock,
-        ),
-        patch.object(
-            evidence_engine_module,
-            "propose_evidence_candidates",
-            evidence_mock,
-        ),
-        patch.object(
-            evidence_workspace_module,
-            "build_evidence_documents",
-            return_value=[],
-        ),
-    ):
+    with ExitStack() as stack:
+        stack.enter_context(
+            patch.dict(
+                os.environ,
+                {
+                    "DWAAR_ENGINEERING_DIAGNOSTICS": (
+                        "1" if engineering_diagnostics else "0"
+                    )
+                },
+            )
+        )
+        stack.enter_context(patch.dict(sys.modules, {"streamlit": fake}))
+        stack.enter_context(patch("datetime.date", FixedDate))
+        for module, name, replacement in (
+            (
+                runtime_access_module,
+                "database_path_from_environment",
+                db_path_mock,
+            ),
+            (
+                runtime_access_module,
+                "load_available_firms_for_permissions",
+                firms_mock,
+            ),
+            (
+                runtime_persistence_module,
+                "build_authorized_case_service",
+                persistence_service_mock,
+            ),
+            (
+                runtime_persistence_module,
+                "build_authorized_analysis_snapshot_service",
+                snapshot_service_mock,
+            ),
+            (
+                runtime_persistence_module,
+                "build_authorized_evidence_workspace_service",
+                evidence_workspace_service_mock,
+            ),
+            (
+                runtime_persistence_module,
+                "build_authorized_evidence_review_service",
+                evidence_review_service_mock,
+            ),
+            (
+                runtime_persistence_module,
+                "build_authorized_fact_review_service",
+                fact_review_service_mock,
+            ),
+            (
+                runtime_persistence_module,
+                "build_authorized_draft_work_product_service",
+                draft_service_mock,
+            ),
+            (
+                runtime_persistence_module,
+                "build_authorized_filing_service",
+                filing_service_mock,
+            ),
+            (
+                runtime_persistence_module,
+                "build_authorized_legal_brief_service",
+                legal_brief_service_mock,
+            ),
+            (
+                runtime_persistence_module,
+                "build_authorized_professional_workbench_service",
+                professional_workbench_service_mock,
+            ),
+            (
+                case_evidence_service_module,
+                "add_supporting_evidence_pdf",
+                persisted_evidence_mock,
+            ),
+            (
+                case_reopen_service_module,
+                "reopen_case_analysis",
+                reopen_mock,
+            ),
+            (
+                pdf_reader,
+                "extract_document_pages",
+                extract_mock,
+            ),
+            (
+                orchestrator_module,
+                "run_phase2_analysis_from_document_pages",
+                orchestrator_mock,
+            ),
+            (
+                evidence_engine_module,
+                "propose_evidence_candidates",
+                evidence_mock,
+            ),
+        ):
+            stack.enter_context(
+                patch.object(module, name, replacement)
+            )
+        stack.enter_context(
+            patch.object(
+                evidence_workspace_module,
+                "build_evidence_documents",
+                return_value=[],
+            )
+        )
+
         try:
             runpy.run_path(
                 str(APP_PATH),
