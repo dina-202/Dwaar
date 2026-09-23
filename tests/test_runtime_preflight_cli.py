@@ -15,6 +15,22 @@ SCRIPT = ROOT / "scripts" / "runtime_preflight.py"
 
 
 class RuntimePreflightCliTests(unittest.TestCase):
+    def payload(self, completed):
+        lines = [
+            line.strip()
+            for line in completed.stdout.splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(
+            len(lines),
+            1,
+            "unexpected CLI output; stdout="
+            + repr(completed.stdout)
+            + " stderr="
+            + repr(completed.stderr),
+        )
+        return json.loads(lines[0])
+
     def test_valid_runtime_returns_zero_and_sanitized_json(self):
         with tempfile.TemporaryDirectory() as temp:
             root = pathlib.Path(temp)
@@ -37,7 +53,7 @@ class RuntimePreflightCliTests(unittest.TestCase):
                 check=False,
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        payload = json.loads(completed.stdout)
+        payload = self.payload(completed)
         self.assertTrue(payload["ready"])
         self.assertEqual(len(payload["checks"]), 6)
         rendered = completed.stdout
@@ -61,7 +77,7 @@ class RuntimePreflightCliTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(completed.returncode, 1)
-        payload = json.loads(completed.stdout)
+        payload = self.payload(completed)
         self.assertFalse(payload["ready"])
         self.assertEqual(
             {item["status"] for item in payload["checks"]},
