@@ -1661,6 +1661,20 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
         self.assertNotIn("Triage working summary", log_text(fake))
 
 
+    def test_notice_stated_period_is_visible_without_calendar_deadline(self):
+        result = self._triage_result()
+        result.deadline_result.response_period_days = 30
+        result.deadline_result.response_deadline = None
+        fake, *_ = run_app(result=result)
+        text = log_text(fake)
+        self.assertIn("Notice-stated response period", text)
+        self.assertIn("30 day(s)", text)
+        self.assertIn(
+            "calendar deadline cannot be calculated safely",
+            text,
+        )
+
+
 class RenderOrderAndRawTextTests(unittest.TestCase):
     def test_full_functional_render_order_and_raw_text_last(self):
         triage_message = "Deterministic triage message sentinel."
