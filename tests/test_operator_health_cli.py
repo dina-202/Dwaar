@@ -20,6 +20,7 @@ SCRIPT = ROOT / "scripts" / "operator_health.py"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from modules.llm_client import llm_runtime_configuration_ready
 from modules.runtime_readiness import _ocr_runtime_available
 KEY = b"o" * 32
 KEY_ID = "doc-key-operator-a"
@@ -99,16 +100,18 @@ class OperatorHealthCliTests(unittest.TestCase):
         completed = self.run_cli(backup, 24)
         payload = self.payload(completed)
         ocr_available = _ocr_runtime_available()
+        llm_configured = llm_runtime_configuration_ready()
+        runtime_ready = ocr_available and llm_configured
         self.assertEqual(
             completed.returncode,
-            0 if ocr_available else 1,
+            0 if runtime_ready else 1,
             completed.stderr,
         )
-        self.assertIs(payload["healthy"], ocr_available)
+        self.assertIs(payload["healthy"], runtime_ready)
         checks = {item["code"]: item for item in payload["checks"]}
         self.assertEqual(
             checks["runtime_preflight"]["status"],
-            "pass" if ocr_available else "blocked",
+            "pass" if runtime_ready else "blocked",
         )
         for code in (
             "live_storage_consistency",
@@ -138,7 +141,14 @@ class OperatorHealthCliTests(unittest.TestCase):
         checks = {item["code"]: item for item in payload["checks"]}
         self.assertEqual(
             checks["runtime_preflight"]["status"],
-            "pass" if _ocr_runtime_available() else "blocked",
+            (
+                "pass"
+                if (
+                    _ocr_runtime_available()
+                    and llm_runtime_configuration_ready()
+                )
+                else "blocked"
+            ),
         )
         self.assertEqual(
             checks["live_storage_consistency"]["status"], "pass"
