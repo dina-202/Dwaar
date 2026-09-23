@@ -1842,6 +1842,42 @@ class TriageWorkingSummaryUiTests(unittest.TestCase):
         self.assertIn("Upload supporting evidence PDFs", text)
         evidence_mock.assert_not_called()
 
+    def test_triage_evidence_engine_receives_exact_requested_record_target(self):
+        result = self._triage_result()
+        result.preflight_result.requested_document_fact_ids = ["F-005"]
+        support = [
+            _UploadedFile(
+                [],
+                name="purchase-register.pdf",
+                payload=b"%PDF triage supporting sentinel",
+            )
+        ]
+        intake = EvidenceIntakeResult(
+            status=EvidenceIntakeStatus.SUCCESS,
+            candidates=[],
+        )
+        _, _, _, evidence_mock, _, _ = run_app(
+            result=result,
+            supporting_uploads=support,
+            evidence_intake_result=intake,
+        )
+        evidence_mock.assert_called_once()
+        checklist = evidence_mock.call_args.args[0]
+        self.assertEqual(len(checklist), 1)
+        self.assertEqual(
+            checklist[0].evidence_id,
+            "triage.requested_document.F-005",
+        )
+        self.assertEqual(
+            checklist[0].requirement_text,
+            (
+                "Department-requested record: "
+                "Purchase register, Sales register and GST ledger"
+            ),
+        )
+        self.assertIs(checklist[0].status, EvidenceStatus.UNKNOWN)
+        self.assertNotIn("Requested records", repr(checklist))
+
     def test_triage_without_requested_records_does_not_open_evidence_workspace(self):
         result = self._triage_result()
         result.extraction_result.facts = [
