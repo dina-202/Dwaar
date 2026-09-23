@@ -39,6 +39,7 @@ from modules.legal_brief_service import (
     load_legal_brief,
     persist_legal_brief,
 )
+from workflows.gst.legal_questions import build_gst_legal_question_plan
 from workflows.gst.legal_research import resolve_gst_legal_brief_from_context
 
 
@@ -168,9 +169,8 @@ class AuthorizedLegalBriefService:
                 "analysis snapshot proceeding type is invalid"
             ) from error
 
-        date_context = build_legal_date_context(
-            _snapshot_facts(loaded.payload)
-        )
+        snapshot_facts = _snapshot_facts(loaded.payload)
+        date_context = build_legal_date_context(snapshot_facts)
         notice_anchor = date_context.get(LegalDateBasis.NOTICE_DATE)
         if notice_anchor is None:
             raise ValueError(
@@ -190,6 +190,11 @@ class AuthorizedLegalBriefService:
             proceeding_type,
             date_context,
         )
+        question_plan = build_gst_legal_question_plan(
+            proceeding_type,
+            snapshot_facts,
+            date_context,
+        )
         return persist_legal_brief(
             self._briefs,
             self._documents,
@@ -200,6 +205,7 @@ class AuthorizedLegalBriefService:
             proceeding_type=proceeding_type,
             actor_id=principal.user_id,
             created_at=created_at,
+            question_plan=question_plan,
         )
 
     def list_for_snapshot(
