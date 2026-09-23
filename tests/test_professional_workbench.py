@@ -133,6 +133,9 @@ class CaseAttentionWorkspaceRoutingTests(unittest.TestCase):
                 CaseAttentionCode.LEGAL_EVIDENCE_CONTRACT_DRIFT: (
                     CaseWorkspace.EVIDENCE
                 ),
+                CaseAttentionCode.TRIAGE_EVIDENCE_REVIEW_PENDING: (
+                    CaseWorkspace.EVIDENCE
+                ),
                 CaseAttentionCode.DRAFT_NOT_STARTED: CaseWorkspace.DRAFT,
                 CaseAttentionCode.DRAFT_AWAITING_REVIEW: (
                     CaseWorkspace.DRAFT
@@ -203,6 +206,27 @@ class ProfessionalCaseAttentionTests(unittest.TestCase):
             codes(result),
             (CaseAttentionCode.DRAFT_AWAITING_REVIEW,),
         )
+
+    def test_triage_pending_evidence_routes_only_to_evidence(self):
+        result = build_professional_case_attention(
+            case(),
+            snapshots=[snapshot()],
+            legal_briefs=[],
+            draft_versions=[],
+            filings=[],
+            specialist_workflow_available=False,
+            triage_evidence_review_pending=True,
+        )
+        self.assertEqual(
+            codes(result),
+            (CaseAttentionCode.TRIAGE_EVIDENCE_REVIEW_PENDING,),
+        )
+        self.assertIs(
+            result.items[0].code.workspace,
+            CaseWorkspace.EVIDENCE,
+        )
+        self.assertIn("human-confirmed", result.items[0].message)
+        self.assertNotIn("missing", result.items[0].message.lower())
 
     def test_latest_snapshot_without_brief_is_visible(self):
         result = build_professional_case_attention(
