@@ -144,6 +144,23 @@ names in ordinary draft, evidence-review, or filing-history tables.
 Until Dwaar has an authorized firm-user display-name directory, it must not
 invent or infer human names from those identifiers.
 
+## Failure-detail boundary
+
+The professional surface must not render raw backend exception text from notice
+analysis, PDF parsing, evidence matching, provider calls, object storage,
+database access, encryption/integrity checks, or other internal services.
+
+Customer mode renders a controlled professional failure message only.
+
+When `DWAAR_ENGINEERING_DIAGNOSTICS` is explicitly enabled, the same failure
+may additionally expose its exception type and message inside a clearly
+labelled **Technical details** expander for internal diagnosis. This does not
+change the underlying fail-closed engine behavior.
+
+Regression coverage must inject deliberately sensitive-looking error text
+(provider tokens, storage/ciphertext details, database paths) and prove that it
+does not appear in customer mode.
+
 ## Non-negotiable safety
 
 Phase 3Q.2 does not:
