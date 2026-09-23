@@ -45,6 +45,48 @@ class LegalKnowledgeTests(unittest.TestCase):
                 LegalVerificationStatus.SOURCE_VERIFIED,
             )
 
+    def test_section61_scrutiny_process_resolves_only_for_section61(self):
+        result = resolve_legal_knowledge(
+            self.query(
+                date(2026, 9, 23),
+                ProceedingType.GST_SEC61_SCRUTINY,
+                LegalTopic.SCRUTINY_PROCESS,
+            ),
+            catalog_version=GST_LEGAL_CATALOG_VERSION,
+            sources=GST_LEGAL_SOURCES,
+            rules=GST_LEGAL_RULES,
+        )
+        self.assertTrue(result.catalog_valid)
+        self.assertEqual(result.unresolved_topics, ())
+        self.assertEqual(
+            [match.rule.rule_id for match in result.matches],
+            [
+                "cgst.s61.scrutiny_process.v1",
+                "cgst.r99.asmt_forms.v1",
+            ],
+        )
+        combined = " ".join(
+            match.rule.proposition for match in result.matches
+        ).lower()
+        for forbidden in ("15 days", "fifteen days", "30 days", "thirty days"):
+            self.assertNotIn(forbidden, combined)
+
+        wrong = resolve_legal_knowledge(
+            self.query(
+                date(2026, 9, 23),
+                ProceedingType.GST_SEC73_GENERAL,
+                LegalTopic.SCRUTINY_PROCESS,
+            ),
+            catalog_version=GST_LEGAL_CATALOG_VERSION,
+            sources=GST_LEGAL_SOURCES,
+            rules=GST_LEGAL_RULES,
+        )
+        self.assertEqual(wrong.matches, ())
+        self.assertEqual(
+            wrong.unresolved_topics,
+            (LegalTopic.SCRUTINY_PROCESS,),
+        )
+
     def test_demand_workflow_resolves_hearing_and_demand_scope(self):
         result = resolve_legal_knowledge(
             self.query(
