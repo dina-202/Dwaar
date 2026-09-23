@@ -63,6 +63,13 @@ class AuthorizedProfessionalWorkbenchTests(unittest.TestCase):
         filings = mock.Mock()
         cases.get_case.return_value = case()
         snapshots.list_snapshot_history.return_value = [snapshot()]
+        snapshots.load_snapshot.return_value = mock.Mock(
+            payload={
+                "classification": {
+                    "support_level": "deep_workflow",
+                }
+            }
+        )
         legal.list_for_snapshot.return_value = []
         drafts.list_versions.return_value = []
         filings.list_filings.return_value = []
@@ -116,6 +123,12 @@ class AuthorizedProfessionalWorkbenchTests(unittest.TestCase):
             "F-1",
             case_id="CASE-1",
         )
+        snapshots.load_snapshot.assert_called_once_with(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+            snapshot_id="SNAP-1",
+        )
         legal.list_for_snapshot.assert_called_once_with(
             mock.sentinel.principal,
             "F-1",
@@ -132,6 +145,28 @@ class AuthorizedProfessionalWorkbenchTests(unittest.TestCase):
             "F-1",
             case_id="CASE-1",
         )
+
+    def test_triage_snapshot_skips_unavailable_specialist_attention(self):
+        service, cases, snapshots, legal, drafts, filings = self.build()
+        snapshots.load_snapshot.return_value = mock.Mock(
+            payload={
+                "classification": {
+                    "support_level": "triage_only",
+                }
+            }
+        )
+
+        result = service.get_case_attention(
+            mock.sentinel.principal,
+            "F-1",
+            case_id="CASE-1",
+        )
+
+        self.assertEqual(result.items, ())
+        legal.list_for_snapshot.assert_not_called()
+        legal.load.assert_not_called()
+        drafts.list_versions.assert_called_once()
+        filings.list_filings.assert_called_once()
 
     def test_missing_case_stops_before_artifact_reads(self):
         service, cases, snapshots, legal, drafts, filings = self.build()
