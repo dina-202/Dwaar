@@ -147,46 +147,74 @@ def _render_legal_brief(classification, extraction):
         st.dataframe(
             [
                 {
-                    "question_id": item.question_id,
-                    "question": item.question_text,
-                    "status": item.status.value,
-                    "date_basis": item.date_basis.value,
-                    "related_fact_ids": list(item.related_fact_ids),
-                    "missing_fact_requirements": [
+                    "Question": item.question_text,
+                    "Status": _friendly_enum(item.status),
+                    "Date basis": _friendly_enum(item.date_basis),
+                    "Missing case information": [
                         (
-                            selector.fact_type.value
-                            + " / "
-                            + selector.fact_role.value
+                            _friendly_enum(selector.fact_type)
+                            + (
+                                ""
+                                if selector.fact_role.value == "none"
+                                else " — " + _friendly_enum(selector.fact_role)
+                            )
                         )
                         for selector in item.missing_fact_selectors
                     ],
-                    "verified_rule_ids": list(item.matched_rule_ids),
+                    "Verified sources matched": len(item.matched_rule_ids),
                 }
                 for item in question_plan.questions
             ],
             hide_index=True,
         )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — legal research questions"):
+                st.dataframe(
+                    [
+                        {
+                            "question_id": item.question_id,
+                            "status": item.status.value,
+                            "date_basis": item.date_basis.value,
+                            "related_fact_ids": list(item.related_fact_ids),
+                            "verified_rule_ids": list(item.matched_rule_ids),
+                        }
+                        for item in question_plan.questions
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write(
             "No closed legal-question plan exists for this proceeding."
         )
 
     if date_context.anchors:
+        st.subheader("Legal applicability dates")
         st.dataframe(
             [
                 {
-                    "date_basis": anchor.basis.value,
-                    "effective_date": anchor.effective_date,
-                    "period_start": _display(anchor.period_start),
-                    "period_end": _display(anchor.period_end),
-                    "source_fact_id": anchor.source_fact_id,
-                    "source_page": _display(anchor.source_page),
-                    "source_text": anchor.source_text,
+                    "Basis": _friendly_enum(anchor.basis),
+                    "Effective date": anchor.effective_date,
+                    "Period start": _display(anchor.period_start),
+                    "Period end": _display(anchor.period_end),
+                    "Source page": _display(anchor.source_page),
+                    "Source evidence": anchor.source_text,
                 }
                 for anchor in date_context.anchors
             ],
             hide_index=True,
         )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — legal applicability dates"):
+                st.dataframe(
+                    [
+                        {
+                            "date_basis": anchor.basis.value,
+                            "source_fact_id": anchor.source_fact_id,
+                        }
+                        for anchor in date_context.anchors
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write(
             "No provenance-bearing legal applicability date could be "
@@ -201,30 +229,42 @@ def _render_legal_brief(classification, extraction):
         return
 
     if brief.matches:
+        st.subheader("Verified propositions")
         st.dataframe(
             [
                 {
-                    "topic": match.rule.topic.value,
-                    "provision": match.rule.provision,
-                    "proposition": match.rule.proposition,
-                    "effective_from": match.rule.effective_from,
-                    "effective_to": _display(match.rule.effective_to),
-                    "source": match.source.title,
-                    "official_url": match.source.official_url,
-                    "verified_at": match.rule.verified_at,
-                    "rule_id": match.rule.rule_id,
+                    "Topic": _friendly_enum(match.rule.topic),
+                    "Provision": match.rule.provision,
+                    "Proposition": match.rule.proposition,
+                    "Effective from": match.rule.effective_from,
+                    "Effective to": _display(match.rule.effective_to),
+                    "Official source": match.source.title,
+                    "Official URL": match.source.official_url,
+                    "Verified at": match.rule.verified_at,
                 }
                 for match in brief.matches
             ],
             hide_index=True,
         )
+        if _engineering_diagnostics_enabled():
+            with st.expander("Technical details — verified legal propositions"):
+                st.dataframe(
+                    [
+                        {
+                            "rule_id": match.rule.rule_id,
+                            "topic": match.rule.topic.value,
+                        }
+                        for match in brief.matches
+                    ],
+                    hide_index=True,
+                )
     else:
         st.write("No source-verified proposition matched this workflow/date.")
 
     if brief.unresolved_topics:
         st.warning(
             "CA legal research is still required for: "
-            + ", ".join(topic.value for topic in brief.unresolved_topics)
+            + ", ".join(_friendly_enum(topic) for topic in brief.unresolved_topics)
         )
 
 
