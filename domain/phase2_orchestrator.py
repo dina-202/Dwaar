@@ -45,10 +45,7 @@ from domain.models import (
     TriageSummary as _TriageSummary,
 )
 from domain.preflight_engine import run_preflight
-from domain.proceeding_classifier import (
-    classify_notice,
-    classifier_failed as _classifier_failed,
-)
+from domain.proceeding_classifier import classify_notice, _classifier_failed
 from domain.validation_engine import run_validation
 from workflows.gst.validation_profiles import (
     get_validation_profile,
