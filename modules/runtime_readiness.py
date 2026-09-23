@@ -19,6 +19,7 @@ from modules.encrypted_document_store import (
     EncryptedLocalDocumentStore,
     generate_storage_key,
 )
+from modules.llm_client import llm_runtime_configuration_ready
 from modules.runtime_access import (
     RuntimeAccessConfigurationError,
     database_path_from_environment,
@@ -188,6 +189,20 @@ def evaluate_runtime_readiness(
             (
                 "Scanned-PDF OCR runtime is unavailable. "
                 "Install/configure Tesseract English OCR before serving "
+                "professional traffic."
+            ),
+        )
+    )
+
+    llm_configuration_ok = llm_runtime_configuration_ready()
+    checks.append(
+        _check(
+            RuntimeReadinessCode.LLM_CONFIGURATION,
+            llm_configuration_ok,
+            "AI analysis configuration is present.",
+            (
+                "AI analysis configuration is missing or invalid. "
+                "Configure at least one analysis credential before serving "
                 "professional traffic."
             ),
         )
