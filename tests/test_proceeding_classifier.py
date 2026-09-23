@@ -29,7 +29,6 @@ from unittest import mock
 from domain import proceeding_classifier
 from domain.models import (
     ClassificationConfidence,
-    ClassificationRunStatus,
     NoticeClassification,
     NoticeFamily,
     NoticeForm,
@@ -112,7 +111,6 @@ class SafeLLMInterfaceTests(unittest.TestCase):
             SupportLevel.UNKNOWN,
         )
         self.assertIs(result.confidence, ClassificationConfidence.UNKNOWN)
-        self.assertIs(result.classification_status, ClassificationRunStatus.FAILED)
         self.assertEqual(len(result.classification_reasons), 1)
         self.assertNotIn("{{{", result.classification_reasons[0])
 
@@ -127,7 +125,6 @@ class SafeLLMInterfaceTests(unittest.TestCase):
             SupportLevel.UNKNOWN,
         )
         self.assertIs(result.confidence, ClassificationConfidence.UNKNOWN)
-        self.assertIs(result.classification_status, ClassificationRunStatus.FAILED)
 
     def test_invalid_enum_value_returns_safe_unknown(self):
         result, _ = run_classifier(
@@ -180,10 +177,11 @@ class SafeLLMInterfaceTests(unittest.TestCase):
                 confidence="LOW",
             ),
         )
-        self.assertIs(
-            result.classification_status,
-            ClassificationRunStatus.SUCCESS,
-        )
+        self.assertFalse(proceeding_classifier.classifier_failed(result))
+
+    def test_malformed_output_is_classifier_failure(self):
+        result, _ = run_classifier("some notice text", "not json")
+        self.assertTrue(proceeding_classifier.classifier_failed(result))
 
     def test_llm_supplied_support_level_is_ignored(self):
         # A malicious LLM JSON claiming DEEP_WORKFLOW cannot grant it.
