@@ -2187,7 +2187,7 @@ class SavedCaseWorkspaceUiTests(unittest.TestCase):
         self.assertIn("CASE-1", text)
         self.assertIn("recomputed_from_encrypted_notice", text)
         self.assertIn(
-            "Saved historical snapshots, when present, are shown separately",
+            "Earlier saved analyses, when present, are shown separately",
             text,
         )
         self.assertIn(RAW_TEXT, text)
