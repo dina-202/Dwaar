@@ -19,9 +19,10 @@ The closed preflight emits exactly these checks:
 3. document encryption-key configuration;
 4. document key identity configuration;
 5. scanned-PDF OCR runtime;
-6. database open/schema initialization;
-7. SQLite integrity;
-8. encrypted object-store round trip.
+6. AI analysis configuration;
+7. database open/schema initialization;
+8. SQLite integrity;
+9. encrypted object-store round trip.
 
 A report is ready only when every check passes.
 
@@ -40,6 +41,28 @@ The probe:
 
 A deployment with a working database and encrypted object store is still not
 ready for professional traffic when the scanned-PDF OCR runtime cannot execute.
+
+## AI analysis configuration probe
+
+The preflight reuses the analysis client's own credential/router boundary and
+checks only that:
+
+- at least one analysis credential slot was configured at application startup;
+- the configured model name is non-empty.
+
+This check makes no provider API call, consumes no model quota and never emits:
+
+- credential values;
+- credential variable names;
+- configured-key counts;
+- provider exception text.
+
+It is deliberately a configuration check, not a guarantee of external provider
+uptime, quota or credential validity. Runtime provider failures remain handled
+by the existing categorized router/failover path.
+
+A pilot runtime with healthy storage and OCR but no configured analysis
+credential is not ready for professional traffic.
 
 ## Database probe
 
