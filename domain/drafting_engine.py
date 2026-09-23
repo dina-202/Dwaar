@@ -72,6 +72,7 @@ _BASE_PROMPT_PATH = _PROMPTS_DIR / "base_rules.txt"
 # Closed §21.21 prompt-key → file mapping. No caller path, no traversal, no
 # discovery: an unknown key resolves to None (§21.22).
 _WORKFLOW_PROMPT_PATHS: Dict[str, Path] = {
+    "sec61_scrutiny": _PROMPTS_DIR / "gst" / "sec61_scrutiny.txt",
     "sec73_itc": _PROMPTS_DIR / "gst" / "sec73_itc.txt",
     "sec73_general": _PROMPTS_DIR / "gst" / "sec73_general.txt",
     "sec73_rcm": _PROMPTS_DIR / "gst" / "sec73_rcm.txt",
@@ -83,6 +84,9 @@ _PROVENANCE_SCHEMA_VERSION = "phase2.step9e.v1"
 _PROVENANCE_PROMPTS_DIR = _PROMPTS_DIR / "provenance_v1"
 _PROVENANCE_BASE_PROMPT_PATH = _PROVENANCE_PROMPTS_DIR / "base_rules.txt"
 _PROVENANCE_WORKFLOW_PROMPT_PATHS: Dict[str, Path] = {
+    "sec61_scrutiny": (
+        _PROVENANCE_PROMPTS_DIR / "gst" / "sec61_scrutiny.txt"
+    ),
     "sec73_itc": _PROVENANCE_PROMPTS_DIR / "gst" / "sec73_itc.txt",
     "sec73_general": (
         _PROVENANCE_PROMPTS_DIR / "gst" / "sec73_general.txt"
