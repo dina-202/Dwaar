@@ -342,11 +342,54 @@ class FilingPersistenceTests(FilingIntegrationFixture):
                 opened_at=NOW - timedelta(days=5),
             )
         )
+        other_notice = StoredDocumentRef(
+            document_id="DOC-NOTICE-2",
+            case_id="CASE-2",
+            kind=CaseDocumentKind.NOTICE,
+            original_filename="other-notice.pdf",
+            media_type="application/pdf",
+            byte_size=100,
+            sha256_hex="c" * 64,
+            storage_key="objects/" + "c" * 32,
+            created_at=NOW - timedelta(days=5),
+        )
+        self.case_repo.add_document_ref(other_notice)
+        other_snapshot_repo = LocalSQLiteAnalysisSnapshotRepository(
+            self.db_path
+        )
+        other_snapshot = AnalysisSnapshotRef(
+            snapshot_id="SNAP-2",
+            case_id="CASE-2",
+            source_document_id=other_notice.document_id,
+            source_document_sha256=other_notice.sha256_hex,
+            schema_version=SNAPSHOT_SCHEMA_VERSION,
+            engine_version=ANALYSIS_ENGINE_VERSION,
+            byte_size=10,
+            sha256_hex="d" * 64,
+            storage_key="objects/" + "d" * 32,
+            created_at=NOW - timedelta(hours=4),
+            created_by=PRINCIPAL.user_id,
+        )
+        other_snapshot_repo.save_snapshot(
+            other_snapshot,
+            CaseEvent(
+                event_id="EV-SNAP-2",
+                case_id="CASE-2",
+                event_type=CaseEventType.ANALYSIS_SAVED,
+                occurred_at=other_snapshot.created_at,
+                actor_id=PRINCIPAL.user_id,
+                payload={
+                    "snapshot_id": other_snapshot.snapshot_id,
+                    "source_document_id": other_notice.document_id,
+                },
+            ),
+        )
+
         other_working = persist_draft_version(
             self.draft_repo,
             self.store,
             case_id="CASE-2",
-            source_snapshot_id="SNAP-OTHER",
+            source_snapshot_id="SNAP-2",
             parent_draft_version_id=None,
             version_number=1,
             generated_baseline=True,
