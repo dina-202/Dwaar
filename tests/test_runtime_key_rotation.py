@@ -104,7 +104,7 @@ class RuntimeKeyRotationTests(unittest.TestCase):
         self.assertEqual(report.old_key_id, OLD_ID)
         self.assertEqual(report.new_key_id, NEW_ID)
         self.assertEqual(report.object_count, 1)
-        self.assertEqual(report.schema_version, 6)
+        self.assertEqual(report.schema_version, 7)
 
         target_repo = LocalSQLiteCaseRepository(str(self.target_db))
         refs = target_repo.list_document_refs("CASE-1")
