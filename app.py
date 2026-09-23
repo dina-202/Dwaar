@@ -13,13 +13,13 @@ from domain.evidence_review import (
     reviewed_candidate_ids,
 )
 from domain.models import (
-    ClassificationRunStatus,
     DraftGenerationStatus,
     EvidenceReviewStatus,
     SourceTextOrigin,
     ValidationStatus,
 )
 from domain.phase2_orchestrator import run_phase2_analysis_from_document_pages
+from domain.proceeding_classifier import classifier_failed
 from modules.evidence_workspace import (
     build_evidence_documents,
     evidence_workspace_key,
@@ -230,7 +230,7 @@ def _render_phase2_result(result):
     draft = result.draft_result
 
     st.header("Classification and support")
-    if classification.classification_status is ClassificationRunStatus.FAILED:
+    if classifier_failed(classification):
         st.error(
             "AI classification could not be completed. Dwaar has not "
             "determined that this is an unknown notice; the classification "
@@ -258,7 +258,6 @@ def _render_phase2_result(result):
     with st.expander("Technical details — classification"):
         st.write(
             {
-                "classification_status": classification.classification_status.value,
                 "proceeding_type": classification.proceeding_type.value,
                 "support_level": classification.support_level.value,
                 "notice_form": classification.notice_form.value,
@@ -501,7 +500,7 @@ def _render_phase2_result(result):
     if result.triage_summary is not None:
         triage = result.triage_summary
         st.header("Triage summary")
-        if classification.classification_status is ClassificationRunStatus.FAILED:
+        if classifier_failed(classification):
             st.error(triage.message)
         else:
             st.write(triage.message)
@@ -550,7 +549,7 @@ def _render_phase2_result(result):
             st.markdown(section.rendered_text)
     else:
         st.header("Drafting status")
-        if classification.classification_status is ClassificationRunStatus.FAILED:
+        if classifier_failed(classification):
             st.warning(
                 "Drafting is unavailable because notice classification did "
                 "not complete successfully."
