@@ -14,6 +14,7 @@ from modules.authorized_draft_work_product_service import (
     AuthorizedDraftWorkProductService,
 )
 from modules.authorized_filing_service import AuthorizedFilingService
+from modules.authorized_fact_review_service import AuthorizedFactReviewService
 from modules.authorized_legal_brief_service import AuthorizedLegalBriefService
 from modules.authorized_professional_workbench_service import (
     AuthorizedProfessionalWorkbenchService,
@@ -47,6 +48,7 @@ from modules.sqlite_evidence_review_repository import (
     LocalSQLiteEvidenceReviewRepository,
 )
 from modules.sqlite_filing_repository import LocalSQLiteFilingRepository
+from modules.sqlite_fact_review_repository import LocalSQLiteFactReviewRepository
 from modules.sqlite_legal_brief_repository import (
     LocalSQLiteLegalBriefRepository,
 )
@@ -199,12 +201,14 @@ def build_authorized_draft_work_product_service(
         document_store,
     )
     draft_repository = LocalSQLiteDraftVersionRepository(db_path)
+    fact_review_repository = LocalSQLiteFactReviewRepository(db_path)
     return AuthorizedDraftWorkProductService(
         case_service,
         snapshot_service,
         access_repository,
         draft_repository,
         document_store,
+        fact_review_repository=fact_review_repository,
     )
 
 
@@ -232,6 +236,38 @@ def build_authorized_evidence_review_service(
     )
     review_repository = LocalSQLiteEvidenceReviewRepository(db_path)
     return AuthorizedEvidenceReviewService(
+        case_service,
+        snapshot_service,
+        access_repository,
+        review_repository,
+        document_store,
+    )
+
+
+def build_authorized_fact_review_service(
+    environment: Optional[Mapping[str, str]] = None,
+) -> AuthorizedFactReviewService:
+    """Build encrypted snapshot-bound professional fact-review service."""
+    (
+        db_path,
+        case_repository,
+        access_repository,
+        document_store,
+    ) = _build_runtime_components(environment)
+    case_service = AuthorizedCaseService(
+        case_repository,
+        access_repository,
+        document_store,
+    )
+    snapshot_repository = LocalSQLiteAnalysisSnapshotRepository(db_path)
+    snapshot_service = AuthorizedAnalysisSnapshotService(
+        case_service,
+        access_repository,
+        snapshot_repository,
+        document_store,
+    )
+    review_repository = LocalSQLiteFactReviewRepository(db_path)
+    return AuthorizedFactReviewService(
         case_service,
         snapshot_service,
         access_repository,
@@ -333,6 +369,7 @@ def build_authorized_professional_workbench_service(
         access_repository,
         LocalSQLiteDraftVersionRepository(db_path),
         document_store,
+        fact_review_repository=LocalSQLiteFactReviewRepository(db_path),
     )
     filing_service = AuthorizedFilingService(
         case_service,
