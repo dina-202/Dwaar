@@ -3,6 +3,7 @@
 import ast
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import os
 import pathlib
 import runpy
 import sys
@@ -555,6 +556,7 @@ def run_app(
     persisted_evidence_error=None,
     reopen_result=None,
     reopen_error=None,
+    engineering_diagnostics=True,
 ):
     events = []
     uploaded = _UploadedFile(events) if upload else None
@@ -798,6 +800,14 @@ def run_app(
     fake.reopen_mock = reopen_mock
 
     with (
+        patch.dict(
+            os.environ,
+            {
+                "DWAAR_ENGINEERING_DIAGNOSTICS": (
+                    "1" if engineering_diagnostics else "0"
+                )
+            },
+        ),
         patch.dict(sys.modules, {"streamlit": fake}),
         patch("datetime.date", FixedDate),
         patch.object(
@@ -1126,6 +1136,7 @@ class SourceBoundaryTests(unittest.TestCase):
             set(imports),
             {
                 "datetime",
+                "os",
                 "streamlit",
                 "domain.auth_models",
                 "domain.case_models",
@@ -1181,6 +1192,36 @@ class SourceBoundaryTests(unittest.TestCase):
         self.assertIn("draftreviewstatus.approved", lowered)
         self.assertNotIn("template_text", lowered)
         self.assertIn("session_state", lowered)
+
+
+class EngineeringDiagnosticsUiTests(unittest.TestCase):
+    def test_customer_mode_hides_all_technical_detail_expanders(self):
+        fake, *_ = run_app(engineering_diagnostics=False)
+        technical_expanders = [
+            call
+            for call in calls_named(fake, "expander")
+            if call[1]
+            and str(call[1][0]).startswith("Technical details")
+        ]
+        self.assertEqual(technical_expanders, [])
+        text = log_text(fake)
+        self.assertNotIn("check.pass", text)
+        self.assertNotIn('"fact_id"', text)
+        self.assertNotIn("Engineering diagnostics are enabled", text)
+
+    def test_engineering_mode_preserves_diagnostics_and_warns_operator(self):
+        fake, *_ = run_app(engineering_diagnostics=True)
+        technical_expanders = [
+            call
+            for call in calls_named(fake, "expander")
+            if call[1]
+            and str(call[1][0]).startswith("Technical details")
+        ]
+        self.assertTrue(technical_expanders)
+        self.assertIn(
+            "Engineering diagnostics are enabled for this deployment",
+            log_text(fake),
+        )
 
 
 class UploadAndFailureTests(unittest.TestCase):
