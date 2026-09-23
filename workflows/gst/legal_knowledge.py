@@ -17,7 +17,7 @@ from domain.legal_knowledge_models import (
 from domain.models import ProceedingType
 
 
-GST_LEGAL_CATALOG_VERSION = "gst-legal.v3.2026-09-23"
+GST_LEGAL_CATALOG_VERSION = "gst-legal.v4.2026-09-23"
 
 CGST_ACT_INDIA_CODE = LegalSourceRef(
     source_id="src.cgst_act.indiacode.2026-09-23",
@@ -102,6 +102,26 @@ GST_LEGAL_RULES = (
         ),
         effective_from=date(2019, 4, 1),
         effective_to=date(2021, 12, 31),
+        jurisdiction="India",
+        topic=LegalTopic.ITC_MISMATCH_VERIFICATION,
+        proceeding_types=(ProceedingType.GST_SEC73_ITC,),
+        verified_at=date(2026, 9, 23),
+        verification_status=LegalVerificationStatus.SOURCE_VERIFIED,
+    ),
+    LegalRule(
+        rule_id="cbic.itc_mismatch_verification.post2022.v3",
+        rule_key="cbic.itc_mismatch_verification",
+        source_id=CIRCULAR_193_GST_COUNCIL.source_id,
+        provision="Circular No. 193/05/2023-GST, paragraph 5",
+        proposition=(
+            "For periods beginning 1 January 2022, Circular 193 records "
+            "that, after insertion of section 16(2)(aa) and amendment of "
+            "rule 36(4), ITC in respect of a supply is not to be allowed "
+            "unless the supplier reports it in FORM GSTR-1 or IFF and it "
+            "is communicated to the recipient in FORM GSTR-2B."
+        ),
+        effective_from=date(2022, 1, 1),
+        effective_to=None,
         jurisdiction="India",
         topic=LegalTopic.ITC_MISMATCH_VERIFICATION,
         proceeding_types=(ProceedingType.GST_SEC73_ITC,),
