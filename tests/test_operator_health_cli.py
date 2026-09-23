@@ -97,7 +97,7 @@ class OperatorHealthCliTests(unittest.TestCase):
         self.assertTrue(payload["healthy"])
         self.assertEqual(
             [item["status"] for item in payload["checks"]],
-            ["pass", "pass", "pass", "pass"],
+            ["pass", "pass", "pass", "pass", "pass"],
         )
         rendered = completed.stdout
         self.assertNotIn(str(self.root), rendered)
@@ -119,6 +119,9 @@ class OperatorHealthCliTests(unittest.TestCase):
         self.assertFalse(payload["healthy"])
         checks = {item["code"]: item for item in payload["checks"]}
         self.assertEqual(checks["runtime_preflight"]["status"], "pass")
+        self.assertEqual(
+            checks["live_storage_consistency"]["status"], "pass"
+        )
         self.assertEqual(checks["backup_verification"]["status"], "pass")
         self.assertEqual(checks["backup_key_identity"]["status"], "pass")
         self.assertEqual(checks["backup_freshness"]["status"], "blocked")

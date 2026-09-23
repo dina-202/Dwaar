@@ -67,7 +67,7 @@ class OperatorHealthTests(unittest.TestCase):
         self.assertAlmostEqual(report.backup_age_hours, 2.0)
         self.assertEqual(
             [item.status for item in report.checks],
-            [OperatorHealthStatus.PASS] * 4,
+            [OperatorHealthStatus.PASS] * 5,
         )
 
     def test_stale_backup_blocks_only_freshness(self):
@@ -83,6 +83,10 @@ class OperatorHealthTests(unittest.TestCase):
         self.assertFalse(report.healthy)
         self.assertIs(
             by_code[OperatorHealthCode.RUNTIME_PREFLIGHT].status,
+            OperatorHealthStatus.PASS,
+        )
+        self.assertIs(
+            by_code[OperatorHealthCode.LIVE_STORAGE_CONSISTENCY].status,
             OperatorHealthStatus.PASS,
         )
         self.assertIs(
@@ -223,6 +227,34 @@ class OperatorHealthTests(unittest.TestCase):
         self.assertIs(
             by_code[OperatorHealthCode.BACKUP_KEY_IDENTITY].status,
             OperatorHealthStatus.BLOCKED,
+        )
+        self.assertFalse(report.healthy)
+
+    def test_live_orphan_blocks_health_without_invalidating_backup(self):
+        backup = self.backup()
+        from modules.encrypted_document_store import EncryptedLocalDocumentStore
+
+        EncryptedLocalDocumentStore(
+            self.env["DWAAR_OBJECT_ROOT"],
+            KEY,
+        ).put(
+            "objects/" + "9" * 32,
+            b"orphan",
+        )
+        report = evaluate_operator_health(
+            backup_dir=str(backup),
+            max_backup_age_hours=24,
+            now=NOW,
+            environment=self.env,
+        )
+        by_code = {item.code: item for item in report.checks}
+        self.assertIs(
+            by_code[OperatorHealthCode.LIVE_STORAGE_CONSISTENCY].status,
+            OperatorHealthStatus.BLOCKED,
+        )
+        self.assertIs(
+            by_code[OperatorHealthCode.BACKUP_VERIFICATION].status,
+            OperatorHealthStatus.PASS,
         )
         self.assertFalse(report.healthy)
 

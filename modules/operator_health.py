@@ -14,6 +14,10 @@ from domain.operator_health_models import (
 )
 from modules.runtime_backup import RuntimeBackupError, verify_runtime_backup
 from modules.runtime_readiness import evaluate_runtime_readiness
+from modules.runtime_storage_audit import (
+    RuntimeStorageAuditError,
+    audit_runtime_storage,
+)
 from modules.runtime_security import (
     RuntimeSecurityConfigurationError,
     decode_document_master_key,
@@ -93,8 +97,36 @@ def evaluate_operator_health(
         )
     ]
 
+    source = os.environ if environment is None else environment
     key = _document_key(environment)
     key_id = _document_key_id(environment)
+
+    storage_consistent = False
+    db_path = source.get("DWAAR_DB_PATH")
+    object_root = source.get("DWAAR_OBJECT_ROOT")
+    if (
+        key is not None
+        and isinstance(db_path, str)
+        and bool(db_path.strip())
+        and isinstance(object_root, str)
+        and bool(object_root.strip())
+    ):
+        try:
+            storage_consistent = audit_runtime_storage(
+                db_path=db_path,
+                object_root=object_root,
+                document_key=key,
+            ).consistent
+        except (RuntimeStorageAuditError, ValueError, OSError):
+            storage_consistent = False
+    checks.append(
+        _check(
+            OperatorHealthCode.LIVE_STORAGE_CONSISTENCY,
+            storage_consistent,
+            "Live encrypted storage consistency passed.",
+            "Live encrypted storage consistency is blocked.",
+        )
+    )
     manifest = None
     if key is not None:
         try:

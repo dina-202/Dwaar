@@ -12,6 +12,7 @@ class OperatorHealthStatus(Enum):
 
 class OperatorHealthCode(Enum):
     RUNTIME_PREFLIGHT = "runtime_preflight"
+    LIVE_STORAGE_CONSISTENCY = "live_storage_consistency"
     BACKUP_VERIFICATION = "backup_verification"
     BACKUP_KEY_IDENTITY = "backup_key_identity"
     BACKUP_FRESHNESS = "backup_freshness"
