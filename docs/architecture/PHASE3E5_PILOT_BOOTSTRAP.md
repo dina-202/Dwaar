@@ -49,6 +49,7 @@ The first user receives every permission in the current closed `AccessPermission
 - DOCUMENT_READ
 - DOCUMENT_ADD
 - EVIDENCE_REVIEW
+- FACT_REVIEW
 - DRAFT_REVIEW
 - FILING_RECORD
 - FIRM_ADMIN
