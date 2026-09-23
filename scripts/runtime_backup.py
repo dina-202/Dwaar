@@ -23,6 +23,7 @@ from modules.runtime_backup import (
 from modules.runtime_security import (
     RuntimeSecurityConfigurationError,
     decode_document_master_key,
+    validate_document_key_id,
 )
 
 
@@ -34,6 +35,18 @@ def _document_key():
         return decode_document_master_key(value)
     except RuntimeSecurityConfigurationError as error:
         raise ValueError("document key invalid") from error
+
+
+def _document_key_id(*, required: bool) -> str | None:
+    value = os.environ.get("DWAAR_DOCUMENT_KEY_ID")
+    if not isinstance(value, str) or not value.strip():
+        if required:
+            raise ValueError("document key ID missing")
+        return None
+    try:
+        return validate_document_key_id(value)
+    except RuntimeSecurityConfigurationError as error:
+        raise ValueError("document key ID invalid") from error
 
 
 def _backup_id(now: datetime) -> str:
@@ -65,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = sub.add_parser("verify")
     verify.add_argument("backup_dir")
+    verify.add_argument(
+        "--allow-legacy-key-id",
+        action="store_true",
+        help="Allow v1 backups that predate document-key identity metadata.",
+    )
 
     restore = sub.add_parser("restore")
     restore.add_argument("backup_dir")
@@ -77,6 +95,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--target-objects",
         required=True,
         help="Clean target encrypted-object directory.",
+    )
+    restore.add_argument(
+        "--allow-legacy-key-id",
+        action="store_true",
+        help="Allow v1 backups that predate document-key identity metadata.",
     )
     return parser
 
@@ -97,6 +120,11 @@ def main(argv=None) -> int:
         db_path = os.environ.get("DWAAR_DB_PATH")
         object_root = os.environ.get("DWAAR_OBJECT_ROOT")
         backup_root = args.backup_root or os.environ.get("DWAAR_BACKUP_ROOT")
+        try:
+            key_id = _document_key_id(required=True)
+        except ValueError:
+            _emit({"ok": False, "error": "configuration_invalid"})
+            return 2
         if not all(
             isinstance(value, str) and bool(value.strip())
             for value in (db_path, object_root, backup_root)
@@ -114,6 +142,7 @@ def main(argv=None) -> int:
                 backup_id=backup_id,
                 created_at=created_at,
                 document_key=key,
+                document_key_id=key_id,
             )
         except (RuntimeBackupError, ValueError, OSError):
             _emit({"ok": False, "error": "backup_failed"})
@@ -132,10 +161,34 @@ def main(argv=None) -> int:
 
     if args.command == "verify":
         try:
-            manifest = verify_runtime_backup(
-                args.backup_dir,
-                document_key=key,
+            key_id = _document_key_id(
+                required=not args.allow_legacy_key_id
             )
+        except ValueError:
+            _emit({"ok": False, "error": "configuration_invalid"})
+            return 2
+        try:
+            if args.allow_legacy_key_id:
+                manifest = verify_runtime_backup(
+                    args.backup_dir,
+                    document_key=key,
+                )
+                if manifest.document_key_id is not None:
+                    if key_id is None:
+                        raise RuntimeBackupError(
+                            "document key identity is required"
+                        )
+                    manifest = verify_runtime_backup(
+                        args.backup_dir,
+                        document_key=key,
+                        expected_document_key_id=key_id,
+                    )
+            else:
+                manifest = verify_runtime_backup(
+                    args.backup_dir,
+                    document_key=key,
+                    expected_document_key_id=key_id,
+                )
         except (RuntimeBackupError, ValueError, OSError):
             _emit({"ok": False, "error": "verification_failed"})
             return 1
@@ -152,11 +205,33 @@ def main(argv=None) -> int:
         return 0
 
     try:
+        key_id = _document_key_id(
+            required=not args.allow_legacy_key_id
+        )
+    except ValueError:
+        _emit({"ok": False, "error": "configuration_invalid"})
+        return 2
+
+    try:
+        expected_key_id = key_id
+        if args.allow_legacy_key_id:
+            inspected = verify_runtime_backup(
+                args.backup_dir,
+                document_key=key,
+            )
+            if inspected.document_key_id is None:
+                expected_key_id = None
+            else:
+                if key_id is None:
+                    raise RuntimeBackupError(
+                        "document key identity is required"
+                    )
         manifest = restore_runtime_backup(
             args.backup_dir,
             target_db_path=args.target_db,
             target_object_root=args.target_objects,
             document_key=key,
+            expected_document_key_id=expected_key_id,
         )
     except (RuntimeBackupError, ValueError, OSError):
         _emit({"ok": False, "error": "restore_failed"})
