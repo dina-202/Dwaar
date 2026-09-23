@@ -2498,6 +2498,7 @@ def _render_professional_case_attention(
             [
                 {
                     "attention": item.code.value,
+                    "workspace": item.code.workspace.value,
                     "message": item.message,
                     "related_id": _display(item.related_id),
                 }

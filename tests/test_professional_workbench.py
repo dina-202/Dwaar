@@ -16,7 +16,10 @@ from domain.legal_evidence_models import (
     LegalEvidenceReadinessStatus,
 )
 from domain.models import NoticeForm, ProceedingType
-from domain.professional_workbench_models import CaseAttentionCode
+from domain.professional_workbench_models import (
+    CaseAttentionCode,
+    CaseWorkspace,
+)
 from modules.professional_workbench import build_professional_case_attention
 
 
@@ -108,6 +111,55 @@ def filing(ack=None):
 
 def codes(result):
     return tuple(item.code for item in result.items)
+
+
+class CaseAttentionWorkspaceRoutingTests(unittest.TestCase):
+    def test_every_attention_code_has_exact_workspace_owner(self):
+        self.assertEqual(
+            {code: code.workspace for code in CaseAttentionCode},
+            {
+                CaseAttentionCode.ANALYSIS_NOT_SAVED: (
+                    CaseWorkspace.ANALYSIS_HISTORY
+                ),
+                CaseAttentionCode.LEGAL_BRIEF_NOT_SAVED: (
+                    CaseWorkspace.LEGAL_RESEARCH
+                ),
+                CaseAttentionCode.LEGAL_RESEARCH_UNRESOLVED: (
+                    CaseWorkspace.LEGAL_RESEARCH
+                ),
+                CaseAttentionCode.LEGAL_EVIDENCE_INCOMPLETE: (
+                    CaseWorkspace.EVIDENCE
+                ),
+                CaseAttentionCode.LEGAL_EVIDENCE_CONTRACT_DRIFT: (
+                    CaseWorkspace.EVIDENCE
+                ),
+                CaseAttentionCode.DRAFT_NOT_STARTED: CaseWorkspace.DRAFT,
+                CaseAttentionCode.DRAFT_AWAITING_REVIEW: (
+                    CaseWorkspace.DRAFT
+                ),
+                CaseAttentionCode.DRAFT_AWAITING_APPROVAL: (
+                    CaseWorkspace.DRAFT
+                ),
+                CaseAttentionCode.APPROVED_DRAFT_NOT_FILED: (
+                    CaseWorkspace.FILING
+                ),
+                CaseAttentionCode.FILING_ACKNOWLEDGEMENT_MISSING: (
+                    CaseWorkspace.FILING
+                ),
+            },
+        )
+
+    def test_workspace_route_is_not_priority_or_recommendation(self):
+        self.assertEqual(
+            {item.value for item in CaseWorkspace},
+            {
+                "analysis_history",
+                "legal_research",
+                "evidence",
+                "draft",
+                "filing",
+            },
+        )
 
 
 class ProfessionalCaseAttentionTests(unittest.TestCase):
