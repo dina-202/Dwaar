@@ -41,6 +41,7 @@ def build_professional_case_attention(
     specialist_workflow_available: bool = True,
     triage_evidence_review_pending: bool = False,
     notice_evidence_review_pending: bool = False,
+    fact_review_rejected: bool = False,
 ) -> ProfessionalCaseAttention:
     """Build read-only operational attention facts.
 
@@ -66,6 +67,9 @@ def build_professional_case_attention(
 
     if not isinstance(notice_evidence_review_pending, bool):
         raise TypeError("notice_evidence_review_pending must be a bool")
+
+    if not isinstance(fact_review_rejected, bool):
+        raise TypeError("fact_review_rejected must be a bool")
 
     for values, expected, label in (
         (snapshots, AnalysisSnapshotRef, "snapshots"),
@@ -168,6 +172,18 @@ def build_professional_case_attention(
                                     readiness.question_id,
                                 )
                             )
+
+        if fact_review_rejected and latest_snapshot is not None:
+            items.append(
+                CaseAttentionItem(
+                    CaseAttentionCode.FACT_REVIEW_REJECTED,
+                    "The latest saved analysis contains an extracted fact "
+                    "whose latest professional review is Rejected. Re-review "
+                    "the source fact before relying on this analysis for "
+                    "draft approval.",
+                    latest_snapshot.snapshot_id,
+                )
+            )
 
         if triage_evidence_review_pending:
             items.append(
