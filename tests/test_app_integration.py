@@ -3161,7 +3161,7 @@ class FilingWorkspaceUiTests(unittest.TestCase):
         text = log_text(fake)
         self.assertIn("ARN-TEST-001", text)
         self.assertIn(
-            "requires FILING_RECORD and DOCUMENT_ADD",
+            "does not allow recording filings",
             text,
         )
         filing_service.record_filing.assert_not_called()
@@ -3198,7 +3198,7 @@ class FilingWorkspaceUiTests(unittest.TestCase):
         )
 
         self.assertIn(
-            "APPROVED immutable draft version is required",
+            "Approve a saved draft version before recording a filing",
             log_text(fake),
         )
         filing_service.record_filing.assert_not_called()
@@ -3570,7 +3570,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
         ]
         self.assertEqual(attach_uploaders, [])
         self.assertIn(
-            "Attaching supporting evidence requires DOCUMENT_ADD",
+            "does not allow adding supporting evidence",
             log_text(fake),
         )
 
@@ -3589,11 +3589,11 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
             call
             for call in calls_named(fake, "button")
             if call[1]
-            and "Analyze attached evidence" in call[1][0]
+            and "Match attached evidence to this analysis" in call[1][0]
         ]
         self.assertEqual(analyze_buttons, [])
         self.assertIn(
-            "Evidence matching/review requires EVIDENCE_REVIEW",
+            "does not allow evidence matching or review",
             log_text(fake),
         )
         fake.evidence_workspace_service_mock.assert_not_called()
@@ -3612,7 +3612,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
             button_values={"open_saved_case_CASE-1": True},
         )
         self.assertIn(
-            "Save the current analysis as an analysis snapshot",
+            "Save the current analysis before creating evidence review decisions",
             log_text(fake),
         )
         fake.evidence_review_service_mock.assert_called_once()
@@ -3747,7 +3747,7 @@ class PersistedEvidenceWorkspaceUiTests(unittest.TestCase):
         text = log_text(fake)
         self.assertIn("saved_evidence_review_id", text)
         self.assertIn("EREV-1", text)
-        self.assertIn("Durable evidence review history", text)
+        self.assertIn("Evidence review history", text)
 
     def test_durable_review_history_can_load_encrypted_details(self):
         evidence_ref = self._evidence_ref("DOC-PERSISTED-77")
