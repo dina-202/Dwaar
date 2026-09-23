@@ -245,14 +245,17 @@ class LocalSQLiteCaseRepository:
                     FOREIGN KEY (snapshot_id)
                         REFERENCES analysis_snapshots(snapshot_id)
                         ON UPDATE RESTRICT ON DELETE RESTRICT,
-                    UNIQUE (snapshot_id, fact_id),
-                    UNIQUE (snapshot_id, fact_fingerprint),
                     CHECK (byte_size > 0)
                 );
 
                 CREATE INDEX IF NOT EXISTS ix_fact_reviews_snapshot_time
                     ON fact_reviews(
                         snapshot_id, reviewed_at, review_id
+                    );
+
+                CREATE INDEX IF NOT EXISTS ix_fact_reviews_snapshot_fact_time
+                    ON fact_reviews(
+                        snapshot_id, fact_id, reviewed_at, review_id
                     );
 
                 CREATE TABLE IF NOT EXISTS draft_versions (
