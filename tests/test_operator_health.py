@@ -38,6 +38,12 @@ class OperatorHealthTests(unittest.TestCase):
         )
         self.ocr_patcher.start()
         self.addCleanup(self.ocr_patcher.stop)
+        self.llm_patcher = patch(
+            "modules.runtime_readiness.llm_runtime_configuration_ready",
+            return_value=True,
+        )
+        self.llm_patcher.start()
+        self.addCleanup(self.llm_patcher.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.env = environment(self.root)
