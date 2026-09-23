@@ -37,7 +37,7 @@ Primary:
 - human-readable case/deadline state
 - response deadline and days remaining
 - assignee/reviewer
-- count of deterministic attention items
+- count of outstanding professional attention items
 
 Technical:
 - case ID
@@ -108,6 +108,41 @@ Primary:
 
 Technical:
 - candidate/evidence/document/review IDs and source-channel enums
+
+### Triage case attention
+
+The professional queue must reflect what the saved analysis actually supports.
+
+When the latest saved analysis is `TRIAGE_ONLY` or `UNKNOWN`, Dwaar does not
+emit specialist-only actions such as:
+
+- verified legal brief not saved; or
+- specialist draft not started.
+
+Those actions would direct the CA toward capabilities that are intentionally
+unavailable for that matter.
+
+Existing real artifacts remain authoritative: if a draft version or filing
+already exists, its actual review/approval/filing state can still create the
+normal operational attention.
+
+For TRIAGE_ONLY cases with requested/referenced evidence targets, the queue may
+instead emit `TRIAGE_EVIDENCE_REVIEW_PENDING`. It routes only to the Evidence
+workspace and means only that one or more saved triage evidence targets do not
+yet have a human-confirmed evidence match. It is not a conclusion that evidence
+is legally missing, insufficient, inadmissible, or unresponsive.
+
+A rejected evidence candidate does not clear this attention state. Only a
+human-confirmed review for the target does.
+
+### Audit identity display
+
+Authentication/audit identifiers such as OIDC subject IDs remain preserved in
+the audit record and engineering diagnostics. They are not shown as professional
+names in ordinary draft, evidence-review, or filing-history tables.
+
+Until Dwaar has an authorized firm-user display-name directory, it must not
+invent or infer human names from those identifiers.
 
 ## Non-negotiable safety
 
