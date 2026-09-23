@@ -2170,8 +2170,8 @@ def _render_filing_workspace(
     )
     if not can_record:
         st.caption(
-            "Recording filings/acknowledgements requires FILING_RECORD "
-            "and DOCUMENT_ADD."
+            "Your current firm access does not allow recording filings "
+            "and acknowledgement documents."
         )
         return
 
@@ -2204,8 +2204,7 @@ def _render_filing_workspace(
         ]
         if not approved_versions:
             st.warning(
-                "An APPROVED immutable draft version is required before "
-                "a filing can be recorded."
+                "Approve a saved draft version before recording a filing."
             )
         else:
             draft_labels = _numbered_labels(
@@ -2401,11 +2400,11 @@ def _render_persisted_evidence_workspace(
     reopened,
     case_service,
 ):
-    st.header("Persisted supporting evidence")
+    st.header("Supporting evidence")
     st.caption(
-        "Supporting PDFs are encrypted case documents. Durable human "
-        "Confirm/Reject decisions are bound to a selected saved analysis "
-        "snapshot so their checklist context remains historically stable."
+        "Attached evidence is stored with the case. Review decisions are "
+        "saved against a specific analysis version so the historical "
+        "evidence context remains auditable."
     )
 
     try:
@@ -2510,7 +2509,8 @@ def _render_persisted_evidence_workspace(
             return
     else:
         st.caption(
-            "Attaching supporting evidence requires DOCUMENT_ADD."
+            "Your current firm access does not allow adding supporting "
+            "evidence."
         )
 
     if not attached:
@@ -2518,7 +2518,8 @@ def _render_persisted_evidence_workspace(
 
     if AccessPermission.EVIDENCE_REVIEW not in active_firm.permissions:
         st.caption(
-            "Evidence matching/review requires EVIDENCE_REVIEW."
+            "Your current firm access does not allow evidence matching "
+            "or review."
         )
         return
 
@@ -2548,8 +2549,8 @@ def _render_persisted_evidence_workspace(
 
     if not snapshot_history:
         st.warning(
-            "Save the current analysis as an analysis snapshot before "
-            "creating durable evidence review decisions."
+            "Save the current analysis before creating evidence review "
+            "decisions."
         )
         return
 
@@ -2564,7 +2565,7 @@ def _render_persisted_evidence_workspace(
         )
     }
     snapshot_label = st.selectbox(
-        "Evidence review snapshot",
+        "Analysis version for evidence review",
         list(snapshot_labels),
         key=f"evidence_review_snapshot_{reopened.case.case_id}",
     )
@@ -2594,8 +2595,8 @@ def _render_persisted_evidence_workspace(
         return
 
     st.caption(
-        f"Reviewing against {len(snapshot_checklist)} checklist item(s) "
-        "from the selected saved analysis."
+        f"Reviewing against {len(snapshot_checklist)} evidence requirement(s) "
+        "from the selected analysis version."
     )
     if _engineering_diagnostics_enabled():
         with st.expander("Technical details — evidence review context"):
@@ -2623,7 +2624,7 @@ def _render_persisted_evidence_workspace(
         f"{selected_snapshot.snapshot_id}"
     )
     if st.button(
-        "Analyze attached evidence for selected snapshot",
+        "Match attached evidence to this analysis",
         key=analyze_key,
     ):
         try:
@@ -2665,13 +2666,13 @@ def _render_persisted_evidence_workspace(
     intake_result = st.session_state.get(_EVIDENCE_INTAKE)
     if intake_result is not None:
         st.write(
-            f"{len(intake_result.candidates)} persisted evidence "
+            f"{len(intake_result.candidates)} evidence match "
             "candidate(s) proposed for professional review."
         )
         if intake_result.rejected_candidate_count:
             st.warning(
                 f"{intake_result.rejected_candidate_count} candidate(s) "
-                "were rejected by deterministic validation."
+                "were rejected by Dwaar's safety checks."
             )
 
         if intake_result.candidates:
@@ -2731,7 +2732,7 @@ def _render_persisted_evidence_workspace(
             context_prefix,
         )
         for candidate in intake_result.candidates:
-            st.subheader("Review persisted evidence candidate")
+            st.subheader("Review evidence match")
             st.write(candidate.source_text)
             st.caption(
                 f"Page {candidate.source_page} · "
@@ -2790,8 +2791,8 @@ def _render_persisted_evidence_workspace(
                     )
                 except ValueError:
                     st.error(
-                        "This evidence candidate is no longer valid for "
-                        "the selected snapshot or persisted document."
+                        "This evidence match is no longer valid for the "
+                        "selected analysis version or attached document."
                     )
                 except PermissionError:
                     st.error(
@@ -2829,7 +2830,7 @@ def _render_persisted_evidence_workspace(
 
     st.subheader("Legal evidence readiness")
     st.caption(
-        "This shows whether the closed supporting-evidence set for a legal "
+        "This shows whether the required supporting-evidence set for a legal "
         "research question has human-confirmed review records. It does not "
         "decide whether the legal condition or ITC claim is satisfied."
     )
@@ -2892,13 +2893,13 @@ def _render_persisted_evidence_workspace(
                     )
         else:
             st.write(
-                "No closed legal-evidence readiness plan exists for this "
+                "No legal-evidence readiness plan is available for this "
                 "workflow yet."
             )
 
-    st.subheader("Durable evidence review history")
+    st.subheader("Evidence review history")
     if not durable_reviews:
-        st.write("No durable review decisions for this snapshot yet.")
+        st.write("No saved review decisions for this analysis yet.")
         return
 
     st.dataframe(
@@ -2946,7 +2947,7 @@ def _render_persisted_evidence_workspace(
     )
     selected_review = review_labels[selected_review_label]
     if st.button(
-        "View encrypted review details",
+        "View review details",
         key=f"view_evidence_review_{selected_review.review_id}",
     ):
         try:
