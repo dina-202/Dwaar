@@ -1524,6 +1524,8 @@ def _render_fact_review_workspace(
                 technical_label="Technical details — fact review save failure",
             )
         else:
+            latest = dict(latest)
+            latest[selected_fact["fact_id"]] = saved
             st.write(
                 "Fact review saved: "
                 + _friendly_enum(saved.decision)
@@ -1536,17 +1538,6 @@ def _render_fact_review_workspace(
                     "for this fact is Rejected."
                 )
 
-    latest_for_table = latest
-    try:
-        latest_for_table = service.latest_reviews_by_fact(
-            principal,
-            active_firm.firm_id,
-            case_id=case_id,
-            snapshot_id=snapshot_id,
-        )
-    except Exception:
-        pass
-
     st.dataframe(
         [
             {
@@ -1558,9 +1549,9 @@ def _render_fact_review_workspace(
                 ),
                 "Professional review": (
                     "Not reviewed"
-                    if latest_for_table.get(fact["fact_id"]) is None
+                    if latest.get(fact["fact_id"]) is None
                     else _friendly_enum(
-                        latest_for_table[fact["fact_id"]].decision
+                        latest[fact["fact_id"]].decision
                     )
                 ),
             }
@@ -1579,8 +1570,8 @@ def _render_fact_review_workspace(
                         "fact_status": fact["status"],
                         "latest_review_id": (
                             None
-                            if latest_for_table.get(fact["fact_id"]) is None
-                            else latest_for_table[
+                            if latest.get(fact["fact_id"]) is None
+                            else latest[
                                 fact["fact_id"]
                             ].review_id
                         ),
