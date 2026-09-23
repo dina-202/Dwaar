@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Dict, Tuple
 
+from domain.legal_date_engine import build_legal_date_context
 from domain.legal_date_models import LegalDateBasis, LegalDateContext
 from domain.legal_knowledge import resolve_legal_knowledge
 from domain.legal_knowledge_models import (
@@ -101,6 +102,11 @@ GST_LEGAL_RESEARCH_PROFILES: Dict[
         ),
     ),
 }
+
+
+def build_gst_legal_date_context(facts) -> LegalDateContext:
+    """Workflow-owned facade for deterministic legal date provenance."""
+    return build_legal_date_context(facts)
 
 
 def get_gst_legal_research_profile(
