@@ -12,10 +12,15 @@ from domain.auth_models import (
 )
 from domain.authorization import require_firm_permission
 from domain.filing_models import FilingRecord
+from domain.fact_review_models import (
+    FactReviewDecision,
+    latest_fact_reviews,
+)
 from domain.persistence_ports import (
     AccessGrantRepository,
     DocumentStore,
     DraftVersionRepository,
+    FactReviewRepository,
     FilingRepository,
 )
 from modules.authorized_case_service import AuthorizedCaseService
@@ -35,12 +40,14 @@ class AuthorizedFilingService:
         filing_repository: FilingRepository,
         draft_repository: DraftVersionRepository,
         document_store: DocumentStore,
+        fact_review_repository: Optional[FactReviewRepository] = None,
     ):
         self._cases = case_service
         self._access = access_repository
         self._filings = filing_repository
         self._drafts = draft_repository
         self._documents = document_store
+        self._fact_reviews = fact_review_repository
 
     def _require(
         self,
@@ -117,6 +124,26 @@ class AuthorizedFilingService:
             firm_id,
             AccessPermission.DOCUMENT_ADD,
         )
+
+        if self._fact_reviews is not None:
+            draft = self._drafts.get_version_ref(
+                approved_draft_version_id
+            )
+            if draft is not None and draft.case_id == case.case_id:
+                latest_reviews = latest_fact_reviews(
+                    self._fact_reviews.list_review_refs(
+                        draft.source_snapshot_id
+                    )
+                )
+                if any(
+                    review.decision is FactReviewDecision.REJECTED
+                    for review in latest_reviews.values()
+                ):
+                    raise ValueError(
+                        "filing is blocked because the approved draft's "
+                        "source analysis contains a professionally rejected "
+                        "extracted fact"
+                    )
 
         return persist_filing(
             self._filings,
