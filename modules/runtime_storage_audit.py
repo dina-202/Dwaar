@@ -161,8 +161,12 @@ def audit_runtime_storage(
         object_keys.add("objects/" + match.group(1))
 
     ref_set = set(refs)
-    missing = ref_set - object_keys
-    orphan = object_keys - ref_set
+    if invalid_reference_count:
+        missing = set()
+        orphan = set()
+    else:
+        missing = ref_set - object_keys
+        orphan = object_keys - ref_set
 
     authentication_failure_count = 0
     if invalid_reference_count == 0:
